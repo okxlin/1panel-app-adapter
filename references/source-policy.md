@@ -1,6 +1,6 @@
 # Source Policy
 
-This policy defines source priority and anti-guessing rules for `1panel-app-adapter-public`.
+This policy defines source priority and anti-guessing rules for `1panel-app-adapter`.
 
 ## Priority Order
 

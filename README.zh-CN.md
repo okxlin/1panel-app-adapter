@@ -1,6 +1,6 @@
-# 1panel-app-adapter-public
+# 1panel-app-adapter
 
-`1panel-app-adapter-public` 是一个面向公开发布的 1Panel 应用适配 skill，用于把 Docker 应用输入整理为 1Panel 应用产物。它保留了生成、迁移、补丁和校验所需的运行脚本，同时移除了研究过程材料、重放日志和第三方仓库快照。
+`1panel-app-adapter` 是一个面向公开发布的 1Panel 应用适配 skill，用于把 Docker 应用输入整理为 1Panel 应用产物。它保留了生成、迁移、补丁和校验所需的运行脚本，同时移除了研究过程材料、重放日志和第三方仓库快照。
 
 ## 规则优先级
 
@@ -131,4 +131,4 @@ bash scripts/finalize_runtime_scripts.sh <app-dir> <version-dir>
 4. 让 OpenClaw 工作流描述和实际公开脚本表面保持一致
 5. 继续提升默认生成质量，减少 scaffold / migrate 之后还要手工回填的内容，逐步逼近一键交付
 
-文档描述必须和脚本真实能力一致。随着公开版默认生成质量提升，README 和 SKILL 也应同步更新，但不要夸大尚未实现的智能能力。
+文档描述必须和脚本真实能力一致。随着当前版本默认生成质量提升，README 和 SKILL 也应同步更新，但不要夸大尚未实现的智能能力。

@@ -1,9 +1,9 @@
 ---
-name: 1panel-app-adapter-public
-description: Rule-first public skill for generating, migrating, and validating 1Panel app artifacts in Linux and GitHub workflows.
+name: 1panel-app-adapter
+description: Rule-first skill for generating, migrating, and validating 1Panel app artifacts in Linux and GitHub workflows.
 ---
 
-# 1panel-app-adapter-public
+# 1panel-app-adapter
 
 This skill is the public, cleaned-up variant of the local research skill. It is designed to generate and validate 1Panel app artifacts with increasingly complete defaults, without bundling evidence packs, replay logs, or third-party repository snapshots.
 
@@ -96,4 +96,4 @@ The scaffold command produces a directory in this shape:
 - Public docs should distinguish hard runtime rules from repository conventions
 - source evidence is mandatory and validated (`repository`, `dockerDocs`, `composeFile`)
 - compose `${VAR}` usage should close against version formFields envKey declarations, except explicit implicit env key whitelist
-- The public skill package should not include evidence packs, replay reports, or embedded repository snapshots
+- The skill package should not include evidence packs, replay reports, or embedded repository snapshots

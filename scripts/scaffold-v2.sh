@@ -182,7 +182,7 @@ cat > "$APP_DIR/README.md" <<MD
 
 ## 产品介绍
 
-${TITLE} 是由 1panel-app-adapter-public 生成的 1Panel 应用模板，请按官方来源补全业务说明。
+${TITLE} 是由 1panel-app-adapter 生成的 1Panel 应用模板，请按官方来源补全业务说明。
 
 ## 主要功能
 
@@ -196,7 +196,7 @@ ${TITLE} 是由 1panel-app-adapter-public 生成的 1Panel 应用模板，请按
 
 ## Introduction
 
-${TITLE} is a generated 1Panel app template produced by 1panel-app-adapter-public.
+${TITLE} is a generated 1Panel app template produced by 1panel-app-adapter.
 
 ## Features
 
