@@ -1,6 +1,6 @@
 # AppSpec (Minimal)
 
-This document defines the minimal intermediate specification for standardized generation in the public skill.
+This document defines the minimal intermediate specification for standardized generation in the skill.
 
 ## Goal
 

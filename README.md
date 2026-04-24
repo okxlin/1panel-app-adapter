@@ -1,6 +1,6 @@
-# 1panel-app-adapter-public
+# 1panel-app-adapter
 
-`1panel-app-adapter-public` is a cleaned, public-facing skill for turning Docker application inputs into 1Panel app artifacts. It keeps the operational scripts needed by the workflow, but removes research-only material such as evidence packs, replay logs, and embedded repository snapshots.
+`1panel-app-adapter` is a cleaned, skill for turning Docker application inputs into 1Panel app artifacts. It keeps the operational scripts needed by the workflow, but removes research-only material such as evidence packs, replay logs, and embedded repository snapshots.
 
 ## Rule priority
 
@@ -126,9 +126,9 @@ Use this when you need to ensure `init.sh`, `upgrade.sh`, and `uninstall.sh` exi
 This public package follows a staged scope on purpose:
 
 1. define rule priority from authoritative sources first
-2. expose a clean public skill directory without research artifacts
+2. expose a clean skill directory without research artifacts
 3. provide scaffold, migrate, patch, env-sample, runtime-script-finalize, and validate scripts
-4. align the OpenClaw workflow to the public skill path and actual script surface
+4. align the OpenClaw workflow to the skill path and actual script surface
 5. keep improving direct generation quality so scaffold/migrate outputs need less manual backfill and move closer to one-click delivery quality
 
-The workflow description should match what the scripts actually do. As the public skill gains richer default generation quality, the workflow and docs should be updated to reflect that richer baseline without overstating unsupported intelligence.
+The workflow description should match what the scripts actually do. As the skill gains richer default generation quality, the workflow and docs should be updated to reflect that richer baseline without overstating unsupported intelligence.
