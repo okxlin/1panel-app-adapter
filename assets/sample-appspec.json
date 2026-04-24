@@ -1,0 +1,20 @@
+{
+  "appKey": "demo-app",
+  "title": "Demo App",
+  "version": "1.0.0",
+  "image": "nginx:1.27-alpine",
+  "port": 8080,
+  "targetPort": 80,
+  "type": "website",
+  "tag": "Website",
+  "withPanelDeps": false,
+  "volumes": [
+    "./data:/usr/share/nginx/html"
+  ],
+  "timezone": "UTC",
+  "sourceEvidence": {
+    "repository": "https://github.com/nginx/nginx",
+    "dockerDocs": "https://hub.docker.com/_/nginx",
+    "composeFile": "https://github.com/docker/awesome-compose/blob/master/nginx-flask-mysql/compose.yaml"
+  }
+}
