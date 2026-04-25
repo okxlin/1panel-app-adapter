@@ -2,6 +2,7 @@
 set -euo pipefail
 
 DIR=""
+STRICT_C=0
 STRICT_STORE=0
 I18N_MODE="warn"
 I18N_SCOPE="description"
@@ -23,7 +24,7 @@ if [[ -z "$PYTHON_BIN" ]]; then
 fi
 
 usage() {
-  echo "usage: validate-v2.sh --dir <app-dir> [--strict-store] [--i18n-mode off|warn|strict] [--i18n-scope description|labels|all] [--i18n-allow-english-labels CSV]"
+  echo "usage: validate-v2.sh --dir <app-dir> [--strict-c] [--strict-store] [--i18n-mode off|warn|strict] [--i18n-scope description|labels|all] [--i18n-allow-english-labels CSV]"
 }
 
 fail() {
@@ -44,6 +45,7 @@ info() {
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --dir) DIR="$2"; shift 2 ;;
+    --strict-c) STRICT_C=1; shift ;;
     --strict-store) STRICT_STORE=1; shift ;;
     --i18n-mode) I18N_MODE="$2"; shift 2 ;;
     --i18n-scope) I18N_SCOPE="$2"; shift 2 ;;
@@ -217,6 +219,8 @@ for item in items:
     env = item.get('envKey', '')
     typ = item.get('type', '')
     required = item.get('required', '')
+    label_keys = set(item.get('_labelKeys', []))
+    has_label_map = item.get('_hasLabelMap', False)
     if not env or not typ or required == '':
         print('[A][FAIL] formFields item missing envKey/type/required')
         failures += 1
@@ -231,6 +235,22 @@ for item in items:
     if required.lower() == 'true' and typ not in {'apps', 'service'} and 'edit' not in item:
         print(f'[B][WARN] {env} is required but missing edit:true')
         warnings += 1
+    if item.get('labelEn') and item.get('labelZh') and not has_label_map:
+        print(f'[B][WARN] {env}: missing label map (expected locales: en, zh, zh-Hant, ja, ko, ru, ms, pt-br)')
+        warnings += 1
+    if has_label_map:
+        missing = []
+        if 'zh-hant' in label_keys and 'zh-Hant' not in label_keys:
+            print(f"[B][WARN] {env}: label map uses legacy 'zh-hant'; canonical skill output prefers 'zh-Hant'. Recommend renaming.")
+            warnings += 1
+        for locale in ['en', 'zh', 'ja', 'ko', 'ru', 'ms', 'pt-br']:
+            if locale not in label_keys:
+                missing.append(locale)
+        if 'zh-Hant' not in label_keys and 'zh-hant' not in label_keys:
+            missing.append('zh-Hant(or zh-hant)')
+        if missing:
+            print(f"[B][WARN] {env}: label map missing locale(s): {', '.join(missing)}")
+            warnings += 1
 if failures:
     sys.exit(1)
 sys.exit(0)
@@ -271,6 +291,137 @@ if grep -qE '^\s*ports:\s*$' "$COMPOSE"; then
   fi
 else
   info "compose does not expose ports"
+fi
+
+set +e
+network_output=$("$PYTHON_BIN" - <<'PY' "$COMPOSE"
+import re, sys
+from pathlib import Path
+
+lines = Path(sys.argv[1]).read_text(encoding='utf-8', errors='ignore').splitlines()
+in_services = False
+services_indent = None
+service_indent = None
+current_service = None
+service_has_createdby = {}
+service_in_labels = False
+labels_indent = None
+service_in_networks = False
+networks_indent = None
+service_declares_networks = False
+external_networks = []
+found_default_bridge = False
+
+for line in lines:
+    if not line.strip() or line.lstrip().startswith('#'):
+        continue
+    indent = len(line) - len(line.lstrip(' '))
+    stripped = line.strip()
+    if re.match(r'^services:\s*$', stripped):
+        in_services = True
+        services_indent = indent
+        current_service = None
+        service_in_labels = False
+        labels_indent = None
+        service_in_networks = False
+        networks_indent = None
+        continue
+    if in_services:
+        if indent <= services_indent and re.match(r'^[A-Za-z0-9_.-]+:\s*$', stripped):
+            in_services = False
+            current_service = None
+            service_in_labels = False
+            labels_indent = None
+            service_in_networks = False
+            networks_indent = None
+        else:
+            m_service = re.match(r'^([A-Za-z0-9_.-]+):\s*$', stripped)
+            if m_service and indent == services_indent + 2:
+                current_service = m_service.group(1)
+                service_indent = indent
+                service_has_createdby.setdefault(current_service, False)
+                service_in_labels = False
+                labels_indent = None
+                service_in_networks = False
+                networks_indent = None
+                continue
+            if current_service is not None:
+                if indent <= service_indent:
+                    current_service = None
+                    service_in_labels = False
+                    labels_indent = None
+                    service_in_networks = False
+                    networks_indent = None
+                    continue
+                if re.match(r'^labels:\s*$', stripped) and indent == service_indent + 2:
+                    service_in_labels = True
+                    labels_indent = indent
+                    continue
+                if re.match(r'^networks:\s*$', stripped) and indent == service_indent + 2:
+                    service_in_networks = True
+                    networks_indent = indent
+                    service_declares_networks = True
+                    continue
+                if service_in_labels:
+                    if indent <= labels_indent:
+                        service_in_labels = False
+                        labels_indent = None
+                    elif re.match(r'^createdBy:\s*["\']?Apps["\']?\s*$', stripped):
+                        service_has_createdby[current_service] = True
+                if service_in_networks and indent <= networks_indent:
+                    service_in_networks = False
+                    networks_indent = None
+    if re.match(r'^1panel-network:\s*$', stripped):
+        found_default_bridge = True
+
+for i, line in enumerate(lines):
+    if re.match(r'^\s*[A-Za-z0-9_.-]+:\s*$', line):
+        name = line.strip().rstrip(':')
+        indent = len(line) - len(line.lstrip(' '))
+        j = i + 1
+        while j < len(lines):
+            l2 = lines[j]
+            if not l2.strip() or l2.lstrip().startswith('#'):
+                j += 1
+                continue
+            ind2 = len(l2) - len(l2.lstrip(' '))
+            if ind2 <= indent:
+                break
+            if re.match(r'^\s*external:\s*true\s*$', l2):
+                external_networks.append(name)
+                break
+            j += 1
+
+missing = [name for name, ok in service_has_createdby.items() if not ok]
+if missing:
+    print('[A][FAIL] compose service(s) missing labels.createdBy: "Apps": ' + ', '.join(missing))
+    raise SystemExit(1)
+if service_declares_networks and not external_networks:
+    print('[A][FAIL] compose declares service-level networks, but no top-level external network is defined; bridge-style apps must join at least one external network')
+    raise SystemExit(1)
+if external_networks and '1panel-network' not in external_networks:
+    print('[B][WARN] compose uses external network(s) but not default 1panel-network: ' + ', '.join(external_networks))
+elif not external_networks and not found_default_bridge:
+    print('[C][INFO] compose does not declare external bridge network; this is fine unless the app should join 1Panel public network')
+PY
+)
+network_status=$?
+set -e
+if [[ -n "$network_output" ]]; then
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    echo "$line"
+    if [[ "$line" == "[A][FAIL]"* ]]; then
+      FAILURES=$((FAILURES + 1))
+    elif [[ "$line" == "[B][WARN]"* ]]; then
+      WARNINGS=$((WARNINGS + 1))
+    elif [[ "$line" == "[C][INFO]"* ]]; then
+      INFOS=$((INFOS + 1))
+    fi
+  done <<< "$network_output"
+fi
+if [[ $network_status -ne 0 && $FAILURES -eq 0 ]]; then
+  FAILURES=$((FAILURES + 1))
 fi
 
 set +e
@@ -512,6 +663,15 @@ if [[ "$STRICT_STORE" -eq 1 ]]; then
   grep -qE '^## 访问说明\s*$' "$DIR/README.md" || fail "README.md missing section: ## 访问说明"
   grep -qE '^## Introduction\s*$' "$DIR/README.md" || fail "README.md missing section: ## Introduction"
   grep -qE '^## Features\s*$' "$DIR/README.md" || fail "README.md missing section: ## Features"
+fi
+
+if grep -qE '^[[:space:]]*healthcheck:\s*$' "$COMPOSE"; then
+  info "healthcheck present"
+else
+  info "healthcheck not found"
+  if [[ "$STRICT_C" -eq 1 ]]; then
+    fail "strict-c enabled: healthcheck missing"
+  fi
 fi
 
 WARNINGS=$((WARNINGS + PY_WARNINGS))

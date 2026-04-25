@@ -90,6 +90,7 @@ bash scripts/migrate-v1-to-v2.sh --src <app-dir> [--out <out-root>] [--version <
 ```bash
 bash scripts/validate-v2.sh --dir <app-dir>
 bash scripts/validate-v2.sh --dir <app-dir> --strict-store
+bash scripts/validate-v2.sh --dir <app-dir> --strict-c
 bash scripts/validate-v2.sh --dir <app-dir> --i18n-mode warn --i18n-scope description
 bash scripts/validate-v2.sh --dir <app-dir> --i18n-mode strict --i18n-scope all
 ```
@@ -102,6 +103,9 @@ bash scripts/validate-v2.sh --dir <app-dir> --i18n-mode strict --i18n-scope all
 - `references/implicit-envkeys.md` 中声明的隐式变量例外
 - 在 `--strict-store` 下执行 `references/readme-style.md` 约定的 README 结构检查
 - 可配置的 i18n 质量告警，覆盖 `additionalProperties.description` 与表单 `label` 多语言映射
+- 表单 `label map` 缺项、旧版 `zh-hant` 命名等提示
+- service 级 `networks:` 与 `1panel-network` 相关的桥接网络检查
+- 可选 `--strict-c` 健康检查门禁，用于更严格的交付校验
 
 ## 策略与风格参考
 

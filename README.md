@@ -90,6 +90,7 @@ bash scripts/migrate-v1-to-v2.sh --src <app-dir> [--out <out-root>] [--version <
 ```bash
 bash scripts/validate-v2.sh --dir <app-dir>
 bash scripts/validate-v2.sh --dir <app-dir> --strict-store
+bash scripts/validate-v2.sh --dir <app-dir> --strict-c
 bash scripts/validate-v2.sh --dir <app-dir> --i18n-mode warn --i18n-scope description
 bash scripts/validate-v2.sh --dir <app-dir> --i18n-mode strict --i18n-scope all
 ```
@@ -102,6 +103,9 @@ Validation includes:
 - implicit env key exceptions from `references/implicit-envkeys.md`
 - strict README structure checks from `references/readme-style.md` when `--strict-store` is used
 - configurable i18n quality warnings for `additionalProperties.description` and form-field label maps
+- label-map completeness hints, including missing locales and legacy `zh-hant` naming
+- compose bridge-network checks for service-level `networks:` usage and `1panel-network` recommendations
+- optional `--strict-c` healthcheck gate for stricter delivery validation
 
 ## Policy and style references
 
