@@ -1,5 +1,7 @@
 # 1panel-app-adapter
 
+[![README-English](https://img.shields.io/badge/README-English-1f6feb)](./README.md) [![README-简体中文](https://img.shields.io/badge/README-%E7%AE%80%E4%BD%93%E4%B8%AD%E6%96%87-fa8c16)](./README.zh-CN.md)
+
 `1panel-app-adapter` 是一个面向公开发布的 1Panel 应用适配 skill，用于把 Docker 应用输入整理为 1Panel 应用产物。它保留了生成、迁移、补丁和校验所需的运行脚本，同时移除了研究过程材料、重放日志和第三方仓库快照。
 
 ## 规则优先级
@@ -88,6 +90,8 @@ bash scripts/migrate-v1-to-v2.sh --src <app-dir> [--out <out-root>] [--version <
 ```bash
 bash scripts/validate-v2.sh --dir <app-dir>
 bash scripts/validate-v2.sh --dir <app-dir> --strict-store
+bash scripts/validate-v2.sh --dir <app-dir> --i18n-mode warn --i18n-scope description
+bash scripts/validate-v2.sh --dir <app-dir> --i18n-mode strict --i18n-scope all
 ```
 
 当前校验覆盖：
@@ -97,6 +101,7 @@ bash scripts/validate-v2.sh --dir <app-dir> --strict-store
 - compose `${VAR}` 与版本级 `data.yml` 的 `envKey` 闭环关系
 - `references/implicit-envkeys.md` 中声明的隐式变量例外
 - 在 `--strict-store` 下执行 `references/readme-style.md` 约定的 README 结构检查
+- 可配置的 i18n 质量告警，覆盖 `additionalProperties.description` 与表单 `label` 多语言映射
 
 ## 策略与风格参考
 
