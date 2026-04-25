@@ -3,6 +3,9 @@ set -euo pipefail
 
 DIR=""
 STRICT_STORE=0
+I18N_MODE="warn"
+I18N_SCOPE="description"
+I18N_ALLOW_EN_LABELS="API,URL,ID,OAuth,JWT,CPU,GPU,RAM,HTTP,HTTPS,TCP,UDP,SSH,DNS"
 FAILURES=0
 WARNINGS=0
 INFOS=0
@@ -20,7 +23,7 @@ if [[ -z "$PYTHON_BIN" ]]; then
 fi
 
 usage() {
-  echo "usage: validate-v2.sh --dir <app-dir> [--strict-store]"
+  echo "usage: validate-v2.sh --dir <app-dir> [--strict-store] [--i18n-mode off|warn|strict] [--i18n-scope description|labels|all] [--i18n-allow-english-labels CSV]"
 }
 
 fail() {
@@ -42,6 +45,9 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --dir) DIR="$2"; shift 2 ;;
     --strict-store) STRICT_STORE=1; shift ;;
+    --i18n-mode) I18N_MODE="$2"; shift 2 ;;
+    --i18n-scope) I18N_SCOPE="$2"; shift 2 ;;
+    --i18n-allow-english-labels) I18N_ALLOW_EN_LABELS="$2"; shift 2 ;;
     --help|-h) usage; exit 0 ;;
     *) echo "unknown arg: $1"; usage; exit 2 ;;
   esac
@@ -49,6 +55,8 @@ done
 
 [[ -n "$DIR" ]] || { usage; exit 2; }
 [[ -d "$DIR" ]] || { echo "[A][FAIL] app dir not found: $DIR"; exit 1; }
+case "$I18N_MODE" in off|warn|strict) ;; *) echo "invalid --i18n-mode: $I18N_MODE"; exit 2 ;; esac
+case "$I18N_SCOPE" in description|labels|all) ;; *) echo "invalid --i18n-scope: $I18N_SCOPE"; exit 2 ;; esac
 
 ROOT="$DIR/data.yml"
 SOURCE_EVIDENCE="$DIR/source-evidence.json"
@@ -317,6 +325,178 @@ if [[ -n "$env_closure_output" ]]; then
   done <<< "$env_closure_output"
 fi
 if [[ $env_closure_status -ne 0 && $FAILURES -eq 0 ]]; then
+  FAILURES=$((FAILURES + 1))
+fi
+
+set +e
+i18n_output=$("$PYTHON_BIN" - <<'PY' "$ROOT" "$VER" "$I18N_MODE" "$I18N_SCOPE" "$I18N_ALLOW_EN_LABELS"
+import re, sys
+from pathlib import Path
+
+root, ver, mode, scope, allow_csv = sys.argv[1:6]
+if mode == 'off':
+    raise SystemExit(0)
+
+allow = {x.strip().lower() for x in allow_csv.split(',') if x.strip()}
+
+
+def emit(level, msg):
+    print(f'[{level}] {msg}')
+
+
+def should_fail(msg):
+    if mode == 'strict':
+        emit('A][FAIL', msg)
+        return True
+    emit('B][WARN', msg)
+    return False
+
+
+def ascii_ratio(s):
+    if not s:
+        return 1.0
+    return sum(1 for ch in s if ord(ch) < 128) / len(s)
+
+
+def has_japanese(s):
+    return bool(re.search(r'[\u3040-\u30ff]', s))
+
+
+def has_korean(s):
+    return bool(re.search(r'[\uac00-\ud7af]', s))
+
+
+def has_cyrillic(s):
+    return bool(re.search(r'[\u0400-\u04FF]', s))
+
+
+def read_lines(path):
+    return Path(path).read_text(encoding='utf-8', errors='ignore').splitlines()
+
+
+def read_desc_map(lines):
+    in_ap = False
+    in_desc = False
+    desc_indent = 0
+    out = {}
+    for line in lines:
+        if re.match(r'^additionalProperties:\s*$', line):
+            in_ap = True
+            in_desc = False
+            continue
+        if in_ap and line.strip() and not line.startswith(' '):
+            in_ap = False
+            in_desc = False
+        if not in_ap:
+            continue
+        m = re.match(r'^(\s*)description:\s*$', line)
+        if m and len(m.group(1)) >= 2:
+            in_desc = True
+            desc_indent = len(m.group(1))
+            continue
+        if in_desc:
+            if not line.strip():
+                continue
+            indent = len(line) - len(line.lstrip(' '))
+            if indent <= desc_indent:
+                in_desc = False
+                continue
+            m2 = re.match(r'^\s*([A-Za-z0-9-]+):\s*(.*)$', line)
+            if m2 and indent == desc_indent + 2:
+                out[m2.group(1)] = m2.group(2).strip().strip('"\'')
+    return out
+
+
+def read_label_items(lines):
+    items = []
+    cur = None
+    in_label = False
+    label_indent = None
+    for line in lines:
+        m_item = re.match(r'^\s*-\s+', line)
+        if m_item:
+            if cur is not None:
+                items.append(cur)
+            cur = {'env': 'UNKNOWN', 'label': {}}
+            in_label = False
+            label_indent = None
+            continue
+        if cur is None:
+            continue
+        m_env = re.match(r'^\s*envKey:\s*([A-Za-z0-9_]+)\s*$', line)
+        if m_env:
+            cur['env'] = m_env.group(1)
+        m_label = re.match(r'^(\s*)label:\s*$', line)
+        if m_label:
+            in_label = True
+            label_indent = len(m_label.group(1))
+            continue
+        if in_label:
+            if not line.strip():
+                continue
+            indent = len(line) - len(line.lstrip(' '))
+            if indent <= (label_indent or 0):
+                in_label = False
+                label_indent = None
+                continue
+            m_loc = re.match(r'^\s*([A-Za-z0-9-]+):\s*(.*)$', line)
+            if m_loc:
+                cur['label'][m_loc.group(1)] = m_loc.group(2).strip().strip('"\'')
+    if cur is not None:
+        items.append(cur)
+    return items
+
+root_lines = read_lines(root)
+ver_lines = read_lines(ver)
+
+if scope in ('description', 'all'):
+    vals = {k: read_desc_map(root_lines).get(k, '').strip() for k in ['en', 'zh', 'zh-Hant', 'ja', 'ko', 'ru', 'ms', 'pt-br']}
+    if all(vals.values()):
+        en = vals['en'].lower().strip()
+        for key in ['ja', 'ko', 'ru', 'ms', 'pt-br']:
+            if vals[key].lower().strip() == en and should_fail(f'additionalProperties.description.{key} equals English text exactly'):
+                raise SystemExit(1)
+        if vals['zh'] == vals['zh-Hant'] and should_fail('additionalProperties.description.zh-Hant equals zh exactly'):
+            raise SystemExit(1)
+        for key in ['ja', 'ko', 'ru']:
+            if ascii_ratio(vals[key]) > 0.75 and should_fail(f'additionalProperties.description.{key} looks mostly ASCII/English'):
+                raise SystemExit(1)
+        if vals['ja'] and not has_japanese(vals['ja']) and should_fail('additionalProperties.description.ja missing Japanese script'):
+            raise SystemExit(1)
+        if vals['ko'] and not has_korean(vals['ko']) and should_fail('additionalProperties.description.ko missing Korean script'):
+            raise SystemExit(1)
+        if vals['ru'] and not has_cyrillic(vals['ru']) and should_fail('additionalProperties.description.ru missing Cyrillic script'):
+            raise SystemExit(1)
+
+if scope in ('labels', 'all'):
+    for item in read_label_items(ver_lines):
+        en = (item['label'].get('en') or '').strip()
+        if not en:
+            continue
+        same = sum(1 for key, value in item['label'].items() if key != 'en' and value.strip().lower() == en.lower())
+        if same >= 5 and should_fail(f"formFields[{item['env']}] label map has too many locales identical to English ({same})"):
+            raise SystemExit(1)
+        for key in ['ja', 'ko', 'ru']:
+            value = (item['label'].get(key) or '').strip()
+            if value and value.lower() == en.lower() and en.lower() not in allow:
+                if should_fail(f"formFields[{item['env']}] label.{key} equals English without whitelist term"):
+                    raise SystemExit(1)
+PY
+)
+i18n_status=$?
+set -e
+if [[ -n "$i18n_output" ]]; then
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    echo "$line"
+    if [[ "$line" == "[A][FAIL]"* ]]; then
+      FAILURES=$((FAILURES + 1))
+    elif [[ "$line" == "[B][WARN]"* ]]; then
+      WARNINGS=$((WARNINGS + 1))
+    fi
+  done <<< "$i18n_output"
+fi
+if [[ $i18n_status -ne 0 && $FAILURES -eq 0 && "$I18N_MODE" == "strict" ]]; then
   FAILURES=$((FAILURES + 1))
 fi
 

@@ -1,6 +1,8 @@
 # 1panel-app-adapter
 
-`1panel-app-adapter` is a cleaned, skill for turning Docker application inputs into 1Panel app artifacts. It keeps the operational scripts needed by the workflow, but removes research-only material such as evidence packs, replay logs, and embedded repository snapshots.
+[![README-English](https://img.shields.io/badge/README-English-1f6feb)](./README.md) [![README-简体中文](https://img.shields.io/badge/README-%E7%AE%80%E4%BD%93%E4%B8%AD%E6%96%87-fa8c16)](./README.zh-CN.md)
+
+`1panel-app-adapter` is a cleaned skill for turning Docker application inputs into 1Panel app artifacts. It keeps the operational scripts needed by the workflow, but removes research-only material such as evidence packs, replay logs, and embedded repository snapshots.
 
 ## Rule priority
 
@@ -88,6 +90,8 @@ bash scripts/migrate-v1-to-v2.sh --src <app-dir> [--out <out-root>] [--version <
 ```bash
 bash scripts/validate-v2.sh --dir <app-dir>
 bash scripts/validate-v2.sh --dir <app-dir> --strict-store
+bash scripts/validate-v2.sh --dir <app-dir> --i18n-mode warn --i18n-scope description
+bash scripts/validate-v2.sh --dir <app-dir> --i18n-mode strict --i18n-scope all
 ```
 
 Validation includes:
@@ -97,6 +101,7 @@ Validation includes:
 - compose `${VAR}` closure against version `data.yml` envKey declarations
 - implicit env key exceptions from `references/implicit-envkeys.md`
 - strict README structure checks from `references/readme-style.md` when `--strict-store` is used
+- configurable i18n quality warnings for `additionalProperties.description` and form-field label maps
 
 ## Policy and style references
 
