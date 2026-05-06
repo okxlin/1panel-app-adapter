@@ -48,8 +48,25 @@ def patch(path: Path):
             item["required"] = True
         if env.startswith("PANEL_APP_PORT") and "rule" not in item:
             item["rule"] = "paramPort"
-        if env and "edit" not in item and item.get("type") not in {"apps", "service"} and env not in {"PANEL_DB_HOST", "PANEL_REDIS_HOST"}:
+        if env and "edit" not in item and item.get("type") not in {"apps", "service"} and env not in {"PANEL_DB_HOST", "REDIS_HOST"}:
             item["edit"] = True
+
+        # Auto-fill label map if missing but labelEn/labelZh exist
+        if "label" not in item:
+            label_en = str(item.get("labelEn", "")).strip()
+            label_zh = str(item.get("labelZh", "")).strip()
+            if label_en or label_zh:
+                base = label_en or label_zh
+                item["label"] = {
+                    "en": label_en or base,
+                    "zh": label_zh or base,
+                    "zh-Hant": f"{label_zh or base}（佔位）",
+                    "ja": f"{base}（プレースホルダー）",
+                    "ko": f"{base}（플레이스홀더）",
+                    "ru": f"{base}（заполнитель）",
+                    "ms": f"{base} (placeholder)",
+                    "pt-br": f"{base} (placeholder)",
+                }
 
     if not any(isinstance(item, dict) and str(item.get("envKey", "")).strip() == "TZ" for item in formfields):
         formfields.append({
