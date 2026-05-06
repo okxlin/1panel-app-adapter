@@ -22,6 +22,9 @@ PORT=""
 TARGET_PORT=""
 TYPE="tool"
 TAG=""
+WEBSITE=""
+DOCUMENT=""
+GITHUB_URL=""
 VOLUMES=""
 WITH_PANEL_DEPS=0
 SOURCE_REPOSITORY=""
@@ -49,15 +52,31 @@ infer_tag() {
     security) printf 'Security'; return ;;
     storage) printf 'Storage'; return ;;
     server) printf 'Server'; return ;;
+    devops) printf 'DevOps'; return ;;
+    media) printf 'Media'; return ;;
   esac
 
   haystack="${title,,} ${image,,}"
-  if [[ "$haystack" == *redis* || "$haystack" == *mysql* || "$haystack" == *mariadb* || "$haystack" == *postgres* || "$haystack" == *postgresql* ]]; then
+  if [[ "$haystack" == *redis* || "$haystack" == *mysql* || "$haystack" == *mariadb* || "$haystack" == *postgres* || "$haystack" == *postgresql* || "$haystack" == *mongo* || "$haystack" == *sqlite* ]]; then
     printf 'Database'
-  elif [[ "$haystack" == *nginx* || "$haystack" == *apache* || "$haystack" == *caddy* || "$haystack" == *web* || "$haystack" == *site* ]]; then
+  elif [[ "$haystack" == *nginx* || "$haystack" == *apache* || "$haystack" == *caddy* || "$haystack" == *traefik* || "$haystack" == *haproxy* ]]; then
     printf 'Website'
-  elif [[ "$haystack" == *ai* || "$haystack" == *llm* || "$haystack" == *openai* || "$haystack" == *model* ]]; then
+  elif [[ "$haystack" == *ai* || "$haystack" == *llm* || "$haystack" == *openai* || "$haystack" == *model* || "$haystack" == *chatgpt* || "$haystack" == *ollama* ]]; then
     printf 'AI'
+  elif [[ "$haystack" == *jenkins* || "$haystack" == *gitlab* || "$haystack" == *gitea* || "$haystack" == *drone* || "$haystack" == *argo* || "$haystack" == *tekton* ]]; then
+    printf 'DevOps'
+  elif [[ "$haystack" == *docker* || "$haystack" == *k8s* || "$haystack" == *kubernetes* || "$haystack" == *rancher* || "$haystack" == *portainer* ]]; then
+    printf 'DevOps'
+  elif [[ "$haystack" == *ansible* || "$haystack" == *terraform* || "$haystack" == *vault* || "$haystack" == *consul* ]]; then
+    printf 'DevOps'
+  elif [[ "$haystack" == *plex* || "$haystack" == *emby* || "$haystack" == *jellyfin* || "$haystack" == *navidrome* || "$haystack" == *sonarr* || "$haystack" == *radarr* ]]; then
+    printf 'Media'
+  elif [[ "$haystack" == *nextcloud* || "$haystack" == *owncloud* || "$haystack" == *seafile* || "$haystack" == *minio* || "$haystack" == *s3* ]]; then
+    printf 'Storage'
+  elif [[ "$haystack" == *grafana* || "$haystack" == *prometheus* || "$haystack" == *zabbix* || "$haystack" == *uptime* || "$haystack" == *monitor* ]]; then
+    printf 'Server'
+  elif [[ "$haystack" == *web* || "$haystack" == *site* || "$haystack" == *blog* || "$haystack" == *wiki* || "$haystack" == *cms* ]]; then
+    printf 'Website'
   else
     printf 'Tool'
   fi
@@ -74,11 +93,14 @@ required:
   --version
 
 options:
-  --out-dir <dir>         default: /home/node/.openclaw/workspace/artifacts/1panel-apps
+  --out-dir <dir>         default: ./1panel-apps
   --port <host-port>      default: 8080
   --target-port <port>    default: 80
   --type <type>           default: tool
   --tag <tag>             optional explicit tag override
+  --website <url>         website URL for root data.yml additionalProperties.website
+  --document <url>        document URL for root data.yml additionalProperties.document
+  --github <url>          github/repo URL for root data.yml additionalProperties.github
   --volumes <a:b,c:d>     optional mounts
   --with-panel-deps       inject PANEL_DB_*/PANEL_REDIS_* fields
   --with-panel-db-redis   alias of --with-panel-deps
@@ -100,6 +122,9 @@ while [[ $# -gt 0 ]]; do
     --target-port) TARGET_PORT="$2"; shift 2 ;;
     --type) TYPE="$2"; shift 2 ;;
     --tag) TAG="$2"; shift 2 ;;
+    --website) WEBSITE="$2"; shift 2 ;;
+    --document) DOCUMENT="$2"; shift 2 ;;
+    --github) GITHUB_URL="$2"; shift 2 ;;
     --volumes) VOLUMES="$2"; shift 2 ;;
     --with-panel-deps|--with-panel-db-redis) WITH_PANEL_DEPS=1; shift ;;
     --source-repository) SOURCE_REPOSITORY="$2"; shift 2 ;;
@@ -117,7 +142,7 @@ done
   exit 2
 }
 
-OUT_DIR="${OUT_DIR:-/home/node/.openclaw/workspace/artifacts/1panel-apps}"
+OUT_DIR="${OUT_DIR:-./1panel-apps}"
 PORT="${PORT:-8080}"
 TARGET_PORT="${TARGET_PORT:-80}"
 TIMEZONE="${TIMEZONE:-Asia/Shanghai}"
@@ -131,7 +156,7 @@ mkdir -p "$VER_DIR/data" "$VER_DIR/scripts"
 TAG_VALUE="$(infer_tag "$TAG" "$TYPE" "$TITLE" "$IMAGE")"
 ARCHES=$(bash "$(dirname "$0")/detect_architectures.sh" "$IMAGE" 2>/dev/null || echo amd64)
 
-"$PYTHON_BIN" - "$APP_DIR/data.yml" "$TITLE" "$APP_KEY" "$TAG_VALUE" "$TYPE" "$ARCHES" <<'PY'
+"$PYTHON_BIN" - "$APP_DIR/data.yml" "$TITLE" "$APP_KEY" "$TAG_VALUE" "$TYPE" "$ARCHES" "$WEBSITE" "$DOCUMENT" "$GITHUB_URL" <<'PY'
 import sys
 from pathlib import Path
 import yaml
@@ -142,6 +167,9 @@ app_key = sys.argv[3]
 tag_value = sys.argv[4]
 app_type = sys.argv[5]
 arches = [x for x in sys.argv[6].split() if x] or ["amd64"]
+website = sys.argv[7] if len(sys.argv) > 7 else ""
+document = sys.argv[8] if len(sys.argv) > 8 else ""
+github_url = sys.argv[9] if len(sys.argv) > 9 else ""
 
 payload = {
     "name": title,
@@ -157,19 +185,19 @@ payload = {
         "description": {
             "en": title,
             "zh": title,
-            "zh-Hant": title,
-            "ja": title,
-            "ko": title,
-            "ru": title,
-            "ms": title,
-            "pt-br": title,
+            "zh-Hant": f"{title}（佔位）",
+            "ja": f"{title}（プレースホルダー）",
+            "ko": f"{title}（플레이스홀더）",
+            "ru": f"{title}（заполнитель）",
+            "ms": f"{title} (placeholder)",
+            "pt-br": f"{title} (placeholder)",
         },
         "type": app_type,
         "crossVersionUpdate": True,
         "limit": 0,
-        "website": "",
-        "github": "",
-        "document": "",
+        "website": website,
+        "github": github_url,
+        "document": document,
         "architectures": arches,
     },
 }
@@ -282,10 +310,10 @@ if [[ "$WITH_PANEL_DEPS" -eq 1 ]]; then
   FORM_FIELDS+="      required: true\\n"
   FORM_FIELDS+="      type: apps\\n"
   FORM_FIELDS+="      child:\\n"
-  FORM_FIELDS+="        default: \"\"\\n"
-  FORM_FIELDS+="        envKey: PANEL_DB_HOST\\n"
-  FORM_FIELDS+="        required: true\\n"
-  FORM_FIELDS+="        type: service\\n"
+  FORM_FIELDS+="        - default: \"\"\\n"
+  FORM_FIELDS+="          envKey: PANEL_DB_HOST\\n"
+  FORM_FIELDS+="          required: true\\n"
+  FORM_FIELDS+="          type: service\\n"
   FORM_FIELDS+="    - default: ${APP_KEY}\\n"
   FORM_FIELDS+="      edit: true\\n"
   FORM_FIELDS+="      envKey: PANEL_DB_NAME\\n"
@@ -339,23 +367,23 @@ if [[ "$WITH_PANEL_DEPS" -eq 1 ]]; then
   FORM_FIELDS+="      type: password\\n"
   FORM_FIELDS+="    - default: \"\"\\n"
   FORM_FIELDS+="      edit: true\\n"
-  FORM_FIELDS+="      envKey: PANEL_REDIS_HOST\\n"
-  FORM_FIELDS+="      labelEn: Redis Service\\n"
-  FORM_FIELDS+="      labelZh: Redis服务\\n"
+  FORM_FIELDS+="      envKey: REDIS_HOST\\n"
+  FORM_FIELDS+="      labelEn: Redis Host\\n"
+  FORM_FIELDS+="      labelZh: Redis地址\\n"
   FORM_FIELDS+="      label:\\n"
-  FORM_FIELDS+="        en: Redis Service\\n"
-  FORM_FIELDS+="        zh: Redis服务\\n"
-  FORM_FIELDS+="        zh-Hant: Redis 服務\\n"
-  FORM_FIELDS+="        ja: Redis サービス\\n"
-  FORM_FIELDS+="        ko: Redis 서비스\\n"
-  FORM_FIELDS+="        ru: Служба Redis\\n"
-  FORM_FIELDS+="        ms: Perkhidmatan Redis\\n"
-  FORM_FIELDS+="        pt-br: Serviço Redis\\n"
+  FORM_FIELDS+="        en: Redis Host\\n"
+  FORM_FIELDS+="        zh: Redis Host\\n"
+  FORM_FIELDS+="        zh-Hant: Redis 主機\\n"
+  FORM_FIELDS+="        ja: Redis ホスト\\n"
+  FORM_FIELDS+="        ko: Redis 호스트\\n"
+  FORM_FIELDS+="        ru: Хост Redis\\n"
+  FORM_FIELDS+="        ms: Hos Redis\\n"
+  FORM_FIELDS+="        pt-br: Host Redis\\n"
   FORM_FIELDS+="      required: true\\n"
   FORM_FIELDS+="      type: service\\n"
   FORM_FIELDS+="    - default: 6379\\n"
   FORM_FIELDS+="      edit: true\\n"
-  FORM_FIELDS+="      envKey: PANEL_REDIS_PORT\\n"
+  FORM_FIELDS+="      envKey: REDIS_PORT\\n"
   FORM_FIELDS+="      labelEn: Redis Port\\n"
   FORM_FIELDS+="      labelZh: Redis端口\\n"
   FORM_FIELDS+="      label:\\n"
@@ -442,8 +470,6 @@ additionalProperties:
 YAML
 printf "%b" "$FORM_FIELDS" >> "$VER_DIR/data.yml"
 
-"$PYTHON_BIN" "$(dirname "$0")/gen_env_sample.py" "$VER_DIR/data.yml" "$VER_DIR/.env.sample"
-
 "$PYTHON_BIN" - "$VER_DIR/docker-compose.yml" "$APP_KEY" "$IMAGE" "$TARGET_PORT" "$WITH_PANEL_DEPS" "$TYPE" "$TAG_VALUE" <<'PY'
 import sys
 from pathlib import Path
@@ -464,8 +490,8 @@ if with_panel_deps:
         "PANEL_DB_NAME=${PANEL_DB_NAME}",
         "PANEL_DB_USER=${PANEL_DB_USER}",
         "PANEL_DB_USER_PASSWORD=${PANEL_DB_USER_PASSWORD}",
-        "PANEL_REDIS_HOST=${PANEL_REDIS_HOST}",
-        "PANEL_REDIS_PORT=${PANEL_REDIS_PORT}",
+        "REDIS_HOST=${REDIS_HOST}",
+        "REDIS_PORT=${REDIS_PORT}",
         "PANEL_REDIS_ROOT_PASSWORD=${PANEL_REDIS_ROOT_PASSWORD}",
         "REDIS_DB=${REDIS_DB}",
     ])
@@ -496,6 +522,7 @@ PY
 
 if [[ -n "$VOLUMES" ]]; then
   echo "    volumes:" >> "$VER_DIR/docker-compose.yml"
+  named_volumes=()
   idx=1
   IFS=',' read -r -a mounts <<< "$VOLUMES" || true
   for item in "${mounts[@]}"; do
@@ -504,12 +531,23 @@ if [[ -n "$VOLUMES" ]]; then
     cont="${item#*:}"
     if [[ "$host" != ./* && "$host" != /* && "$host" != \$\{*\} ]]; then
       echo "      - \"${host}:${cont}\"" >> "$VER_DIR/docker-compose.yml"
+      named_volumes+=("$host")
     else
       echo "      - \"\${APP_DATA_DIR_${idx}}:${cont}\"" >> "$VER_DIR/docker-compose.yml"
       idx=$((idx+1))
     fi
   done
+  if [[ ${#named_volumes[@]} -gt 0 ]]; then
+    echo "" >> "$VER_DIR/docker-compose.yml"
+    echo "volumes:" >> "$VER_DIR/docker-compose.yml"
+    for vol in "${named_volumes[@]}"; do
+      echo "  ${vol}:" >> "$VER_DIR/docker-compose.yml"
+      echo "    name: ${vol}" >> "$VER_DIR/docker-compose.yml"
+    done
+  fi
 fi
+
+"$PYTHON_BIN" "$(dirname "$0")/gen_env_sample.py" "$VER_DIR/data.yml" "$VER_DIR/.env.sample" "$VER_DIR/docker-compose.yml"
 
 cat > "$VER_DIR/scripts/init.sh" <<'SH'
 #!/usr/bin/env bash
