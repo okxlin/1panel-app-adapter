@@ -5,7 +5,7 @@ DIR=""
 STRICT_C=0
 STRICT_STORE=0
 I18N_MODE="warn"
-I18N_SCOPE="description"
+I18N_SCOPE="all"
 I18N_ALLOW_EN_LABELS="API,URL,ID,OAuth,JWT,CPU,GPU,RAM,HTTP,HTTPS,TCP,UDP,SSH,DNS"
 FAILURES=0
 WARNINGS=0
@@ -205,7 +205,18 @@ for line in lines:
     if indent == item_indent + 2:
         m_kv = re.match(r'^\s*([A-Za-z0-9_]+):\s*(.*)$', line)
         if m_kv:
-            cur[m_kv.group(1)] = m_kv.group(2).strip().strip('"\'')
+            key = m_kv.group(1)
+            value = m_kv.group(2).strip().strip('"\'')
+            cur[key] = value
+            # Detect label map start
+            if key == 'label' and not value:
+                cur['_hasLabelMap'] = True
+                cur['_labelKeys'] = []
+    # Detect locale keys under label map
+    if indent == item_indent + 4 and cur is not None and cur.get('_hasLabelMap'):
+        m_locale = re.match(r'^\s*([a-z]{2}(?:-[a-zA-Z]+)?)\s*:', line)
+        if m_locale:
+            cur.setdefault('_labelKeys', []).append(m_locale.group(1))
 if cur:
     items.append(cur)
 
@@ -434,7 +445,8 @@ ver_path = Path(sys.argv[1])
 compose_path = Path(sys.argv[2])
 implicit_path = Path(sys.argv[3])
 
-declared = set(re.findall(r'^\s*envKey:\s*["\']?([A-Za-z_][A-Za-z0-9_]*)["\']?\s*$', ver_path.read_text(encoding='utf-8', errors='ignore'), flags=re.M))
+declared = set(re.findall(r'^\s*-\s*envKey:\s*["\']?([A-Za-z_][A-Za-z0-9_]*)["\']?\s*$|^\s*envKey:\s*["\']?([A-Za-z_][A-Za-z0-9_]*)["\']?\s*$', ver_path.read_text(encoding='utf-8', errors='ignore'), flags=re.M))
+declared = {g1 or g2 for g1, g2 in declared}
 
 implicit = set()
 if implicit_path.is_file():
@@ -476,6 +488,68 @@ if [[ -n "$env_closure_output" ]]; then
   done <<< "$env_closure_output"
 fi
 if [[ $env_closure_status -ne 0 && $FAILURES -eq 0 ]]; then
+  FAILURES=$((FAILURES + 1))
+fi
+
+# .env.sample consistency check
+set +e
+env_sample_output=$("$PYTHON_BIN" - <<'PY' "$COMPOSE" "$VER_DIR/.env.sample"
+import re, sys
+from pathlib import Path
+
+compose_path = Path(sys.argv[1])
+env_sample_path = Path(sys.argv[2])
+
+if not env_sample_path.is_file():
+    print("[A][FAIL] .env.sample missing")
+    raise SystemExit(1)
+
+compose_text = compose_path.read_text(encoding='utf-8', errors='ignore')
+vars_in_compose = set()
+for raw in re.findall(r'\$\{([^}]+)\}', compose_text):
+    key = raw.strip()
+    key = re.split(r'[:?+\-]', key, maxsplit=1)[0].strip()
+    if re.match(r'^[A-Za-z_][A-Za-z0-9_]*$', key):
+        vars_in_compose.add(key)
+
+env_sample_text = env_sample_path.read_text(encoding='utf-8', errors='ignore')
+vars_in_sample = set()
+for line in env_sample_text.splitlines():
+    line = line.strip()
+    if line and not line.startswith('#'):
+        m = re.match(r'^([A-Za-z_][A-Za-z0-9_]*)=', line)
+        if m:
+            vars_in_sample.add(m.group(1))
+
+missing_in_sample = sorted(vars_in_compose - vars_in_sample)
+if missing_in_sample:
+    for key in missing_in_sample:
+        print(f"[B][WARN] compose variable missing from .env.sample: {key}")
+
+extra_in_sample = sorted(vars_in_sample - vars_in_compose)
+if extra_in_sample:
+    for key in extra_in_sample:
+        print(f"[C][INFO] .env.sample has extra variable not in compose: {key}")
+
+print(f"[C][INFO] env sample closure ok: compose_vars={len(vars_in_compose)} sample_vars={len(vars_in_sample)}")
+PY
+)
+env_sample_status=$?
+set -e
+if [[ -n "$env_sample_output" ]]; then
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    echo "$line"
+    if [[ "$line" == "[A][FAIL]"* ]]; then
+      FAILURES=$((FAILURES + 1))
+    elif [[ "$line" == "[B][WARN]"* ]]; then
+      WARNINGS=$((WARNINGS + 1))
+    elif [[ "$line" == "[C][INFO]"* ]]; then
+      INFOS=$((INFOS + 1))
+    fi
+  done <<< "$env_sample_output"
+fi
+if [[ $env_sample_status -ne 0 && $FAILURES -eq 0 ]]; then
   FAILURES=$((FAILURES + 1))
 fi
 
