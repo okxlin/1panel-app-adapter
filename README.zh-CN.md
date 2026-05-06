@@ -2,6 +2,8 @@
 
 [![README-English](https://img.shields.io/badge/README-English-1f6feb)](./README.md) [![README-简体中文](https://img.shields.io/badge/README-%E7%AE%80%E4%BD%93%E4%B8%AD%E6%96%87-fa8c16)](./README.zh-CN.md)
 
+另见：[`DELIVERY_REPORT.md`](./DELIVERY_REPORT.md)，用于维护者查看规则决策与回归说明。
+
 `1panel-app-adapter` 是一个面向公开发布的 1Panel 应用适配 skill，用于把 Docker 应用输入整理为 1Panel 应用产物。它保留了生成、迁移、补丁和校验所需的运行脚本，同时移除了研究过程材料、重放日志和第三方仓库快照。
 
 ## 规则优先级
@@ -30,6 +32,10 @@
 - `scripts/generate-from-appspec.py`
 - `scripts/finalize_runtime_scripts.sh`
 - `scripts/validate-v2.sh`
+- `scripts/generate.sh` — v2 生成器包装脚本（兼容 CLI）
+- `scripts/validate.sh` — v2 校验包装脚本
+- `scripts/cleanup-migrate-backups.sh` — 清理迁移备份
+- `scripts/test-env-sample-closure.sh` — 回归测试：.env.sample 闭合检查
 
 ## 生成新的应用骨架
 
@@ -48,6 +54,9 @@ bash scripts/scaffold-v2.sh \
   [--target-port <container-port>] \
   [--type <type>] \
   [--tag <tag>] \
+  [--website <url>] \
+  [--document <url>] \
+  [--github <url>] \
   [--volumes <host:container,...>] \
   [--with-panel-deps]
 ```
@@ -112,6 +121,8 @@ bash scripts/validate-v2.sh --dir <app-dir> --i18n-mode strict --i18n-scope all
 - `references/source-policy.md`
 - `references/readme-style.md`
 - `references/implicit-envkeys.md`
+- `references/edit-exempt-envkeys.md` — edit:true 例外清单
+- `references/schema.md` — 1Panel AppStore v2 字段事实表
 
 ## 运行脚本补齐
 

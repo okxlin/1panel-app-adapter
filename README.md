@@ -2,6 +2,8 @@
 
 [![README-English](https://img.shields.io/badge/README-English-1f6feb)](./README.md) [![README-简体中文](https://img.shields.io/badge/README-%E7%AE%80%E4%BD%93%E4%B8%AD%E6%96%87-fa8c16)](./README.zh-CN.md)
 
+See also: [`DELIVERY_REPORT.md`](./DELIVERY_REPORT.md) for maintainer-facing rule and regression notes.
+
 `1panel-app-adapter` is a cleaned skill for turning Docker application inputs into 1Panel app artifacts. It keeps the operational scripts needed by the workflow, but removes research-only material such as evidence packs, replay logs, and embedded repository snapshots.
 
 ## Rule priority
@@ -30,6 +32,10 @@ This means the skill is rule-first, not example-first. Repository habits are use
 - `scripts/generate-from-appspec.py`
 - `scripts/finalize_runtime_scripts.sh`
 - `scripts/validate-v2.sh`
+- `scripts/generate.sh` — v2 generator wrapper (compat CLI)
+- `scripts/validate.sh` — v2 validation wrapper
+- `scripts/cleanup-migrate-backups.sh` — cleanup old migrate backups
+- `scripts/test-env-sample-closure.sh` — regression test: .env.sample closure check
 
 ## Generate a new app skeleton
 
@@ -48,6 +54,9 @@ bash scripts/scaffold-v2.sh \
   [--target-port <container-port>] \
   [--type <type>] \
   [--tag <tag>] \
+  [--website <url>] \
+  [--document <url>] \
+  [--github <url>] \
   [--volumes <host:container,...>] \
   [--with-panel-deps]
 ```
@@ -112,6 +121,8 @@ Validation includes:
 - `references/source-policy.md`
 - `references/readme-style.md`
 - `references/implicit-envkeys.md`
+- `references/edit-exempt-envkeys.md` — edit:true exception allowlist
+- `references/schema.md` — 1Panel AppStore v2 field fact table
 
 ## Finalize runtime scripts
 
