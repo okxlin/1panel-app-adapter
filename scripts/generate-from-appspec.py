@@ -20,7 +20,7 @@ REQUIRED_TOP_FIELDS = [
 ]
 
 REQUIRED_SOURCE_EVIDENCE = ["repository", "dockerDocs", "composeFile"]
-DEFAULT_OUT_DIR = "/home/node/.openclaw/workspace/artifacts/1panel-apps"
+DEFAULT_OUT_DIR = "./1panel-apps"
 
 
 def _fail(msg: str) -> None:
