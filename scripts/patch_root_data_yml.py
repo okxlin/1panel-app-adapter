@@ -13,6 +13,16 @@ class NoAliasDumper(yaml.SafeDumper):
 
 REQ_DESC_LOCALES = ["en", "zh", "zh-Hant", "ja", "ko", "ru", "ms", "pt-br"]
 
+# Language-specific placeholder suffixes (same as scaffold-v2.sh)
+_LOCALE_PLACEHOLDER = {
+    "zh-Hant": "（佔位）",
+    "ja": "（プレースホルダー）",
+    "ko": "（플레이스홀더）",
+    "ru": "（заполнитель）",
+    "ms": "（ruang letak）",
+    "pt-br": "(preenchimento)",
+}
+
 
 def stripq(s: str) -> str:
     return s.strip().strip('"').strip("'")
@@ -140,13 +150,16 @@ def patch(path: Path, app_key_hint: str = "", architectures: str = ""):
     arches = normalize_arches(architectures) if architectures else (ap.get("architectures") if isinstance(ap.get("architectures"), list) else parse_ap_arches(lines) or ["amd64"])
     description_map = ap.get("description") if isinstance(ap.get("description"), dict) else parse_description_map(lines)
     for locale in REQ_DESC_LOCALES:
-        if locale not in description_map or description_map[locale] == "":
+        existing = description_map.get(locale, "")
+        if not existing:
             if locale == "en":
                 description_map[locale] = short_desc_en or title
             elif locale == "zh":
                 description_map[locale] = short_desc_zh or title
             else:
-                description_map[locale] = title
+                description_map[locale] = f"{title}{_LOCALE_PLACEHOLDER.get(locale, '')}"
+        elif locale not in ("en", "zh") and existing.lower().strip() == (description_map.get("en") or "").lower().strip():
+            description_map[locale] = f"{title}{_LOCALE_PLACEHOLDER.get(locale, '')}"
 
     payload = {
         "name": name,

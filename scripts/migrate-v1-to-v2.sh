@@ -44,7 +44,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 [[ -n "$SRC" ]] || { usage; exit 2; }
-OUT="${OUT:-/home/node/.openclaw/workspace/artifacts/1panel-apps}"
+OUT="${OUT:-./1panel-apps}"
 
 [[ -d "$SRC" ]] || { echo "FAIL: --src not found: $SRC" >&2; exit 1; }
 [[ -s "$SRC/data.yml" ]] || { echo "FAIL: source missing root data.yml" >&2; exit 1; }
@@ -152,7 +152,7 @@ fi
 "$PYTHON_BIN" "$SCRIPT_DIR/patch_root_data_yml.py" "$APP_DIR/data.yml" "$APP_KEY" "$ARCHES"
 "$PYTHON_BIN" "$SCRIPT_DIR/patch_version_data_yml.py" "$VER_DIR/data.yml"
 "$PYTHON_BIN" "$SCRIPT_DIR/patch_compose_yml.py" "$VER_DIR/docker-compose.yml" "$APP_TYPE"
-"$PYTHON_BIN" "$SCRIPT_DIR/gen_env_sample.py" "$VER_DIR/data.yml" "$VER_DIR/.env.sample"
+"$PYTHON_BIN" "$SCRIPT_DIR/gen_env_sample.py" "$VER_DIR/data.yml" "$VER_DIR/.env.sample" "$VER_DIR/docker-compose.yml"
 
 if [[ ! -f "$VER_DIR/scripts/init.sh" ]]; then
   cat > "$VER_DIR/scripts/init.sh" <<'SH'

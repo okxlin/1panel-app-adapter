@@ -82,7 +82,7 @@ def patch_compose(path: Path, app_type: str = ""):
         has_healthcheck = any(re.match(r'^\s{4}healthcheck:\s*$', item) for item in block)
         normalized_type = (app_type or "").strip().lower()
         has_http_ports = any(re.match(r'^\s*-\s*"?\$\{PANEL_APP_PORT_HTTP\}:(\d+)"?\s*$', item) or re.match(r'^\s*-\s*"?(\d+):(\d+)"?\s*$', item) for item in block)
-        if not has_healthcheck and normalized_type == "website" and has_http_ports:
+        if not has_healthcheck and normalized_type in ("website", "tool") and has_http_ports:
             container_port = "80"
             for item in block:
                 m_port = re.match(r'^\s*-\s*"?\$\{PANEL_APP_PORT_HTTP\}:(\d+)"?\s*$', item)
