@@ -195,6 +195,12 @@ A change is considered healthy when:
 
 Warnings related to placeholder translations may remain acceptable until real localized content generation is introduced.
 
+### Latest hardening
+- strict-store now fails on duplicate YAML keys in root/version/compose artifacts
+- strict-store now fails on placeholder/template residue in README and metadata
+- validator now runs `docker compose config` using `.env.sample` with a safe `CONTAINER_NAME` fallback
+- scaffold now refuses to write into non-empty target app directories unless `--force` is explicitly passed
+
 ---
 
 ## Latest Audit Results

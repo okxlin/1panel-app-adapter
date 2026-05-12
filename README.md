@@ -58,7 +58,8 @@ bash scripts/scaffold-v2.sh \
   [--document <url>] \
   [--github <url>] \
   [--volumes <host:container,...>] \
-  [--with-panel-deps]
+  [--with-panel-deps] \
+  [--force]
 ```
 
 Notes:
@@ -70,6 +71,7 @@ Notes:
 - when `--tag` is omitted, scaffold infers a more specific default tag from `--type`, title, and image
 - source evidence is mandatory and is written to `<app>/source-evidence.json`
 - `--timezone` controls the default `TZ` value generated in version `data.yml`
+- scaffold refuses to write into a non-empty target app directory unless `--force` is passed
 
 ## Generate from AppSpec
 
@@ -109,6 +111,9 @@ Validation includes:
 - `source-evidence.json` existence and required keys (`repository`, `dockerDocs`, `composeFile`)
 - source evidence keys must use `https://` URL shape
 - compose `${VAR}` closure against version `data.yml` envKey declarations
+- duplicate YAML key detection for root/version/compose files
+- `docker compose config` validation using `.env.sample` with a safe fallback `CONTAINER_NAME`
+- strict-store placeholder/template residue detection for README and metadata
 - implicit env key exceptions from `references/implicit-envkeys.md`
 - strict README structure checks from `references/readme-style.md` when `--strict-store` is used
 - configurable i18n quality warnings for `additionalProperties.description` and form-field label maps

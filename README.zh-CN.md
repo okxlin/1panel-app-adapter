@@ -58,7 +58,8 @@ bash scripts/scaffold-v2.sh \
   [--document <url>] \
   [--github <url>] \
   [--volumes <host:container,...>] \
-  [--with-panel-deps]
+  [--with-panel-deps] \
+  [--force]
 ```
 
 说明：
@@ -70,6 +71,7 @@ bash scripts/scaffold-v2.sh \
 - 未显式传入 `--tag` 时，脚手架会根据 `--type`、标题和镜像推断更合适的默认标签
 - 来源证据是必填项，会落盘到 `<app>/source-evidence.json`
 - `--timezone` 用于控制版本级 `data.yml` 里 `TZ` 的默认值
+- 默认不会覆盖非空目标应用目录；如确认要覆盖，需显式传 `--force`
 
 ## 从 AppSpec 生成
 
@@ -109,6 +111,9 @@ bash scripts/validate-v2.sh --dir <app-dir> --i18n-mode strict --i18n-scope all
 - `source-evidence.json` 是否存在，以及 `repository` / `dockerDocs` / `composeFile` 是否齐全
 - 来源证据键是否满足 `https://` URL 形态
 - compose `${VAR}` 与版本级 `data.yml` 的 `envKey` 闭环关系
+- root/version/compose 的重复 YAML key 检测
+- 基于 `.env.sample` 与安全兜底 `CONTAINER_NAME` 的 `docker compose config` 解析校验
+- `--strict-store` 下对 README/元数据占位模板残留的阻断检测
 - `references/implicit-envkeys.md` 中声明的隐式变量例外
 - 在 `--strict-store` 下执行 `references/readme-style.md` 约定的 README 结构检查
 - 可配置的 i18n 质量告警，覆盖 `additionalProperties.description` 与表单 `label` 多语言映射
