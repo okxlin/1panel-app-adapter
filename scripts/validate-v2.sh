@@ -24,7 +24,14 @@ if [[ -z "$PYTHON_BIN" ]]; then
 fi
 
 usage() {
-  echo "usage: validate-v2.sh --dir <app-dir> [--strict-c] [--strict-store] [--i18n-mode off|warn|strict] [--i18n-scope description|labels|all] [--i18n-allow-english-labels CSV]"
+  cat <<'USAGE'
+usage: validate-v2.sh --dir <app-dir> [--strict-c] [--strict-store] [--i18n-mode off|warn|strict] [--i18n-scope description|labels|all] [--i18n-allow-english-labels CSV]
+
+behavior notes:
+  - --strict-store is intended for delivery-ready artifacts, not raw scaffold placeholders
+  - when docker compose is available, validator runs a real `docker compose config` render check
+  - when docker compose is unavailable, that render check is skipped and reported as a warning
+USAGE
 }
 
 fail() {
@@ -81,6 +88,64 @@ COMPOSE="$VER_DIR/docker-compose.yml"
 [[ -s "$VER" ]] || fail "missing version data.yml"
 [[ -s "$COMPOSE" ]] || fail "missing docker-compose.yml"
 [[ -s "$SOURCE_EVIDENCE" ]] || fail "missing source-evidence.json"
+
+set +e
+yaml_sanity_output=$("$PYTHON_BIN" - <<'PY' "$ROOT" "$VER" "$COMPOSE"
+import sys
+from pathlib import Path
+import yaml
+
+class DupCheckLoader(yaml.SafeLoader):
+    pass
+
+def no_dups(loader, node, deep=False):
+    mapping = {}
+    for key_node, value_node in node.value:
+        key = loader.construct_object(key_node, deep=deep)
+        if key in mapping:
+            raise yaml.constructor.ConstructorError(
+                'while constructing a mapping', node.start_mark,
+                f'found duplicate key ({key})', key_node.start_mark,
+            )
+        mapping[key] = loader.construct_object(value_node, deep=deep)
+    return mapping
+
+DupCheckLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, no_dups)
+
+for label, path_str in [('root data.yml', sys.argv[1]), ('version data.yml', sys.argv[2]), ('docker-compose.yml', sys.argv[3])]:
+    path = Path(path_str)
+    try:
+        yaml.load(path.read_text(encoding='utf-8', errors='ignore'), Loader=DupCheckLoader)
+    except Exception as exc:
+        print(f"[A][FAIL] {label} has invalid YAML or duplicate keys: {exc}")
+        raise SystemExit(1)
+PY
+)
+yaml_sanity_status=$?
+set -e
+if [[ -n "$yaml_sanity_output" ]]; then
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    echo "$line"
+    if [[ "$line" == "[A][FAIL]"* ]]; then
+      FAILURES=$((FAILURES + 1))
+    fi
+  done <<< "$yaml_sanity_output"
+fi
+if [[ $yaml_sanity_status -ne 0 && $FAILURES -eq 0 ]]; then
+  FAILURES=$((FAILURES + 1))
+fi
+
+if [[ "$STRICT_STORE" -eq 1 ]]; then
+  set +e
+  placeholder_output=$(grep -RInE '请按官方来源补全|generated 1Panel app template|1panel-app-adapter 生成的|\(placeholder\)|（佔位）|（プレースホルダー）|（플레이스홀더）' "$ROOT" "$DIR/README.md" 2>/dev/null)
+  placeholder_status=$?
+  set -e
+  if [[ $placeholder_status -eq 0 && -n "$placeholder_output" ]]; then
+    fail "placeholder template text detected in delivery artifact"
+    echo "$placeholder_output"
+  fi
+fi
 
 if [[ $FAILURES -gt 0 ]]; then
   echo "SUMMARY: fail=$FAILURES warn=$WARNINGS info=$INFOS"
@@ -722,6 +787,74 @@ if [[ -n "$i18n_output" ]]; then
   done <<< "$i18n_output"
 fi
 if [[ $i18n_status -ne 0 && $FAILURES -eq 0 && "$I18N_MODE" == "strict" ]]; then
+  FAILURES=$((FAILURES + 1))
+fi
+
+set +e
+compose_render_output=$("$PYTHON_BIN" - <<'PY' "$COMPOSE" "$VER_DIR/.env.sample"
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+compose_path = Path(sys.argv[1])
+env_sample = Path(sys.argv[2])
+if shutil.which('docker') is None:
+    print('[B][WARN] docker not available; skipped docker compose config validation')
+    raise SystemExit(0)
+
+pairs = {}
+if env_sample.is_file():
+    for line in env_sample.read_text(encoding='utf-8', errors='ignore').splitlines():
+        raw = line.strip()
+        if not raw or raw.startswith('#') or '=' not in raw:
+            continue
+        k, v = raw.split('=', 1)
+        pairs[k.strip()] = v
+pairs.setdefault('CONTAINER_NAME', 'adapter-validate')
+if not pairs.get('CONTAINER_NAME', '').strip():
+    pairs['CONTAINER_NAME'] = 'adapter-validate'
+
+with tempfile.NamedTemporaryFile('w', encoding='utf-8', delete=False) as tf:
+    for k, v in pairs.items():
+        tf.write(f'{k}={v}\n')
+    temp_env = tf.name
+
+cmd = ['docker', 'compose', '--env-file', temp_env, '-f', str(compose_path), 'config']
+try:
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+finally:
+    try:
+        os.unlink(temp_env)
+    except FileNotFoundError:
+        pass
+
+if proc.returncode != 0:
+    msg = (proc.stderr or proc.stdout or '').strip().replace('\n', ' | ')
+    print(f'[A][FAIL] docker compose config failed: {msg}')
+    raise SystemExit(1)
+
+print('[C][INFO] docker compose config ok')
+PY
+)
+compose_render_status=$?
+set -e
+if [[ -n "$compose_render_output" ]]; then
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    echo "$line"
+    if [[ "$line" == "[A][FAIL]"* ]]; then
+      FAILURES=$((FAILURES + 1))
+    elif [[ "$line" == "[B][WARN]"* ]]; then
+      WARNINGS=$((WARNINGS + 1))
+    elif [[ "$line" == "[C][INFO]"* ]]; then
+      INFOS=$((INFOS + 1))
+    fi
+  done <<< "$compose_render_output"
+fi
+if [[ $compose_render_status -ne 0 && $FAILURES -eq 0 ]]; then
   FAILURES=$((FAILURES + 1))
 fi
 

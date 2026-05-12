@@ -27,6 +27,7 @@ DOCUMENT=""
 GITHUB_URL=""
 VOLUMES=""
 WITH_PANEL_DEPS=0
+FORCE=0
 SOURCE_REPOSITORY=""
 SOURCE_DOCKER_DOCS=""
 SOURCE_COMPOSE_FILE=""
@@ -103,11 +104,17 @@ options:
   --github <url>          github/repo URL for root data.yml additionalProperties.github
   --volumes <a:b,c:d>     optional mounts
   --with-panel-deps       inject PANEL_DB_*/PANEL_REDIS_* fields
+  --force                 overwrite existing target app directory
   --with-panel-db-redis   alias of --with-panel-deps
   --source-repository <url>   official source repository URL (required)
   --source-docker-docs <url>  official docker docs/image URL (required)
   --source-compose-file <url> official compose reference URL (required)
   --timezone <tz>             default TZ value for version data.yml (default: Asia/Shanghai)
+
+behavior notes:
+  - raw scaffold output contains placeholder README / metadata text by design
+  - replace placeholder content before expecting --strict-store to pass
+  - --force allows writing into an existing non-empty app directory; it does not clean residual files for you
 USAGE
 }
 
@@ -127,6 +134,7 @@ while [[ $# -gt 0 ]]; do
     --github) GITHUB_URL="$2"; shift 2 ;;
     --volumes) VOLUMES="$2"; shift 2 ;;
     --with-panel-deps|--with-panel-db-redis) WITH_PANEL_DEPS=1; shift ;;
+    --force) FORCE=1; shift ;;
     --source-repository) SOURCE_REPOSITORY="$2"; shift 2 ;;
     --source-docker-docs) SOURCE_DOCKER_DOCS="$2"; shift 2 ;;
     --source-compose-file) SOURCE_COMPOSE_FILE="$2"; shift 2 ;;
@@ -149,6 +157,16 @@ TIMEZONE="${TIMEZONE:-Asia/Shanghai}"
 
 APP_DIR="$OUT_DIR/$APP_KEY"
 VER_DIR="$APP_DIR/$VERSION"
+if [[ -e "$APP_DIR" ]]; then
+  shopt -s nullglob dotglob
+  existing_entries=("$APP_DIR"/*)
+  shopt -u nullglob dotglob
+  if [[ ${#existing_entries[@]} -gt 0 && "$FORCE" -ne 1 ]]; then
+    echo "FAIL: target app directory already exists and is not empty: $APP_DIR" >&2
+    echo "Hint: remove it first or re-run with --force when overwrite is intentional." >&2
+    exit 2
+  fi
+fi
 mkdir -p "$VER_DIR/data" "$VER_DIR/scripts"
 : > "$VER_DIR/data/.gitkeep"
 : > "$VER_DIR/scripts/.gitkeep"

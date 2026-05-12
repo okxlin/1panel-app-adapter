@@ -40,13 +40,14 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Generate app artifacts from minimal appspec JSON")
     parser.add_argument("--spec", required=True, help="Path to appspec JSON")
     parser.add_argument("--out-dir", help="Override output directory")
-    parser.add_argument("--validate", action="store_true", help="Run strict-store validation after generation")
+    parser.add_argument("--validate", action="store_true", help="Run baseline validation after generation")
+    parser.add_argument("--strict-store-validate", action="store_true", help="Run strict-store validation after generation (expects delivery-ready content)")
     parser.add_argument("--require-validate", action="store_true", help="Fail if --validate is not enabled")
     parser.add_argument("--report", help="Write run report JSON to this file path")
     args = parser.parse_args()
 
-    if args.require_validate and not args.validate:
-        _fail("--require-validate requires --validate")
+    if args.require_validate and not (args.validate or args.strict_store_validate):
+        _fail("--require-validate requires --validate or --strict-store-validate")
 
     spec_path = Path(args.spec).resolve()
     if not spec_path.is_file():
@@ -134,7 +135,8 @@ def main() -> int:
         },
         "outputDir": str(target_root),
         "appDir": str(app_dir),
-        "validateRequested": bool(args.validate),
+        "validateRequested": bool(args.validate or args.strict_store_validate),
+        "strictStoreValidate": bool(args.strict_store_validate),
         "requireValidate": bool(args.require_validate),
         "validatedAt": "",
         "validateSummary": {
@@ -152,7 +154,7 @@ def main() -> int:
         report["step"] = "generate"
         subprocess.run(cmd, check=True)
 
-        if args.validate:
+        if args.validate or args.strict_store_validate:
             validate = script_dir / "validate-v2.sh"
             if not validate.is_file():
                 raise FileNotFoundError(f"validate script not found: {validate}")
@@ -161,8 +163,9 @@ def main() -> int:
                 str(validate),
                 "--dir",
                 str(app_dir),
-                "--strict-store",
             ]
+            if args.strict_store_validate:
+                validate_cmd.append("--strict-store")
             report["step"] = "validate"
             validate_proc = subprocess.run(validate_cmd, check=True, capture_output=True, text=True)
             if validate_proc.stdout:

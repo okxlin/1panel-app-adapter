@@ -58,7 +58,8 @@ bash scripts/scaffold-v2.sh \
   [--document <url>] \
   [--github <url>] \
   [--volumes <host:container,...>] \
-  [--with-panel-deps]
+  [--with-panel-deps] \
+  [--force]
 ```
 
 Notes:
@@ -70,17 +71,38 @@ Notes:
 - when `--tag` is omitted, scaffold infers a more specific default tag from `--type`, title, and image
 - source evidence is mandatory and is written to `<app>/source-evidence.json`
 - `--timezone` controls the default `TZ` value generated in version `data.yml`
+- scaffold refuses to write into a non-empty target app directory unless `--force` is passed
+- raw scaffold output is a starting point, not a delivery-ready strict-store artifact
+- `--force` allows writing into an existing non-empty app directory but does not clean residual files for you
+
+## Fast path from scaffold to strict-store
+
+```bash
+# 1) Generate the skeleton
+bash scripts/scaffold-v2.sh   --app-key demo   --title "Demo"   --image nginx:latest   --version 1.0.0   --source-repository <repo-url>   --source-docker-docs <docs-url>   --source-compose-file <compose-url>
+
+# 2) Replace scaffold placeholders in:
+#    - README.md
+#    - root data.yml description / shortDesc / i18n text
+
+# 3) Check compose variables and .env.sample if you changed envKey / compose content
+
+# 4) Run strict-store validation on the delivery-ready artifact
+bash scripts/validate-v2.sh --dir ./1panel-apps/demo --strict-store
+```
 
 ## Generate from AppSpec
 
 ```bash
 python3 scripts/generate-from-appspec.py --spec assets/sample-appspec.json
 python3 scripts/generate-from-appspec.py --spec assets/sample-appspec.json --validate
+python3 scripts/generate-from-appspec.py --spec assets/sample-appspec.json --strict-store-validate
 python3 scripts/generate-from-appspec.py --spec assets/sample-appspec.json --validate --require-validate
+python3 scripts/generate-from-appspec.py --spec assets/sample-appspec.json --strict-store-validate --require-validate
 python3 scripts/generate-from-appspec.py --spec assets/sample-appspec.json --validate --report artifacts/run-report.json
 ```
 
-Report JSON includes `validateSummary.fail/warn/info` when validation is executed.
+Report JSON includes `validateSummary.fail/warn/info` when validation is executed. `--validate` runs baseline validation; `--strict-store-validate` is reserved for delivery-ready content after placeholders are replaced.
 Report JSON also includes `qualityGate` (`not_run` / `passed` / `failed`).
 
 References:
@@ -109,6 +131,10 @@ Validation includes:
 - `source-evidence.json` existence and required keys (`repository`, `dockerDocs`, `composeFile`)
 - source evidence keys must use `https://` URL shape
 - compose `${VAR}` closure against version `data.yml` envKey declarations
+- duplicate YAML key detection for root/version/compose files
+- `docker compose config` validation using `.env.sample` with a safe fallback `CONTAINER_NAME`
+- full compose-render validation expects an available `docker compose` CLI in the execution environment
+- strict-store placeholder/template residue detection for README and metadata
 - implicit env key exceptions from `references/implicit-envkeys.md`
 - strict README structure checks from `references/readme-style.md` when `--strict-store` is used
 - configurable i18n quality warnings for `additionalProperties.description` and form-field label maps
