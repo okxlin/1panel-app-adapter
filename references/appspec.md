@@ -45,16 +45,21 @@ Provide a stable `spec -> artifacts` path with explicit source evidence and repr
 
 ## One-command Execution
 
-You can run generation and strict validation together:
+You can run generation with either baseline or strict-store validation:
 
 - `python3 scripts/generate-from-appspec.py --spec <path-to-spec.json> --validate`
+- `python3 scripts/generate-from-appspec.py --spec <path-to-spec.json> --strict-store-validate`
 - `python3 scripts/generate-from-appspec.py --spec <path-to-spec.json> --validate --require-validate`
+- `python3 scripts/generate-from-appspec.py --spec <path-to-spec.json> --strict-store-validate --require-validate`
 
 You can also emit an audit-friendly report JSON:
 
 - `python3 scripts/generate-from-appspec.py --spec <path-to-spec.json> --validate --report <report-path.json>`
 
-When `--validate` is enabled, report JSON also includes:
+`--validate` runs baseline validation suitable for raw generated output.
+`--strict-store-validate` runs `validate-v2.sh --strict-store` and should be used only after README / metadata placeholders are replaced.
+
+When validation is enabled, report JSON also includes:
 
 - `validatedAt`
 - `validateSummary.fail`

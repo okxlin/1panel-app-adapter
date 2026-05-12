@@ -96,11 +96,13 @@ bash scripts/validate-v2.sh --dir ./1panel-apps/demo --strict-store
 ```bash
 python3 scripts/generate-from-appspec.py --spec assets/sample-appspec.json
 python3 scripts/generate-from-appspec.py --spec assets/sample-appspec.json --validate
+python3 scripts/generate-from-appspec.py --spec assets/sample-appspec.json --strict-store-validate
 python3 scripts/generate-from-appspec.py --spec assets/sample-appspec.json --validate --require-validate
+python3 scripts/generate-from-appspec.py --spec assets/sample-appspec.json --strict-store-validate --require-validate
 python3 scripts/generate-from-appspec.py --spec assets/sample-appspec.json --validate --report artifacts/run-report.json
 ```
 
-Report JSON includes `validateSummary.fail/warn/info` when validation is executed.
+Report JSON includes `validateSummary.fail/warn/info` when validation is executed. `--validate` runs baseline validation; `--strict-store-validate` is reserved for delivery-ready content after placeholders are replaced.
 Report JSON also includes `qualityGate` (`not_run` / `passed` / `failed`).
 
 References:

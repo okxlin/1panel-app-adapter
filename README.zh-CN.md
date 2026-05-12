@@ -96,11 +96,13 @@ bash scripts/validate-v2.sh --dir ./1panel-apps/demo --strict-store
 ```bash
 python3 scripts/generate-from-appspec.py --spec assets/sample-appspec.json
 python3 scripts/generate-from-appspec.py --spec assets/sample-appspec.json --validate
+python3 scripts/generate-from-appspec.py --spec assets/sample-appspec.json --strict-store-validate
 python3 scripts/generate-from-appspec.py --spec assets/sample-appspec.json --validate --require-validate
+python3 scripts/generate-from-appspec.py --spec assets/sample-appspec.json --strict-store-validate --require-validate
 python3 scripts/generate-from-appspec.py --spec assets/sample-appspec.json --validate --report artifacts/run-report.json
 ```
 
-当启用校验时，报告 JSON 会包含 `validateSummary.fail/warn/info`。
+当启用校验时，报告 JSON 会包含 `validateSummary.fail/warn/info`。其中 `--validate` 运行基础校验；`--strict-store-validate` 仅适用于已替换 placeholder 的交付态产物。
 报告 JSON 还会包含 `qualityGate`（`not_run` / `passed` / `failed`）。
 
 参考：
