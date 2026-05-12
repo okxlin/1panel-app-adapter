@@ -205,13 +205,14 @@ Warnings related to placeholder translations may remain acceptable until real lo
 
 ## Latest Audit Results
 
-All three generation chains achieved 0 warn:
+Current regression baseline after the validator hardening split is:
 
-| Chain | fail | warn | info | Status |
-|-------|------|------|------|--------|
-| scaffold-v2 | 0 | 0 | 5 | PASS |
-| generate-from-appspec.py | 0 | 0 | 5 | PASS |
-| migrate-v1-to-v2 | 0 | 0 | 5 | PASS |
+| Chain | Expected outcome | Notes |
+|-------|------------------|-------|
+| scaffold-v2 raw output | generation succeeds; `--strict-store` may fail until placeholders are replaced | scaffold intentionally starts from delivery-incomplete placeholder content |
+| generate-from-appspec.py raw output | same behavior as scaffold-v2 for overwrite safety and placeholder handling | it reuses `scaffold-v2.sh` underneath |
+| delivery-ready artifact | `--strict-store` should pass | requires real README / metadata content instead of scaffold placeholders |
+| migrate-v1-to-v2 | should still be revalidated against current validator rules | migration output is expected to target delivery-ready quality |
 
 Key fixes in this round:
 
