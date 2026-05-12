@@ -72,6 +72,24 @@ bash scripts/scaffold-v2.sh \
 - 来源证据是必填项，会落盘到 `<app>/source-evidence.json`
 - `--timezone` 用于控制版本级 `data.yml` 里 `TZ` 的默认值
 - 默认不会覆盖非空目标应用目录；如确认要覆盖，需显式传 `--force`
+- raw scaffold 输出只是起点，不应直接视为 strict-store 可交付产物
+- `--force` 只是允许写入已有非空目录，不会替你清理残留文件
+
+## 从 scaffold 到 strict-store 的最短路径
+
+```bash
+# 1）先生成脚手架
+bash scripts/scaffold-v2.sh   --app-key demo   --title "Demo"   --image nginx:latest   --version 1.0.0   --source-repository <repo-url>   --source-docker-docs <docs-url>   --source-compose-file <compose-url>
+
+# 2）替换脚手架占位内容：
+#    - README.md
+#    - root data.yml 中的 description / shortDesc / 多语言文案
+
+# 3）如果改过 envKey 或 compose 内容，检查 compose 变量与 .env.sample
+
+# 4）对“已补齐真实内容”的产物跑 strict-store
+bash scripts/validate-v2.sh --dir ./1panel-apps/demo --strict-store
+```
 
 ## 从 AppSpec 生成
 
@@ -113,6 +131,7 @@ bash scripts/validate-v2.sh --dir <app-dir> --i18n-mode strict --i18n-scope all
 - compose `${VAR}` 与版本级 `data.yml` 的 `envKey` 闭环关系
 - root/version/compose 的重复 YAML key 检测
 - 基于 `.env.sample` 与安全兜底 `CONTAINER_NAME` 的 `docker compose config` 解析校验
+- 完整的 compose 渲染校验依赖执行环境中可用的 `docker compose` CLI
 - `--strict-store` 下对 README/元数据占位模板残留的阻断检测
 - `references/implicit-envkeys.md` 中声明的隐式变量例外
 - 在 `--strict-store` 下执行 `references/readme-style.md` 约定的 README 结构检查

@@ -110,6 +110,11 @@ options:
   --source-docker-docs <url>  official docker docs/image URL (required)
   --source-compose-file <url> official compose reference URL (required)
   --timezone <tz>             default TZ value for version data.yml (default: Asia/Shanghai)
+
+behavior notes:
+  - raw scaffold output contains placeholder README / metadata text by design
+  - replace placeholder content before expecting --strict-store to pass
+  - --force allows writing into an existing non-empty app directory; it does not clean residual files for you
 USAGE
 }
 

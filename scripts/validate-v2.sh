@@ -24,7 +24,14 @@ if [[ -z "$PYTHON_BIN" ]]; then
 fi
 
 usage() {
-  echo "usage: validate-v2.sh --dir <app-dir> [--strict-c] [--strict-store] [--i18n-mode off|warn|strict] [--i18n-scope description|labels|all] [--i18n-allow-english-labels CSV]"
+  cat <<'USAGE'
+usage: validate-v2.sh --dir <app-dir> [--strict-c] [--strict-store] [--i18n-mode off|warn|strict] [--i18n-scope description|labels|all] [--i18n-allow-english-labels CSV]
+
+behavior notes:
+  - --strict-store is intended for delivery-ready artifacts, not raw scaffold placeholders
+  - when docker compose is available, validator runs a real `docker compose config` render check
+  - when docker compose is unavailable, that render check is skipped and reported as a warning
+USAGE
 }
 
 fail() {
