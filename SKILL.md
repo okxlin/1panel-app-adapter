@@ -267,6 +267,7 @@ Adaptation suggestions:
 
 - Scaffold a v2-style 1Panel app directory with richer default fields
 - Migrate an existing app directory into the v2 layout with basic quality backfill
+- Import Baota/aaPanel Docker Store app directories into 1Panel v2 layout
 - Patch root metadata, version metadata, and compose content
 - Generate `.env.sample`
 - Validate the resulting app directory
@@ -277,13 +278,16 @@ Adaptation suggestions:
 - `python3 scripts/generate-from-appspec.py --help`
 - `python3 scripts/generate-from-appspec.py --spec <spec.json> --validate`
 - `python3 scripts/generate-from-appspec.py --spec <spec.json> --validate --require-validate`
+- `python3 scripts/import-baota-app.py --help`
+- `python3 scripts/import-baota-app.py --input <baota-app-dir> --validate`
+- `python3 scripts/import-baota-app.py --input <apphub-dir> --batch --validate`
 - `bash scripts/migrate-v1-to-v2.sh --help`
 - `bash scripts/finalize_runtime_scripts.sh --help`
 - `bash scripts/validate-v2.sh --help`
 
 ## Recommended execution flow
 
-Use this skill in one of two paths.
+Use this skill in one of three paths.
 
 ### Path A: generate a new 1Panel app
 
@@ -304,7 +308,17 @@ Use this skill in one of two paths.
 5. Run `bash scripts/validate-v2.sh --dir <app-dir> --strict-store`.
 6. If needed, rerun the patch scripts and validate again until strict-store passes.
 
-The intended finish line for this skill is: generated or migrated output exists, root/version/compose structure is normalized, and `validate-v2.sh --strict-store` has been executed with its result recorded for follow-up decisions.
+### Path C: import a Baota/aaPanel Docker Store app
+
+1. Confirm the input app directory follows the public `aaPanel/apphub` structure: `app.json`, `icon.png`, and a version directory containing `docker-compose.yml` and `.env`.
+2. Run `python3 scripts/import-baota-app.py --input <baota-app-dir> --out-dir <out-dir> --version latest --validate --require-validate`.
+3. For apphub-style batch input, run `python3 scripts/import-baota-app.py --input <apphub-dir> --batch --out-dir <out-dir> --validate --report <report.json>`.
+4. Review `source-evidence.json` and migration notes. Baota metadata alone is not proof that the upstream image, ports, volumes, or env semantics are official.
+5. For delivery candidates, run `docker compose --env-file <version>/.env.sample -f <version>/docker-compose.yml config` with a safe `CONTAINER_NAME` value, then run `bash scripts/validate-v2.sh --dir <app-dir> --strict-store` after official source evidence is completed.
+
+Baota import rules are grounded in `references/baota-app-format.md` and `references/baota-to-1panel-mapping.md`. The public `aaPanel/apphub` template defines `HOST_IP`, `CPUS`, `MEMORY_LIMIT`, and `APP_PATH` as required `.env` variables, and aaPanel source creates/reuses `baota_net` before app installation. Imported artifacts convert those runtime assumptions into 1Panel conventions instead of preserving Baota-only variables.
+
+The intended finish line for this skill is: generated, migrated, or imported output exists, root/version/compose structure is normalized, and `validate-v2.sh --strict-store` has been executed with its result recorded for follow-up decisions.
 
 ## Supported scaffold arguments
 

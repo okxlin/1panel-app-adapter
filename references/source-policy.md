@@ -35,3 +35,18 @@ This includes:
 - dependency relationships (DB, Redis, sidecars, service topology)
 
 If details are unknown, keep defaults minimal and mark follow-up work outside generated artifacts.
+
+## Baota/aaPanel Import Evidence
+
+Baota/aaPanel apphub metadata can be used as format evidence for the import process, but it is not by itself official upstream evidence for the target application.
+
+For Baota imports:
+
+- Public format source: `https://github.com/aaPanel/apphub`
+- Runtime behavior source: `https://github.com/aaPanel/aaPanel`
+- Imported artifacts should include `source-evidence.json.importSource` with `type: "baota"` and the selected source version.
+- `home` and `help` fields from `app.json` are classified as upstream evidence only when they match a recognizable official project or documentation source.
+- When `home` is empty but the input app lives in a git checkout, `repository` may fall back to that apphub repository URL as the app definition source. Keep `evidenceStatus` as `third_party_only` unless the target application's own official source is identified.
+- If only Baota/aaPanel metadata is available, keep `evidenceStatus` as `third_party_only` and require manual review before strict-store delivery.
+
+During verification on 2026-06-22, `btpanel/apphub` was not publicly accessible, while `aaPanel/apphub` was publicly accessible and contained real `alist` and `deeplx` app definitions plus the app template.

@@ -30,6 +30,7 @@
 - `scripts/gen-env-sample.sh`
 - `scripts/gen_env_sample.py`
 - `scripts/generate-from-appspec.py`
+- `scripts/import-baota-app.py` — 导入宝塔/aaPanel Docker 商店应用
 - `scripts/finalize_runtime_scripts.sh`
 - `scripts/validate-v2.sh`
 - `scripts/generate.sh` — v2 生成器包装脚本（兼容 CLI）
@@ -109,6 +110,39 @@ python3 scripts/generate-from-appspec.py --spec assets/sample-appspec.json --val
 
 - `references/appspec.md`
 - `assets/sample-appspec.json`
+
+## 导入宝塔/aaPanel Docker 商店应用
+
+```bash
+# 单应用目录，包含 app.json/icon.png/<version>/docker-compose.yml
+python3 scripts/import-baota-app.py \
+  --input <baota-app-dir> \
+  --out-dir ./1panel-apps \
+  --version latest \
+  --validate \
+  --require-validate
+
+# 批量导入 apphub 目录，其直接子目录是各个应用目录
+python3 scripts/import-baota-app.py \
+  --input <apphub-dir> \
+  --batch \
+  --out-dir ./1panel-apps \
+  --validate \
+  --report artifacts/baota-import-report.json
+
+# 只导出标准化 AppSpec，再走 AppSpec 生成路径
+python3 scripts/import-baota-app.py \
+  --input <baota-app-dir> \
+  --version latest \
+  --emit-appspec artifacts/app.appspec.json
+```
+
+导入器基于公开的 `aaPanel/apphub` 格式和 aaPanel Docker 应用运行逻辑实现。它会把 `${HOST_IP}:${APP_PORT}:<container>` 端口转换为 `PANEL_APP_PORT_*`，把 `${APP_PATH}` 挂载转换为可配置的 `APP_DATA_DIR*` 字段，将 `baota_net` 替换为 `1panel-network`，将 `createdBy: bt_apps` 改为 `Apps`，移除宝塔 CPU/内存 deploy 限制，并把迁移说明写入 `source-evidence.json`。
+
+参考：
+
+- `references/baota-app-format.md`
+- `references/baota-to-1panel-mapping.md`
 
 ## 迁移已有应用目录
 

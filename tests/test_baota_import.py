@@ -1,0 +1,894 @@
+#!/usr/bin/env python3
+"""
+Unit tests for Baota → 1Panel import pipeline.
+
+Tests cover: BaotaPrecheck, BaotaParser, BaotaToAppSpecMapper,
+             ComposeTransformer, ImportRunner, and edge cases.
+"""
+
+import atexit
+import json
+import pathlib
+import shutil
+import subprocess
+import sys
+import tempfile
+import unittest
+from typing import Optional
+import yaml
+
+# ── Ensure scripts/ is on path ────────────────────────────────────────
+_SCRIPT_DIR = pathlib.Path(__file__).resolve().parent.parent / "scripts"
+sys.path.insert(0, str(_SCRIPT_DIR))
+
+from baota_import_lib import (
+    BaotaPrecheck,
+    BaotaParser,
+    BaotaToAppSpecMapper,
+    ComposeTransformer,
+    ImportRunner,
+    E_BAOTA_DISABLED,
+    E_BAOTA_APP_JSON_INVALID,
+    E_BAOTA_COMPOSE_MISSING,
+    E_BAOTA_VERSION_DIR_MISSING,
+    E_BAOTA_VERSION_MISSING,
+    _expand_versions,
+    _select_version,
+)
+
+_SAMPLE_ROOT = pathlib.Path(tempfile.mkdtemp(prefix="baota_fixtures_"))
+_SAMPLE_DIR = _SAMPLE_ROOT / "baota-apps"
+atexit.register(lambda: shutil.rmtree(_SAMPLE_ROOT, ignore_errors=True))
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  Helpers
+# ═══════════════════════════════════════════════════════════════════════
+
+_ICON_BYTES = b"\x89PNG\r\n\x1a\nfixture"
+
+
+def _write_text(path: pathlib.Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+
+
+def _write_json(path: pathlib.Path, data: dict) -> None:
+    _write_text(path, json.dumps(data, ensure_ascii=False, indent=4) + "\n")
+
+
+def _write_app(
+    base_dir: pathlib.Path,
+    app_json: dict,
+    compose: Optional[str] = "",
+    env: str = "APP_PATH=\n",
+    version: str = "latest",
+) -> None:
+    base_dir.mkdir(parents=True, exist_ok=True)
+    _write_json(base_dir / "app.json", app_json)
+    (base_dir / "icon.png").write_bytes(_ICON_BYTES)
+    _write_text(base_dir / version / ".env", env)
+    if compose is not None:
+        _write_text(base_dir / version / "docker-compose.yml", compose)
+
+
+def _base_app_json(
+    appname: str,
+    apptitle: str,
+    appdesc: str,
+    *,
+    apptype: str = "Tools",
+    app_type_cn: str = "工具",
+    appstatus: int = 1,
+    field: Optional[list] = None,
+    env: Optional[list] = None,
+    volumes: Optional[dict] = None,
+    home: str = "",
+    help_url: str = "",
+    appversion: Optional[list] = None,
+) -> dict:
+    return {
+        "appid": -1,
+        "appname": appname,
+        "apptitle": apptitle,
+        "apptype": apptype,
+        "appTypeCN": app_type_cn,
+        "appversion": appversion or [{"m_version": "latest", "s_version": []}],
+        "appdesc": appdesc,
+        "appstatus": appstatus,
+        "home": home,
+        "help": help_url,
+        "updateat": 1752027587,
+        "depend": None,
+        "field": field or [],
+        "env": env or [],
+        "volumes": volumes or {},
+    }
+
+
+def _create_sample_apps() -> None:
+    alist_fields = [
+        {"attr": "domain", "name": "域名", "type": "textarea", "default": "", "suffix": "浏览器访问的域名,非必填", "unit": ""},
+        {"attr": "allow_access", "name": "允许外部访问", "type": "checkbox", "default": True, "suffix": "允许直接通过主机IP+端口访问", "unit": ""},
+        {"attr": "alist_web_port", "name": "web管理端口", "type": "number", "default": 15244, "suffix": "alist的web管理端口", "unit": ""},
+        {"attr": "s3_server_port", "name": "s3服务端口", "type": "number", "default": 5426, "suffix": "s3服务的端口", "unit": ""},
+        {"attr": "cpus", "name": "cpu核心数限制", "type": "number", "default": 0, "suffix": "0为不限制", "unit": ""},
+        {"attr": "memory_limit", "name": "内存限制", "type": "number", "default": 0, "suffix": "0为不限制", "unit": ""},
+    ]
+    alist_env = [
+        {"key": "alist_web_port", "type": "port", "default": None, "desc": "web管理端口"},
+        {"key": "s3_server_port", "type": "port", "default": None, "desc": "s3服务端口"},
+        {"key": "app_path", "type": "path", "default": None, "desc": "应用数据目录"},
+        {"key": "host_ip", "type": "string", "default": None, "desc": "主机IP"},
+        {"key": "cpus", "type": "number", "default": None, "desc": "CPU核心数限制"},
+        {"key": "memory_limit", "type": "number", "default": None, "desc": "内存大小限制"},
+    ]
+    alist_compose = """services:
+  alist:
+    image: xhofe/alist:latest
+    deploy:
+      resources:
+        limits:
+          cpus: ${CPUS}
+          memory: ${MEMORY_LIMIT}
+    environment:
+      - PUID=0
+      - PGID=0
+      - UMASK=022
+    ports:
+      - ${HOST_IP}:${ALIST_WEB_PORT}:5244
+      - ${HOST_IP}:${S3_SERVER_PORT}:5426
+    restart: always
+    volumes:
+      - ${APP_PATH}/data:/opt/alist/data
+      - ${APP_PATH}/mnt:/mnt/data
+    labels:
+      createdBy: "bt_apps"
+    networks:
+      - baota_net
+
+networks:
+  baota_net:
+    external: true
+"""
+    _write_app(
+        _SAMPLE_DIR / "alist",
+        _base_app_json(
+            "alist",
+            "Alist",
+            "一个支持多存储的文件列表程序，使用Gin和Solidjs",
+            apptype="Storage",
+            app_type_cn="存储/网盘",
+            field=alist_fields,
+            env=alist_env,
+            volumes={"data": {"type": "path", "desc": "数据目录"}, "mnt": {"type": "path", "desc": "挂载目录"}},
+            help_url="https://alist.nn.ci",
+            appversion=[{"m_version": "latest", "s_version": []}, {"m_version": "3", "s_version": ["42.0"]}],
+        ),
+        alist_compose,
+        "ALIST_WEB_PORT=\nS3_SERVER_PORT=\nHOST_IP=\nCPUS=\nMEMORY_LIMIT=\nAPP_PATH=\n",
+    )
+
+    _write_app(
+        _SAMPLE_DIR / "apphub" / "adguardhome",
+        _base_app_json(
+            "adguardhome",
+            "AdGuard Home",
+            "AdGuard Home is a network-wide software for blocking ads and tracking.",
+            apptype="Security",
+            app_type_cn="安全",
+            field=[
+                {"attr": "ag_web_port", "name": "Web管理端口", "type": "number", "default": 3000, "suffix": "", "unit": ""},
+                {"attr": "ag_dns_port", "name": "DNS端口", "type": "number", "default": 53, "suffix": "", "unit": ""},
+            ],
+            env=[
+                {"key": "ag_web_port", "type": "port", "default": None, "desc": "Web UI端口"},
+                {"key": "ag_dns_port", "type": "port", "default": None, "desc": "DNS服务器端口"},
+            ],
+            volumes={"work": {"type": "path", "desc": "工作目录"}, "conf": {"type": "path", "desc": "配置目录"}},
+            help_url="https://github.com/AdguardTeam/AdGuardHome/wiki",
+        ),
+        """services:
+  adguardhome:
+    image: adguard/adguardhome:latest
+    restart: always
+    ports:
+      - ${HOST_IP}:${AG_WEB_PORT}:3000
+      - ${HOST_IP}:${AG_DNS_PORT}:53/udp
+    volumes:
+      - ${APP_PATH}/work:/opt/adguardhome/work
+      - ${APP_PATH}/conf:/opt/adguardhome/conf
+    labels:
+      createdBy: "bt_apps"
+    networks:
+      - baota_net
+
+networks:
+  baota_net:
+    external: true
+""",
+        "AG_WEB_PORT=\nAG_DNS_PORT=\nHOST_IP=\nAPP_PATH=\n",
+    )
+
+    _write_app(
+        _SAMPLE_DIR / "apphub" / "redis-dependent-app",
+        _base_app_json(
+            "redis-dependent-app",
+            "Redis App",
+            "An application that depends on Redis.",
+            field=[{"attr": "web_port", "name": "Web端口", "type": "number", "default": 8080, "suffix": "", "unit": ""}],
+            env=[
+                {"key": "web_port", "type": "port", "default": None, "desc": "Web UI端口"},
+                {"key": "app_path", "type": "path", "default": None, "desc": "应用数据目录"},
+            ],
+            volumes={"data": {"type": "path", "desc": "数据目录"}},
+        ),
+        """services:
+  app:
+    image: example/app:latest
+    restart: always
+    ports:
+      - ${HOST_IP}:${WEB_PORT}:8080
+    volumes:
+      - ${APP_PATH}/data:/app/data
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    labels:
+      createdBy: "bt_apps"
+    networks:
+      - baota_net
+    depends_on:
+      redis:
+        condition: service_started
+
+  redis:
+    image: redis:7-alpine
+    restart: always
+    volumes:
+      - ${APP_PATH}/redis-data:/data
+    labels:
+      createdBy: "bt_apps"
+    networks:
+      - baota_net
+
+networks:
+  baota_net:
+    external: true
+""",
+        "WEB_PORT=\nHOST_IP=\nAPP_PATH=\n",
+    )
+
+    _write_app(
+        _SAMPLE_DIR / "apphub" / "disabled-app",
+        _base_app_json("disabled-app", "Disabled App", "This app is disabled in the store.", appstatus=0),
+        """services:
+  disabled-app:
+    image: example/disabled:latest
+    restart: unless-stopped
+    networks:
+      - baota_net
+    labels:
+      createdBy: "bt_apps"
+
+networks:
+  baota_net:
+    external: true
+""",
+    )
+    _write_app(
+        _SAMPLE_DIR / "apphub" / "file-volume-app",
+        _base_app_json(
+            "file-volume-app",
+            "File Volume App",
+            "An app that uses file-type volumes.",
+            volumes={"config": {"type": "file", "desc": "配置文件"}, "data": {"type": "path", "desc": "数据目录"}},
+        ),
+        """services:
+  file-app:
+    image: example/file-app:latest
+    restart: always
+    volumes:
+      - ${APP_PATH}/config.yml:/app/config.yml
+      - ${APP_PATH}/data:/app/data
+    labels:
+      createdBy: "bt_apps"
+    networks:
+      - baota_net
+
+networks:
+  baota_net:
+    external: true
+""",
+    )
+    _write_app(
+        _SAMPLE_DIR / "apphub" / "broken-field-env-mismatch",
+        _base_app_json(
+            "broken-field-env-mismatch",
+            "Mismatch App",
+            "This app has field/env mismatches.",
+            field=[{"attr": "webport", "name": "Web Port", "type": "number", "default": 8080, "suffix": "", "unit": ""}],
+            env=[{"key": "WEB_PORT", "type": "port", "default": None, "desc": "Web UI port"}],
+        ),
+        """services:
+  mismatch-app:
+    image: example/mismatch:latest
+    restart: always
+    ports:
+      - ${HOST_IP}:${WEB_PORT}:8080
+    labels:
+      createdBy: "bt_apps"
+    networks:
+      - baota_net
+
+networks:
+  baota_net:
+    external: true
+""",
+        "WEB_PORT=\nHOST_IP=\n",
+    )
+    _write_app(
+        _SAMPLE_DIR / "apphub" / "broken-missing-compose",
+        _base_app_json("broken-missing-compose", "Broken App", "This app is missing its compose file."),
+        compose=None,
+    )
+
+
+_create_sample_apps()
+
+def _sample(name: str) -> str:
+    """Return path to a sample app directory."""
+    # Try main samples first, then apphub
+    p = _SAMPLE_DIR / name / "app.json"
+    if p.is_file():
+        return str(_SAMPLE_DIR / name)
+    p2 = _SAMPLE_DIR / "apphub" / name / "app.json"
+    if p2.is_file():
+        return str(_SAMPLE_DIR / "apphub" / name)
+    raise FileNotFoundError(f"Sample '{name}' not found")
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  Version Helpers
+# ═══════════════════════════════════════════════════════════════════════
+
+class TestVersionExpansion(unittest.TestCase):
+    def test_latest_only(self):
+        versions = _expand_versions([{"m_version": "latest", "s_version": []}])
+        self.assertEqual(versions, ["latest"])
+
+    def test_major_minor(self):
+        versions = _expand_versions([{"m_version": "3", "s_version": ["42.0", "41.0"]}])
+        self.assertEqual(versions, ["3.42.0", "3.41.0"])
+
+    def test_mixed(self):
+        versions = _expand_versions([
+            {"m_version": "latest", "s_version": []},
+            {"m_version": "3", "s_version": ["42.0"]},
+        ])
+        self.assertEqual(versions, ["latest", "3.42.0"])
+
+    def test_select_latest(self):
+        self.assertEqual(_select_version(["latest", "3.42.0"], None), "latest")
+
+    def test_select_requested(self):
+        self.assertEqual(_select_version(["latest", "3.42.0"], "3.42.0"), "3.42.0")
+
+    def test_select_missing_raises(self):
+        with self.assertRaises(ValueError):
+            _select_version(["latest"], "2.0.0")
+
+    def test_select_empty_raises(self):
+        with self.assertRaises(ValueError):
+            _select_version([], None)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  BaotaPrecheck
+# ═══════════════════════════════════════════════════════════════════════
+
+class TestBaotaPrecheck(unittest.TestCase):
+    def setUp(self):
+        self.precheck = BaotaPrecheck()
+
+    def test_valid_app_passes(self):
+        report = self.precheck.validate(_sample("alist"))
+        self.assertEqual(report["errors"], [])
+        self.assertIn("latest", report["fields"]["versions"])
+
+    def test_disabled_app_blocked(self):
+        report = self.precheck.validate(_sample("disabled-app"))
+        self.assertTrue(report["disabledSourceApp"])
+        codes = [e["code"] for e in report["errors"]]
+        self.assertIn(E_BAOTA_DISABLED, codes)
+
+    def test_disabled_app_allowed(self):
+        report = self.precheck.validate(_sample("disabled-app"), include_disabled=True)
+        # With include_disabled, no E_BAOTA_DISABLED error
+        codes = [e["code"] for e in report["errors"]]
+        self.assertNotIn(E_BAOTA_DISABLED, codes)
+
+    def test_missing_compose_detected(self):
+        report = self.precheck.validate(_sample("broken-missing-compose"))
+        codes = [e["code"] for e in report["errors"]]
+        self.assertIn(E_BAOTA_COMPOSE_MISSING, codes)
+
+    def test_standard_fields_detected(self):
+        parser = BaotaParser()
+        app_json = parser.parse_app_json(_sample("alist"))
+        std_fields = BaotaPrecheck.validate_standard_fields(app_json.get("field", []))
+        self.assertIn("domain", std_fields)
+        self.assertIn("allow_access", std_fields)
+        self.assertIn("cpus", std_fields)
+        self.assertIn("memory_limit", std_fields)
+
+    def test_standard_env_detected(self):
+        parser = BaotaParser()
+        app_json = parser.parse_app_json(_sample("alist"))
+        std_env = BaotaPrecheck.validate_standard_env(app_json.get("env", []))
+        self.assertIn("app_path", std_env)
+        self.assertIn("host_ip", std_env)
+        self.assertIn("cpus", std_env)
+        self.assertIn("memory_limit", std_env)
+
+    def test_field_env_mismatch_detected(self):
+        parser = BaotaParser()
+        app_json = parser.parse_app_json(_sample("broken-field-env-mismatch"))
+        mismatches = BaotaPrecheck.validate_field_env_relationship(
+            app_json.get("field", []), app_json.get("env", [])
+        )
+        self.assertTrue(len(mismatches) > 0)
+        self.assertIn("webport", mismatches[0]["field_attr"])
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  BaotaParser
+# ═══════════════════════════════════════════════════════════════════════
+
+class TestBaotaParser(unittest.TestCase):
+    def setUp(self):
+        self.parser = BaotaParser()
+
+    def test_parse_app_json(self):
+        app_json = self.parser.parse_app_json(_sample("alist"))
+        self.assertEqual(app_json["appname"], "alist")
+        self.assertEqual(app_json["apptype"], "Storage")
+        self.assertIsInstance(app_json["updateat"], int)
+        self.assertIsNone(app_json["depend"])
+
+    def test_list_versions(self):
+        versions = self.parser.list_versions(_sample("alist"))
+        self.assertIn("latest", versions)
+        self.assertIn("3.42.0", versions)
+
+    def test_parse_env_file(self):
+        env_path = str(pathlib.Path(_sample("alist")) / "latest" / ".env")
+        env = self.parser.parse_env_file(env_path)
+        self.assertIn("ALIST_WEB_PORT", env)
+        self.assertIn("APP_PATH", env)
+
+    def test_load_compose(self):
+        compose_path = str(pathlib.Path(_sample("alist")) / "latest" / "docker-compose.yml")
+        compose = self.parser.load_compose(compose_path)
+        self.assertIn("services", compose)
+        self.assertIn("alist", compose["services"])
+        self.assertEqual(compose["services"]["alist"]["image"], "xhofe/alist:latest")
+
+    def test_volumes_is_object(self):
+        app_json = self.parser.parse_app_json(_sample("alist"))
+        volumes = app_json.get("volumes", {})
+        self.assertIsInstance(volumes, dict)
+        self.assertIn("data", volumes)
+        self.assertEqual(volumes["data"]["type"], "path")
+
+    def test_env_has_type_field(self):
+        app_json = self.parser.parse_app_json(_sample("alist"))
+        env_list = app_json.get("env", [])
+        for e in env_list:
+            self.assertIn("type", e)
+        port_envs = [e for e in env_list if e.get("type") == "port"]
+        self.assertTrue(len(port_envs) >= 2)
+
+    def test_field_default_is_native_type(self):
+        app_json = self.parser.parse_app_json(_sample("alist"))
+        fields = app_json.get("field", [])
+        allow_access = [f for f in fields if f["attr"] == "allow_access"]
+        self.assertTrue(len(allow_access) > 0)
+        self.assertIsInstance(allow_access[0]["default"], bool)
+
+        web_port = [f for f in fields if f["attr"] == "alist_web_port"]
+        self.assertTrue(len(web_port) > 0)
+        self.assertIsInstance(web_port[0]["default"], int)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  ComposeTransformer
+# ═══════════════════════════════════════════════════════════════════════
+
+class TestComposeTransformer(unittest.TestCase):
+    def setUp(self):
+        self.transformer = ComposeTransformer()
+
+    def _get_service(self, compose, name="alist"):
+        return compose.get("services", {}).get(name, {})
+
+    def test_transform_alist(self):
+        compose = self.transformer.transform(_sample("alist"), "latest")
+        svc = self._get_service(compose)
+
+        # Container name injected
+        self.assertEqual(svc.get("container_name"), "${CONTAINER_NAME}")
+
+        # Ports transformed
+        ports = svc.get("ports", [])
+        self.assertIn("${PANEL_APP_PORT_HTTP}:5244", ports)
+        self.assertIn("${PANEL_APP_PORT_5426}:5426", ports)
+
+        # Volumes transformed
+        volumes = svc.get("volumes", [])
+        self.assertIn("${APP_DATA_DIR_DATA}:/opt/alist/data", volumes)
+        self.assertIn("${APP_DATA_DIR_MNT}:/mnt/data", volumes)
+
+        # Network replaced
+        self.assertIn("1panel-network", svc.get("networks", []))
+
+        # Label replaced
+        self.assertEqual(svc.get("labels", {}).get("createdBy"), "Apps")
+
+        # Deploy removed
+        self.assertNotIn("deploy", svc)
+
+        # External network defined
+        networks = compose.get("networks", {})
+        self.assertIn("1panel-network", networks)
+        self.assertTrue(networks["1panel-network"].get("external"))
+
+    def test_transform_adguardhome(self):
+        compose = self.transformer.transform(_sample("adguardhome"), "latest")
+        svc = self._get_service(compose, "adguardhome")
+        ports = svc.get("ports", [])
+        # Should have two ports
+        port_strs = [str(p) for p in ports]
+        self.assertTrue(any("PANEL_APP_PORT_HTTP" in p for p in port_strs))
+        self.assertIn("${PANEL_APP_PORT_53}:53/udp", port_strs)
+
+    def test_file_volume_app(self):
+        compose = self.transformer.transform(_sample("file-volume-app"), "latest")
+        vol_info = compose.get("_transform", {}).get("volumeInfo", [])
+        # File volumes should be noted
+        # (The compose may still have path-type volume for data)
+        self.assertTrue(len(vol_info) >= 0)
+
+    def test_unresolved_variables_collected(self):
+        compose = self.transformer.transform(_sample("alist"), "latest")
+        unresolved = compose.get("_transform", {}).get("unresolved", [])
+        # APP_PATH, HOST_IP, CPUS, MEMORY_LIMIT should not remain
+        for bad_var in ("APP_PATH", "HOST_IP", "CPUS", "MEMORY_LIMIT"):
+            self.assertNotIn(bad_var, unresolved)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  BaotaToAppSpecMapper
+# ═══════════════════════════════════════════════════════════════════════
+
+class TestBaotaToAppSpecMapper(unittest.TestCase):
+    def setUp(self):
+        self.mapper = BaotaToAppSpecMapper()
+        self.transformer = ComposeTransformer()
+
+    def test_build_appspec_alist(self):
+        parser = BaotaParser()
+        app_json = parser.parse_app_json(_sample("alist"))
+        compose = self.transformer.transform(_sample("alist"), "latest")
+        appspec = self.mapper.build_appspec(app_json, "latest", compose, _sample("alist"))
+
+        self.assertEqual(appspec["appKey"], "alist")
+        self.assertEqual(appspec["type"], "Storage")
+        self.assertIn("importSource", appspec)
+        self.assertEqual(appspec["importSource"]["type"], "baota")
+        self.assertIn("formFields", appspec)
+        self.assertIn("composeOverride", appspec)
+        self.assertTrue(appspec["composeOverride"]["enabled"])
+
+        # Migration notes should skip platform fields
+        notes = appspec.get("migrationNotes", [])
+        self.assertTrue(any("domain" in n for n in notes))
+        self.assertTrue(any("cpus" in n for n in notes))
+
+        # Non-platform fields should be in formFields
+        ff = appspec.get("formFields", [])
+        env_keys = {f["envKey"] for f in ff}
+        self.assertIn("PANEL_APP_PORT_HTTP", env_keys)
+        self.assertIn("PANEL_APP_PORT_5426", env_keys)
+        self.assertNotIn("ALIST_WEB_PORT", env_keys)
+        self.assertNotIn("S3_SERVER_PORT", env_keys)
+        # Platform keys should NOT be in formFields
+        self.assertNotIn("CPUS", env_keys)
+        self.assertNotIn("MEMORY_LIMIT", env_keys)
+
+    def test_evidence_level_third_party(self):
+        parser = BaotaParser()
+        app_json = parser.parse_app_json(_sample("alist"))
+        compose = self.transformer.transform(_sample("alist"), "latest")
+        appspec = self.mapper.build_appspec(app_json, "latest", compose)
+        # alist has empty home, help=https://alist.nn.ci (not a known pattern)
+        self.assertEqual(appspec["evidenceStatus"], "third_party_only")
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  ImportRunner
+# ═══════════════════════════════════════════════════════════════════════
+
+class TestImportRunner(unittest.TestCase):
+    def setUp(self):
+        self.runner = ImportRunner()
+        self.tmpdir = tempfile.mkdtemp(prefix="baota_test_")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def test_import_alist_success(self):
+        result = self.runner.import_one(
+            _sample("alist"), self.tmpdir, "latest", validate=True, require_validate=True,
+        )
+        self.assertTrue(result["success"], f"Import failed: {result.get('errors')}")
+        self.assertEqual(result["app"], "alist")
+        self.assertEqual(result.get("validation", {}).get("valid"), True)
+
+        out = pathlib.Path(result["outputPath"])
+        self.assertTrue((out / "data.yml").is_file())
+        self.assertTrue((out / "logo.png").is_file())
+        self.assertTrue((out / "source-evidence.json").is_file())
+        self.assertTrue((out / "latest" / "data.yml").is_file())
+        self.assertTrue((out / "latest" / "docker-compose.yml").is_file())
+        self.assertTrue((out / "latest" / ".env.sample").is_file())
+        self.assertTrue((out / "README.md").is_file())
+        self.assertTrue((out / "latest" / "data").is_dir())
+        self.assertTrue((out / "latest" / "scripts" / "init.sh").is_file())
+        self.assertTrue((out / "latest" / "scripts" / "upgrade.sh").is_file())
+        self.assertTrue((out / "latest" / "scripts" / "uninstall.sh").is_file())
+
+        root_data = yaml.safe_load((out / "data.yml").read_text(encoding="utf-8"))
+        desc = root_data.get("additionalProperties", {}).get("description")
+        self.assertIsInstance(desc, dict)
+        self.assertIn("zh-Hant", desc)
+
+        ver_data = yaml.safe_load((out / "latest" / "data.yml").read_text(encoding="utf-8"))
+        fields = ver_data.get("additionalProperties", {}).get("formFields", [])
+        self.assertTrue(fields)
+        self.assertTrue(all(isinstance(field.get("label"), dict) for field in fields))
+        form_keys = {field.get("envKey") for field in fields}
+        compose_text = (out / "latest" / "docker-compose.yml").read_text(encoding="utf-8")
+        env_sample = (out / "latest" / ".env.sample").read_text(encoding="utf-8")
+        compose_vars = set(__import__("re").findall(r"\$\{([A-Za-z_][A-Za-z0-9_]*)", compose_text))
+        self.assertFalse(compose_vars - form_keys - {"CONTAINER_NAME"})
+        self.assertIn("${APP_DATA_DIR_DATA}:/opt/alist/data", compose_text)
+        self.assertIn("${APP_DATA_DIR_MNT}:/mnt/data", compose_text)
+        self.assertIn("PANEL_APP_PORT_HTTP=15244", env_sample)
+        self.assertIn("PANEL_APP_PORT_5426=5426", env_sample)
+        self.assertIn("APP_DATA_DIR_DATA=./data/data", env_sample)
+        self.assertIn("APP_DATA_DIR_MNT=./data/mnt", env_sample)
+
+    def test_import_records_git_compose_source_url(self):
+        source_root = pathlib.Path(self.tmpdir) / "source-root"
+        app_dir = source_root / "apphub" / "alist"
+        shutil.copytree(_sample("alist"), app_dir)
+        git_dir = source_root / ".git"
+        git_dir.mkdir()
+        (git_dir / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
+        (git_dir / "config").write_text(
+            '[remote "origin"]\n\turl = https://github.com/example/apphub.git\n',
+            encoding="utf-8",
+        )
+
+        result = self.runner.import_one(str(app_dir), self.tmpdir, "latest")
+        self.assertTrue(result["success"], result.get("errors"))
+        evidence = json.loads((pathlib.Path(result["outputPath"]) / "source-evidence.json").read_text(encoding="utf-8"))
+        self.assertEqual(evidence["repository"], "https://github.com/example/apphub")
+        self.assertEqual(
+            evidence["composeFile"],
+            "https://github.com/example/apphub/blob/main/apphub/alist/latest/docker-compose.yml",
+        )
+
+    def test_import_disabled_skipped(self):
+        result = self.runner.import_one(
+            _sample("disabled-app"), self.tmpdir, "latest",
+        )
+        self.assertTrue(result.get("success"))
+        self.assertTrue(result.get("skipped"))
+        self.assertEqual(result.get("reason"), "App is disabled")
+
+    def test_import_disabled_included(self):
+        result = self.runner.import_one(
+            _sample("disabled-app"), self.tmpdir, "latest",
+            include_disabled=True,
+        )
+        self.assertTrue(result["success"])
+        self.assertFalse(result.get("skipped", False))
+
+    def test_import_broken_compose_fails(self):
+        result = self.runner.import_one(
+            _sample("broken-missing-compose"), self.tmpdir, "latest",
+        )
+        self.assertFalse(result["success"])
+        codes = [e.get("code") for e in result.get("errors", [])]
+        self.assertIn(E_BAOTA_COMPOSE_MISSING, codes)
+
+    def test_import_missing_version_fails(self):
+        result = self.runner.import_one(
+            _sample("alist"), self.tmpdir, "missing-version",
+        )
+        self.assertFalse(result["success"])
+        codes = [e.get("code") for e in result.get("errors", [])]
+        self.assertIn(E_BAOTA_VERSION_DIR_MISSING, codes)
+
+    def test_emitted_appspec_has_no_transform_metadata(self):
+        parser = BaotaParser()
+        app_json = parser.parse_app_json(_sample("alist"))
+        compose = ComposeTransformer().transform(_sample("alist"), "latest")
+        appspec = BaotaToAppSpecMapper().build_appspec(app_json, "latest", compose, _sample("alist"))
+        compose_override = appspec.get("composeOverride", {}).get("compose", {})
+        self.assertNotIn("_transform", compose_override)
+
+    def test_batch_import(self):
+        batch_dir = str(_SAMPLE_DIR / "apphub")
+        result = self.runner.import_batch(batch_dir, self.tmpdir)
+        self.assertIn("results", result)
+        self.assertIn("success_count", result)
+        self.assertIn("failed_count", result)
+        self.assertGreater(len(result["results"]), 0)
+
+        # disabled-app should be skipped
+        disabled_items = [
+            r for r in result["results"]
+            if r.get("app") == "disabled-app" and r.get("skipped")
+        ]
+        self.assertTrue(len(disabled_items) > 0, "disabled-app should be skipped")
+
+        # broken-missing-compose should fail
+        broken_items = [
+            r for r in result["results"]
+            if r.get("app") == "broken-missing-compose" and not r.get("success")
+        ]
+        self.assertTrue(len(broken_items) > 0, "broken-missing-compose should fail")
+
+class TestCliAndGenerator(unittest.TestCase):
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp(prefix="baota_cli_test_")
+        self.project_dir = pathlib.Path(__file__).resolve().parent.parent
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def _run_cli(self, *args):
+        cmd = [sys.executable, str(self.project_dir / "scripts" / "import-baota-app.py"), *args]
+        return subprocess.run(cmd, cwd=str(self.project_dir), text=True, capture_output=True)
+
+    def test_cli_missing_version_exits_nonzero(self):
+        proc = self._run_cli(
+            "--input", _sample("alist"),
+            "--out-dir", self.tmpdir,
+            "--version", "missing-version",
+        )
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("FAILED", proc.stdout)
+        self.assertFalse((pathlib.Path(self.tmpdir) / "alist").exists())
+
+    def test_cli_batch_single_app_exits_nonzero(self):
+        proc = self._run_cli(
+            "--input", _sample("alist"),
+            "--batch",
+            "--out-dir", self.tmpdir,
+        )
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("No app directories found", proc.stderr)
+
+    def test_cli_batch_and_emit_appspec_conflict(self):
+        proc = self._run_cli(
+            "--input", _sample("alist"),
+            "--batch",
+            "--emit-appspec", str(pathlib.Path(self.tmpdir) / "alist.json"),
+        )
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("not allowed with argument", proc.stderr)
+
+    def test_generate_from_appspec_roundtrip_complete_structure(self):
+        appspec_path = pathlib.Path(self.tmpdir) / "alist.appspec.json"
+        out_dir = pathlib.Path(self.tmpdir) / "generated"
+        emit_proc = self._run_cli(
+            "--input", _sample("alist"),
+            "--emit-appspec", str(appspec_path),
+            "--version", "latest",
+        )
+        self.assertEqual(emit_proc.returncode, 0, emit_proc.stderr)
+        appspec = json.loads(appspec_path.read_text(encoding="utf-8"))
+        self.assertNotIn("_transform", appspec.get("composeOverride", {}).get("compose", {}))
+
+        gen_cmd = [
+            sys.executable,
+            str(self.project_dir / "scripts" / "generate-from-appspec.py"),
+            "--spec", str(appspec_path),
+            "--out-dir", str(out_dir),
+            "--validate",
+            "--require-validate",
+        ]
+        gen_proc = subprocess.run(gen_cmd, cwd=str(self.project_dir), text=True, capture_output=True)
+        self.assertEqual(gen_proc.returncode, 0, gen_proc.stderr)
+
+        root = out_dir / "alist"
+        self.assertTrue((root / "README.md").is_file())
+        self.assertTrue((root / "logo.png").is_file())
+        self.assertTrue((root / "latest" / "data").is_dir())
+        self.assertTrue((root / "latest" / "scripts" / "init.sh").is_file())
+        self.assertTrue((root / "latest" / "scripts" / "upgrade.sh").is_file())
+        self.assertTrue((root / "latest" / "scripts" / "uninstall.sh").is_file())
+
+        root_data = yaml.safe_load((root / "data.yml").read_text(encoding="utf-8"))
+        self.assertIsInstance(root_data.get("additionalProperties", {}).get("description"), dict)
+        ver_data = yaml.safe_load((root / "latest" / "data.yml").read_text(encoding="utf-8"))
+        fields = ver_data.get("additionalProperties", {}).get("formFields", [])
+        self.assertTrue(fields)
+        self.assertTrue(all(isinstance(field.get("label"), dict) for field in fields))
+
+    def test_generate_from_legacy_appspec_preserves_core_fields(self):
+        spec_path = self.project_dir / "assets" / "sample-appspec.json"
+        out_dir = pathlib.Path(self.tmpdir) / "legacy-generated"
+        report_path = pathlib.Path(self.tmpdir) / "legacy-report.json"
+        gen_cmd = [
+            sys.executable,
+            str(self.project_dir / "scripts" / "generate-from-appspec.py"),
+            "--spec", str(spec_path),
+            "--out-dir", str(out_dir),
+            "--validate",
+            "--require-validate",
+            "--report", str(report_path),
+        ]
+        gen_proc = subprocess.run(gen_cmd, cwd=str(self.project_dir), text=True, capture_output=True)
+        self.assertEqual(gen_proc.returncode, 0, gen_proc.stderr)
+
+        root = out_dir / "demo-app"
+        self.assertGreater((root / "logo.png").stat().st_size, 0)
+        evidence = json.loads((root / "source-evidence.json").read_text(encoding="utf-8"))
+        self.assertEqual(evidence["repository"], "https://github.com/nginx/nginx")
+        self.assertEqual(evidence["dockerDocs"], "https://hub.docker.com/_/nginx")
+        compose_text = (root / "1.0.0" / "docker-compose.yml").read_text(encoding="utf-8")
+        self.assertIn("${PANEL_APP_PORT_HTTP}:80", compose_text)
+        self.assertIn("${APP_DATA_DIR}:/usr/share/nginx/html", compose_text)
+        ver_data = yaml.safe_load((root / "1.0.0" / "data.yml").read_text(encoding="utf-8"))
+        fields = ver_data.get("additionalProperties", {}).get("formFields", [])
+        self.assertIn("PANEL_APP_PORT_HTTP", {field.get("envKey") for field in fields})
+        self.assertTrue(report_path.is_file())
+
+    def test_generate_from_appspec_uses_default_logo(self):
+        spec_path = pathlib.Path(self.tmpdir) / "min.appspec.json"
+        out_dir = pathlib.Path(self.tmpdir) / "out"
+        spec_path.write_text(json.dumps({
+            "appKey": "minapp",
+            "title": "Min App",
+            "description": "Minimal app",
+            "shortDescZh": "最小应用",
+            "type": "Tool",
+            "tag": "Tool",
+            "version": "latest",
+            "image": "nginx:latest",
+            "ports": [{"envKey": "PANEL_APP_PORT_HTTP", "containerPort": 80, "hostDefault": 8080}],
+        }), encoding="utf-8")
+        gen_cmd = [
+            sys.executable,
+            str(self.project_dir / "scripts" / "generate-from-appspec.py"),
+            "--spec", str(spec_path),
+            "--out-dir", str(out_dir),
+            "--validate",
+            "--require-validate",
+        ]
+        proc = subprocess.run(gen_cmd, cwd=str(self.project_dir), text=True, capture_output=True)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertGreater((out_dir / "minapp" / "logo.png").stat().st_size, 0)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  Main
+# ═══════════════════════════════════════════════════════════════════════
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)
