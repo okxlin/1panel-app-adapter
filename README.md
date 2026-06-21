@@ -30,6 +30,7 @@ This means the skill is rule-first, not example-first. Repository habits are use
 - `scripts/gen-env-sample.sh`
 - `scripts/gen_env_sample.py`
 - `scripts/generate-from-appspec.py`
+- `scripts/import-baota-app.py` — import Baota/aaPanel Docker Store apps
 - `scripts/finalize_runtime_scripts.sh`
 - `scripts/validate-v2.sh`
 - `scripts/generate.sh` — v2 generator wrapper (compat CLI)
@@ -109,6 +110,39 @@ References:
 
 - `references/appspec.md`
 - `assets/sample-appspec.json`
+
+## Import Baota/aaPanel Docker Store apps
+
+```bash
+# Single app directory containing app.json/icon.png/<version>/docker-compose.yml
+python3 scripts/import-baota-app.py \
+  --input <baota-app-dir> \
+  --out-dir ./1panel-apps \
+  --version latest \
+  --validate \
+  --require-validate
+
+# Batch import an apphub directory whose direct children are app directories
+python3 scripts/import-baota-app.py \
+  --input <apphub-dir> \
+  --batch \
+  --out-dir ./1panel-apps \
+  --validate \
+  --report artifacts/baota-import-report.json
+
+# Emit normalized AppSpec only, then generate through the AppSpec path
+python3 scripts/import-baota-app.py \
+  --input <baota-app-dir> \
+  --version latest \
+  --emit-appspec artifacts/app.appspec.json
+```
+
+The importer is based on the public `aaPanel/apphub` format and aaPanel Docker app runtime behavior. It converts `${HOST_IP}:${APP_PORT}:<container>` ports to `PANEL_APP_PORT_*`, rewrites `${APP_PATH}` bind mounts to configurable `APP_DATA_DIR*` fields, replaces `baota_net` with `1panel-network`, rewrites `createdBy: bt_apps` to `Apps`, removes Baota CPU/memory deploy limits, and records migration notes in `source-evidence.json`.
+
+References:
+
+- `references/baota-app-format.md`
+- `references/baota-to-1panel-mapping.md`
 
 ## Migrate an existing app directory
 
