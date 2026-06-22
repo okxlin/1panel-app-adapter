@@ -7,7 +7,7 @@ STRICT_STORE=0
 I18N_MODE="warn"
 I18N_SCOPE="all"
 I18N_ALLOW_EN_LABELS="API,URL,ID,OAuth,JWT,CPU,GPU,RAM,HTTP,HTTPS,TCP,UDP,SSH,DNS"
-SOURCE_EVIDENCE_MODE="required"
+SOURCE_EVIDENCE_MODE="warn"
 FAILURES=0
 WARNINGS=0
 INFOS=0
@@ -26,11 +26,11 @@ fi
 
 usage() {
   cat <<'USAGE'
-usage: validate-v2.sh --dir <app-dir> [--strict-c] [--strict-store] [--source-evidence-mode required|warn|off] [--i18n-mode off|warn|strict] [--i18n-scope description|labels|all] [--i18n-allow-english-labels CSV]
+usage: validate-v2.sh --dir <app-dir> [--strict-c] [--strict-store] [--source-evidence-mode warn|required|off] [--i18n-mode off|warn|strict] [--i18n-scope description|labels|all] [--i18n-allow-english-labels CSV]
 
 behavior notes:
   - --strict-store is intended for delivery-ready artifacts, not raw scaffold placeholders
-  - --source-evidence-mode required is for adapter delivery artifacts; use warn/off when auditing finished appstore packages
+  - source-evidence.json is optional by default; use --source-evidence-mode required only for provenance-gated delivery workflows
   - when docker compose is available, validator runs a real `docker compose config` render check
   - when docker compose is unavailable, that render check is skipped and reported as a warning
 USAGE

@@ -70,7 +70,7 @@ bash scripts/scaffold-v2.sh \
 - 宿主机路径类型的 volume 会在版本级 `data.yml` 中生成对应的 `APP_DATA_DIR_*` 字段
 - 生成的 compose 会保留上游显式 healthcheck，但不会自动添加默认探针
 - 未显式传入 `--tag` 时，脚手架会根据 `--type`、标题和镜像推断更合适的默认标签
-- 来源证据对 adapter 交付产物是必填项，会落盘到 `<app>/source-evidence.json`
+- 来源证据是可选的溯源材料；生成器可以写出 `<app>/source-evidence.json`，但成品 appstore 包不需要保留它
 - `--timezone` 用于控制版本级 `data.yml` 里 `TZ` 的默认值
 - 默认不会覆盖非空目标应用目录；如确认要覆盖，需显式传 `--force`
 - raw scaffold 输出只是起点，不应直接视为 strict-store 可交付产物
@@ -156,16 +156,16 @@ bash scripts/migrate-v1-to-v2.sh --src <app-dir> [--out <out-root>] [--version <
 bash scripts/validate-v2.sh --dir <app-dir>
 bash scripts/validate-v2.sh --dir <app-dir> --strict-store
 bash scripts/validate-v2.sh --dir <app-dir> --strict-c
-bash scripts/validate-v2.sh --dir <app-dir> --source-evidence-mode warn
+bash scripts/validate-v2.sh --dir <app-dir> --source-evidence-mode required
 bash scripts/validate-v2.sh --dir <app-dir> --i18n-mode warn --i18n-scope description
 bash scripts/validate-v2.sh --dir <app-dir> --i18n-mode strict --i18n-scope all
 ```
 
 当前校验覆盖：
 
-- `source-evidence.json` 是否存在，以及 `repository` / `dockerDocs` / `composeFile` 是否齐全
-- `--source-evidence-mode required|warn|off`；adapter 交付保持 `required`，审计已成品 appstore 包且明确不提交过程证据时可用 `warn` 或 `off`
-- 来源证据键是否满足 `https://` URL 形态
+- 可选 `source-evidence.json` 溯源检查；文件存在时检查 `repository` / `dockerDocs` / `composeFile`
+- `--source-evidence-mode warn|required|off`；默认 `warn`，只有明确把溯源证据作为门禁的流程才使用 `required`
+- 来源证据键在启用检查时需满足 `https://` URL 形态
 - compose `${VAR}` 与版本级 `data.yml` 的 `envKey` 闭环关系
 - root/version/compose 的重复 YAML key 检测
 - 基于 `.env.sample` 与安全兜底 `CONTAINER_NAME` 的 `docker compose config` 解析校验

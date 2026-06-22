@@ -159,12 +159,12 @@ class ValidateV2Tests(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         self.assertIn("healthcheck not found", proc.stdout)
 
-    def test_source_evidence_warn_mode_allows_package_audit(self) -> None:
+    def test_source_evidence_default_allows_package_audit(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = self._write_sample_app(pathlib.Path(tmp))
             (app / "source-evidence.json").unlink()
             proc = subprocess.run(
-                ["bash", str(VALIDATE), "--dir", str(app), "--source-evidence-mode", "warn"],
+                ["bash", str(VALIDATE), "--dir", str(app)],
                 text=True,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -173,6 +173,20 @@ class ValidateV2Tests(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         self.assertIn("[B][WARN] missing source-evidence.json", proc.stdout)
         self.assertIn("PASS:", proc.stdout)
+
+    def test_source_evidence_required_mode_fails_when_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            app = self._write_sample_app(pathlib.Path(tmp))
+            (app / "source-evidence.json").unlink()
+            proc = subprocess.run(
+                ["bash", str(VALIDATE), "--dir", str(app), "--source-evidence-mode", "required"],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+
+        self.assertNotEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("[A][FAIL] missing source-evidence.json", proc.stdout)
 
     def test_patch_compose_does_not_inject_default_healthcheck(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

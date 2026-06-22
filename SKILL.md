@@ -292,9 +292,9 @@ Use this skill in one of three paths.
 ### Path A: generate a new 1Panel app
 
 1. Run `bash scripts/scaffold-v2.sh ...` to create the v2 app skeleton.
-   - include `--source-repository --source-docker-docs --source-compose-file` as required source evidence inputs.
+   - include `--source-repository --source-docker-docs --source-compose-file` when you want the scaffold to write optional provenance evidence.
 2. Review the generated `data.yml`, version `data.yml`, and `docker-compose.yml` (including default tag, TZ, optional healthcheck, and dependency/env fields when applicable).
-3. Verify `<app>/source-evidence.json` exists and is complete.
+3. Review `<app>/source-evidence.json` if it is present; remove it before final appstore delivery when the target repository does not keep process evidence.
 4. If needed, run `bash scripts/finalize_runtime_scripts.sh <app-dir> <version-dir>` to ensure lifecycle scripts exist.
 5. Run `bash scripts/validate-v2.sh --dir <app-dir> --strict-store`.
 6. If validation reports issues, use the patch scripts to normalize root metadata, version metadata, or compose content, then validate again.
@@ -302,7 +302,7 @@ Use this skill in one of three paths.
 ### Path B: migrate an existing app
 
 1. Run `bash scripts/migrate-v1-to-v2.sh --src <app-dir> [--version <source-ver>] [--target-version <target-ver>] ...`.
-2. Ensure source evidence is present in source app (`source-evidence.json`) or provide source-evidence arguments to the migration command.
+2. If provenance evidence is useful for the workflow, keep source evidence in the source app (`source-evidence.json`) or provide source-evidence arguments to the migration command.
 3. Review the migrated root metadata, version metadata, compose file, lifecycle scripts, and `.env.sample`, then decide whether any high-quality backfill is still needed.
 4. If needed, run `bash scripts/finalize_runtime_scripts.sh <app-dir> <version-dir>` to backfill minimal lifecycle scripts.
 5. Run `bash scripts/validate-v2.sh --dir <app-dir> --strict-store`.
@@ -314,7 +314,7 @@ Use this skill in one of three paths.
 2. Run `python3 scripts/import-baota-app.py --input <baota-app-dir> --out-dir <out-dir> --version latest --validate --require-validate`.
 3. For apphub-style batch input, run `python3 scripts/import-baota-app.py --input <apphub-dir> --batch --out-dir <out-dir> --validate --report <report.json>`.
 4. Review `source-evidence.json` and migration notes. Baota metadata alone is not proof that the upstream image, ports, volumes, or env semantics are official.
-5. For delivery candidates, run `docker compose --env-file <version>/.env.sample -f <version>/docker-compose.yml config` with a safe `CONTAINER_NAME` value, then run `bash scripts/validate-v2.sh --dir <app-dir> --strict-store` after official source evidence is completed.
+5. For delivery candidates, run `docker compose --env-file <version>/.env.sample -f <version>/docker-compose.yml config` with a safe `CONTAINER_NAME` value, then run `bash scripts/validate-v2.sh --dir <app-dir> --strict-store`. Add `--source-evidence-mode required` only when the current workflow explicitly requires provenance evidence as a gate.
 
 Baota import rules are grounded in `references/baota-app-format.md` and `references/baota-to-1panel-mapping.md`. The public `aaPanel/apphub` template defines `HOST_IP`, `CPUS`, `MEMORY_LIMIT`, and `APP_PATH` as required `.env` variables, and aaPanel source creates/reuses `baota_net` before app installation. Imported artifacts convert those runtime assumptions into 1Panel conventions instead of preserving Baota-only variables.
 
@@ -360,11 +360,11 @@ bash scripts/scaffold-v2.sh \
 # Baseline validation
 bash scripts/validate-v2.sh --dir examples/joplin
 
-# Audit a finished appstore package that intentionally omits process evidence
-bash scripts/validate-v2.sh --dir examples/joplin --source-evidence-mode warn
-
 # Strict store validation
 bash scripts/validate-v2.sh --dir examples/joplin --strict-store
+
+# Provenance-gated validation, only for workflows that require source evidence
+bash scripts/validate-v2.sh --dir examples/joplin --source-evidence-mode required
 
 # Generate from spec
 python3 scripts/generate-from-appspec.py --spec assets/sample-appspec.json
@@ -377,9 +377,9 @@ bash scripts/normalize-logo.sh examples/joplin/logo.png
 
 To avoid "format compliant but translation lazy", `validate-v2.sh` adds configurable translation quality check:
 
-- `--source-evidence-mode required|warn|off`
-  - `required`: require `source-evidence.json` and validate its URLs (default, adapter delivery)
-  - `warn`: warn but continue when auditing finished appstore packages that intentionally omit process evidence
+- `--source-evidence-mode warn|required|off`
+  - `warn`: warn but continue when `source-evidence.json` is missing or invalid (default)
+  - `required`: require `source-evidence.json` and validate its URLs for provenance-gated workflows
   - `off`: skip source evidence checks
 - `--i18n-mode off|warn|strict`
   - `off`: disable translation quality check (only structure validation)
@@ -539,6 +539,6 @@ bash scripts/test-env-sample-closure.sh <v2-app-dir>
 - `container_name` should use `${CONTAINER_NAME}`
 - `normalize-logo.sh` requires ImageMagick tools (`convert`, `identify`) and a GNU-compatible `stat`
 - Public docs should distinguish hard runtime rules from repository conventions
-- source evidence is mandatory and validated (`repository`, `dockerDocs`, `composeFile`)
+- source evidence is optional provenance material; validate it with `--source-evidence-mode required` only when the workflow explicitly requires it
 - compose `${VAR}` usage should close against version formFields envKey declarations, except explicit implicit env key whitelist
 - The skill package should not include evidence packs, replay reports, or embedded repository snapshots
