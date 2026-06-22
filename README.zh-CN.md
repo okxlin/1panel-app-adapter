@@ -68,7 +68,7 @@ bash scripts/scaffold-v2.sh \
 - `--with-panel-db-redis` 是 `--with-panel-deps` 的别名
 - 生成的 compose 使用 `container_name: ${CONTAINER_NAME}`
 - 宿主机路径类型的 volume 会在版本级 `data.yml` 中生成对应的 `APP_DATA_DIR_*` 字段
-- 生成的 compose 默认包含适用于常见 Web 服务的最小 HTTP healthcheck 模板
+- 生成的 compose 会保留上游显式 healthcheck，但不会自动添加默认探针
 - 未显式传入 `--tag` 时，脚手架会根据 `--type`、标题和镜像推断更合适的默认标签
 - 来源证据是必填项，会落盘到 `<app>/source-evidence.json`
 - `--timezone` 用于控制版本级 `data.yml` 里 `TZ` 的默认值
@@ -174,7 +174,7 @@ bash scripts/validate-v2.sh --dir <app-dir> --i18n-mode strict --i18n-scope all
 - 可配置的 i18n 质量告警，覆盖 `additionalProperties.description` 与表单 `label` 多语言映射
 - 表单 `label map` 缺项、旧版 `zh-hant` 命名等提示
 - service 级 `networks:` 与 `1panel-network` 相关的桥接网络检查
-- 可选 `--strict-c` 健康检查门禁，用于更严格的交付校验
+- healthcheck 作为可选运行增强项处理，不作为交付门禁
 
 ## 策略与风格参考
 

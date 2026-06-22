@@ -254,7 +254,7 @@ for line in lines:
         if indent <= (ff_indent or 0) and not re.match(r'^\s*-\s*', line):
             break
     m_item = re.match(r'^(\s*)-\s*(.*)$', line)
-    if m_item:
+    if m_item and (item_indent is None or len(m_item.group(1)) == item_indent):
         if cur:
             items.append(cur)
         item_indent = len(m_item.group(1))
@@ -876,9 +876,6 @@ if grep -qE '^[[:space:]]*healthcheck:\s*$' "$COMPOSE"; then
   info "healthcheck present"
 else
   info "healthcheck not found"
-  if [[ "$STRICT_C" -eq 1 ]]; then
-    fail "strict-c enabled: healthcheck missing"
-  fi
 fi
 
 WARNINGS=$((WARNINGS + PY_WARNINGS))

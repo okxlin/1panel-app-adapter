@@ -79,31 +79,6 @@ def patch_compose(path: Path, app_type: str = ""):
         else:
             block.insert(insert_after_image, '    container_name: ${CONTAINER_NAME}')
 
-        has_healthcheck = any(re.match(r'^\s{4}healthcheck:\s*$', item) for item in block)
-        normalized_type = (app_type or "").strip().lower()
-        has_http_ports = any(re.match(r'^\s*-\s*"?\$\{PANEL_APP_PORT_HTTP\}:(\d+)"?\s*$', item) or re.match(r'^\s*-\s*"?(\d+):(\d+)"?\s*$', item) for item in block)
-        if not has_healthcheck and normalized_type in ("website", "tool") and has_http_ports:
-            container_port = "80"
-            for item in block:
-                m_port = re.match(r'^\s*-\s*"?\$\{PANEL_APP_PORT_HTTP\}:(\d+)"?\s*$', item)
-                if m_port:
-                    container_port = m_port.group(1)
-                    break
-                m_port = re.match(r'^\s*-\s*"?(\d+):(\d+)"?\s*$', item)
-                if m_port:
-                    container_port = m_port.group(2)
-                    break
-            insert_healthcheck_at = len(block)
-            for block_idx, item in enumerate(block):
-                if re.match(r'^\s{4}labels:\s*$', item) or re.match(r'^\s{4}restart:\s*', item):
-                    insert_healthcheck_at = block_idx
-                    break
-            block.insert(insert_healthcheck_at, '    healthcheck:')
-            block.insert(insert_healthcheck_at + 1, f'      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:{container_port} || exit 1"]')
-            block.insert(insert_healthcheck_at + 2, '      interval: 30s')
-            block.insert(insert_healthcheck_at + 3, '      timeout: 10s')
-            block.insert(insert_healthcheck_at + 4, '      retries: 3')
-
         if not has_created_by:
             insert_labels_at = len(block)
             for block_idx, item in enumerate(block):

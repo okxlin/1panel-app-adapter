@@ -527,14 +527,6 @@ payload = {
     }
 }
 
-if app_type == "website" or tag_value == "website":
-    payload["services"][app_key]["healthcheck"] = {
-        "test": ["CMD-SHELL", f"wget -q --spider http://127.0.0.1:{target_port} || exit 1"],
-        "interval": "30s",
-        "timeout": "10s",
-        "retries": 3,
-    }
-
 out.write_text(yaml.safe_dump(payload, allow_unicode=True, sort_keys=False), encoding="utf-8")
 PY
 

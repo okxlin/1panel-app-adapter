@@ -218,7 +218,7 @@ Key fixes in this round:
 
 - i18n placeholder strategy: language-specific suffixes (佔位、プレースホルダー、플레이스홀더、заполнитель)
 - migrate root description: applies same placeholder strategy as scaffold
-- migrate healthcheck: auto-added for website/tool types with HTTP ports
+- healthcheck policy: preserve explicit upstream probes only; default probes are optional enhancements, not gates
 - label map auto-fill: when formFields has labelEn/labelZh but no label map
 - .env.sample closure: compose-aware filtering
 - validator envKey regex: supports YAML list items

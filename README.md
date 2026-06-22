@@ -68,7 +68,7 @@ Notes:
 - `--with-panel-db-redis` is an alias of `--with-panel-deps`
 - generated compose uses `container_name: ${CONTAINER_NAME}`
 - host-path volumes create matching `APP_DATA_DIR_*` fields in version `data.yml`
-- generated compose includes a minimal HTTP healthcheck template for common web-style services
+- generated compose preserves explicit upstream healthchecks, but does not add a default probe automatically
 - when `--tag` is omitted, scaffold infers a more specific default tag from `--type`, title, and image
 - source evidence is mandatory and is written to `<app>/source-evidence.json`
 - `--timezone` controls the default `TZ` value generated in version `data.yml`
@@ -174,7 +174,7 @@ Validation includes:
 - configurable i18n quality warnings for `additionalProperties.description` and form-field label maps
 - label-map completeness hints, including missing locales and legacy `zh-hant` naming
 - compose bridge-network checks for service-level `networks:` usage and `1panel-network` recommendations
-- optional `--strict-c` healthcheck gate for stricter delivery validation
+- healthchecks are treated as optional runtime enhancements, not delivery gates
 
 ## Policy and style references
 

@@ -293,7 +293,7 @@ Use this skill in one of three paths.
 
 1. Run `bash scripts/scaffold-v2.sh ...` to create the v2 app skeleton.
    - include `--source-repository --source-docker-docs --source-compose-file` as required source evidence inputs.
-2. Review the generated `data.yml`, version `data.yml`, and `docker-compose.yml` (including default tag, TZ, healthcheck, and dependency/env fields when applicable).
+2. Review the generated `data.yml`, version `data.yml`, and `docker-compose.yml` (including default tag, TZ, optional healthcheck, and dependency/env fields when applicable).
 3. Verify `<app>/source-evidence.json` exists and is complete.
 4. If needed, run `bash scripts/finalize_runtime_scripts.sh <app-dir> <version-dir>` to ensure lifecycle scripts exist.
 5. Run `bash scripts/validate-v2.sh --dir <app-dir> --strict-store`.
