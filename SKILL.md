@@ -360,6 +360,9 @@ bash scripts/scaffold-v2.sh \
 # Baseline validation
 bash scripts/validate-v2.sh --dir examples/joplin
 
+# Audit a finished appstore package that intentionally omits process evidence
+bash scripts/validate-v2.sh --dir examples/joplin --source-evidence-mode warn
+
 # Strict store validation
 bash scripts/validate-v2.sh --dir examples/joplin --strict-store
 
@@ -374,6 +377,10 @@ bash scripts/normalize-logo.sh examples/joplin/logo.png
 
 To avoid "format compliant but translation lazy", `validate-v2.sh` adds configurable translation quality check:
 
+- `--source-evidence-mode required|warn|off`
+  - `required`: require `source-evidence.json` and validate its URLs (default, adapter delivery)
+  - `warn`: warn but continue when auditing finished appstore packages that intentionally omit process evidence
+  - `off`: skip source evidence checks
 - `--i18n-mode off|warn|strict`
   - `off`: disable translation quality check (only structure validation)
   - `warn`: only warning (default)

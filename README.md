@@ -70,7 +70,7 @@ Notes:
 - host-path volumes create matching `APP_DATA_DIR_*` fields in version `data.yml`
 - generated compose preserves explicit upstream healthchecks, but does not add a default probe automatically
 - when `--tag` is omitted, scaffold infers a more specific default tag from `--type`, title, and image
-- source evidence is mandatory and is written to `<app>/source-evidence.json`
+- source evidence is mandatory for adapter delivery artifacts and is written to `<app>/source-evidence.json`
 - `--timezone` controls the default `TZ` value generated in version `data.yml`
 - scaffold refuses to write into a non-empty target app directory unless `--force` is passed
 - raw scaffold output is a starting point, not a delivery-ready strict-store artifact
@@ -156,6 +156,7 @@ bash scripts/migrate-v1-to-v2.sh --src <app-dir> [--out <out-root>] [--version <
 bash scripts/validate-v2.sh --dir <app-dir>
 bash scripts/validate-v2.sh --dir <app-dir> --strict-store
 bash scripts/validate-v2.sh --dir <app-dir> --strict-c
+bash scripts/validate-v2.sh --dir <app-dir> --source-evidence-mode warn
 bash scripts/validate-v2.sh --dir <app-dir> --i18n-mode warn --i18n-scope description
 bash scripts/validate-v2.sh --dir <app-dir> --i18n-mode strict --i18n-scope all
 ```
@@ -163,6 +164,7 @@ bash scripts/validate-v2.sh --dir <app-dir> --i18n-mode strict --i18n-scope all
 Validation includes:
 
 - `source-evidence.json` existence and required keys (`repository`, `dockerDocs`, `composeFile`)
+- `--source-evidence-mode required|warn|off`; keep `required` for adapter delivery, use `warn` or `off` when auditing a finished appstore package that intentionally omits process evidence
 - source evidence keys must use `https://` URL shape
 - compose `${VAR}` closure against version `data.yml` envKey declarations
 - duplicate YAML key detection for root/version/compose files

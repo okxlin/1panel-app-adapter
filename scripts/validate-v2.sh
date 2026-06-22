@@ -7,6 +7,7 @@ STRICT_STORE=0
 I18N_MODE="warn"
 I18N_SCOPE="all"
 I18N_ALLOW_EN_LABELS="API,URL,ID,OAuth,JWT,CPU,GPU,RAM,HTTP,HTTPS,TCP,UDP,SSH,DNS"
+SOURCE_EVIDENCE_MODE="required"
 FAILURES=0
 WARNINGS=0
 INFOS=0
@@ -25,10 +26,11 @@ fi
 
 usage() {
   cat <<'USAGE'
-usage: validate-v2.sh --dir <app-dir> [--strict-c] [--strict-store] [--i18n-mode off|warn|strict] [--i18n-scope description|labels|all] [--i18n-allow-english-labels CSV]
+usage: validate-v2.sh --dir <app-dir> [--strict-c] [--strict-store] [--source-evidence-mode required|warn|off] [--i18n-mode off|warn|strict] [--i18n-scope description|labels|all] [--i18n-allow-english-labels CSV]
 
 behavior notes:
   - --strict-store is intended for delivery-ready artifacts, not raw scaffold placeholders
+  - --source-evidence-mode required is for adapter delivery artifacts; use warn/off when auditing finished appstore packages
   - when docker compose is available, validator runs a real `docker compose config` render check
   - when docker compose is unavailable, that render check is skipped and reported as a warning
 USAGE
@@ -54,6 +56,7 @@ while [[ $# -gt 0 ]]; do
     --dir) DIR="$2"; shift 2 ;;
     --strict-c) STRICT_C=1; shift ;;
     --strict-store) STRICT_STORE=1; shift ;;
+    --source-evidence-mode) SOURCE_EVIDENCE_MODE="$2"; shift 2 ;;
     --i18n-mode) I18N_MODE="$2"; shift 2 ;;
     --i18n-scope) I18N_SCOPE="$2"; shift 2 ;;
     --i18n-allow-english-labels) I18N_ALLOW_EN_LABELS="$2"; shift 2 ;;
@@ -66,6 +69,7 @@ done
 [[ -d "$DIR" ]] || { echo "[A][FAIL] app dir not found: $DIR"; exit 1; }
 case "$I18N_MODE" in off|warn|strict) ;; *) echo "invalid --i18n-mode: $I18N_MODE"; exit 2 ;; esac
 case "$I18N_SCOPE" in description|labels|all) ;; *) echo "invalid --i18n-scope: $I18N_SCOPE"; exit 2 ;; esac
+case "$SOURCE_EVIDENCE_MODE" in required|warn|off) ;; *) echo "invalid --source-evidence-mode: $SOURCE_EVIDENCE_MODE"; exit 2 ;; esac
 
 ROOT="$DIR/data.yml"
 SOURCE_EVIDENCE="$DIR/source-evidence.json"
@@ -87,7 +91,17 @@ COMPOSE="$VER_DIR/docker-compose.yml"
 [[ -s "$ROOT" ]] || fail "missing root data.yml"
 [[ -s "$VER" ]] || fail "missing version data.yml"
 [[ -s "$COMPOSE" ]] || fail "missing docker-compose.yml"
-[[ -s "$SOURCE_EVIDENCE" ]] || fail "missing source-evidence.json"
+case "$SOURCE_EVIDENCE_MODE" in
+  required)
+    [[ -s "$SOURCE_EVIDENCE" ]] || fail "missing source-evidence.json"
+    ;;
+  warn)
+    [[ -s "$SOURCE_EVIDENCE" ]] || warn "missing source-evidence.json"
+    ;;
+  off)
+    [[ -s "$SOURCE_EVIDENCE" ]] || info "source-evidence.json check skipped"
+    ;;
+esac
 
 set +e
 yaml_sanity_output=$("$PYTHON_BIN" - <<'PY' "$ROOT" "$VER" "$COMPOSE"
@@ -152,8 +166,9 @@ if [[ $FAILURES -gt 0 ]]; then
   exit 1
 fi
 
-set +e
-source_ev_output=$("$PYTHON_BIN" - <<'PY' "$SOURCE_EVIDENCE"
+if [[ -s "$SOURCE_EVIDENCE" && "$SOURCE_EVIDENCE_MODE" != "off" ]]; then
+  set +e
+  source_ev_output=$("$PYTHON_BIN" - <<'PY' "$SOURCE_EVIDENCE"
 import json
 import re
 import sys
@@ -182,19 +197,27 @@ if failures:
     raise SystemExit(1)
 PY
 )
-source_ev_status=$?
-set -e
-if [[ -n "$source_ev_output" ]]; then
-  while IFS= read -r line; do
-    [[ -z "$line" ]] && continue
-    echo "$line"
-    if [[ "$line" == "[A][FAIL]"* ]]; then
-      FAILURES=$((FAILURES + 1))
-    fi
-  done <<< "$source_ev_output"
-fi
-if [[ $source_ev_status -ne 0 && $FAILURES -eq 0 ]]; then
-  FAILURES=$((FAILURES + 1))
+  source_ev_status=$?
+  set -e
+  if [[ -n "$source_ev_output" ]]; then
+    while IFS= read -r line; do
+      [[ -z "$line" ]] && continue
+      if [[ "$SOURCE_EVIDENCE_MODE" == "warn" && "$line" == "[A][FAIL]"* ]]; then
+        echo "${line/[A][FAIL]/[B][WARN]}"
+        WARNINGS=$((WARNINGS + 1))
+      else
+        echo "$line"
+        if [[ "$line" == "[A][FAIL]"* ]]; then
+          FAILURES=$((FAILURES + 1))
+        fi
+      fi
+    done <<< "$source_ev_output"
+  fi
+  if [[ $source_ev_status -ne 0 && "$SOURCE_EVIDENCE_MODE" == "required" && $FAILURES -eq 0 ]]; then
+    FAILURES=$((FAILURES + 1))
+  elif [[ $source_ev_status -ne 0 && "$SOURCE_EVIDENCE_MODE" == "warn" && -z "$source_ev_output" ]]; then
+    warn "source-evidence.json validation failed"
+  fi
 fi
 
 grep -qE '^name:\s*.+$' "$ROOT" || fail "root data.yml missing top-level name"
@@ -233,57 +256,17 @@ fi
 
 set +e
 py_output=$("$PYTHON_BIN" - <<'PY' "$VER"
-import re, sys
+import sys
 from pathlib import Path
+import yaml
 path = Path(sys.argv[1])
-lines = path.read_text(encoding='utf-8', errors='ignore').splitlines()
-in_ff = False
-ff_indent = None
-item_indent = None
-items = []
-cur = None
-for line in lines:
-    if not in_ff:
-        m = re.match(r'^(\s*)formFields:\s*$', line)
-        if m and len(m.group(1)) >= 2:
-            in_ff = True
-            ff_indent = len(m.group(1))
-        continue
-    if line.strip() and not line.lstrip().startswith('#'):
-        indent = len(line) - len(line.lstrip(' '))
-        if indent <= (ff_indent or 0) and not re.match(r'^\s*-\s*', line):
-            break
-    m_item = re.match(r'^(\s*)-\s*(.*)$', line)
-    if m_item and (item_indent is None or len(m_item.group(1)) == item_indent):
-        if cur:
-            items.append(cur)
-        item_indent = len(m_item.group(1))
-        cur = {}
-        rest = m_item.group(2).strip()
-        if ':' in rest:
-            key, value = rest.split(':', 1)
-            cur[key.strip()] = value.strip().strip('"\'')
-        continue
-    if cur is None or item_indent is None:
-        continue
-    indent = len(line) - len(line.lstrip(' '))
-    if indent == item_indent + 2:
-        m_kv = re.match(r'^\s*([A-Za-z0-9_]+):\s*(.*)$', line)
-        if m_kv:
-            key = m_kv.group(1)
-            value = m_kv.group(2).strip().strip('"\'')
-            cur[key] = value
-            # Detect label map start
-            if key == 'label' and not value:
-                cur['_hasLabelMap'] = True
-                cur['_labelKeys'] = []
-    # Detect locale keys under label map
-    if indent == item_indent + 4 and cur is not None and cur.get('_hasLabelMap'):
-        m_locale = re.match(r'^\s*([a-z]{2}(?:-[a-zA-Z]+)?)\s*:', line)
-        if m_locale:
-            cur.setdefault('_labelKeys', []).append(m_locale.group(1))
-if cur:
-    items.append(cur)
+try:
+    data = yaml.safe_load(path.read_text(encoding='utf-8', errors='ignore')) or {}
+except Exception as exc:
+    print(f'[A][FAIL] version data.yml cannot be parsed for formFields: {exc}')
+    sys.exit(1)
+
+items = (data.get('additionalProperties') or {}).get('formFields') or []
 
 if not items:
     print('[A][FAIL] version formFields is empty')
@@ -292,11 +275,16 @@ if not items:
 failures = 0
 warnings = 0
 for item in items:
+    if not isinstance(item, dict):
+        print('[A][FAIL] formFields item must be a mapping')
+        failures += 1
+        continue
     env = item.get('envKey', '')
     typ = item.get('type', '')
     required = item.get('required', '')
-    label_keys = set(item.get('_labelKeys', []))
-    has_label_map = item.get('_hasLabelMap', False)
+    label = item.get('label')
+    label_keys = set(label.keys()) if isinstance(label, dict) else set()
+    has_label_map = isinstance(label, dict) and bool(label)
     if not env or not typ or required == '':
         print('[A][FAIL] formFields item missing envKey/type/required')
         failures += 1
@@ -308,7 +296,7 @@ for item in items:
         if item.get('rule', '') != 'paramPort':
             print(f'[A][FAIL] {env} must use rule:paramPort')
             failures += 1
-    if required.lower() == 'true' and typ not in {'apps', 'service'} and 'edit' not in item:
+    if str(required).lower() == 'true' and typ not in {'apps', 'service'} and 'edit' not in item:
         print(f'[B][WARN] {env} is required but missing edit:true')
         warnings += 1
     if item.get('labelEn') and item.get('labelZh') and not has_label_map:
@@ -660,87 +648,35 @@ def has_cyrillic(s):
     return bool(re.search(r'[\u0400-\u04FF]', s))
 
 
-def read_lines(path):
-    return Path(path).read_text(encoding='utf-8', errors='ignore').splitlines()
+def read_yaml(path):
+    try:
+        return yaml.safe_load(Path(path).read_text(encoding='utf-8', errors='ignore')) or {}
+    except Exception:
+        return {}
 
 
-def read_desc_map(lines):
-    in_ap = False
-    in_desc = False
-    desc_indent = 0
-    out = {}
-    for line in lines:
-        if re.match(r'^additionalProperties:\s*$', line):
-            in_ap = True
-            in_desc = False
-            continue
-        if in_ap and line.strip() and not line.startswith(' '):
-            in_ap = False
-            in_desc = False
-        if not in_ap:
-            continue
-        m = re.match(r'^(\s*)description:\s*$', line)
-        if m and len(m.group(1)) >= 2:
-            in_desc = True
-            desc_indent = len(m.group(1))
-            continue
-        if in_desc:
-            if not line.strip():
-                continue
-            indent = len(line) - len(line.lstrip(' '))
-            if indent <= desc_indent:
-                in_desc = False
-                continue
-            m2 = re.match(r'^\s*([A-Za-z0-9-]+):\s*(.*)$', line)
-            if m2 and indent == desc_indent + 2:
-                out[m2.group(1)] = m2.group(2).strip().strip('"\'')
-    return out
+def read_desc_map(data):
+    desc = (data.get('additionalProperties') or {}).get('description') or {}
+    return desc if isinstance(desc, dict) else {}
 
 
-def read_label_items(lines):
+def read_label_items(data):
+    fields = (data.get('additionalProperties') or {}).get('formFields') or []
     items = []
-    cur = None
-    in_label = False
-    label_indent = None
-    for line in lines:
-        m_item = re.match(r'^\s*-\s+', line)
-        if m_item:
-            if cur is not None:
-                items.append(cur)
-            cur = {'env': 'UNKNOWN', 'label': {}}
-            in_label = False
-            label_indent = None
+    for field in fields:
+        if not isinstance(field, dict):
             continue
-        if cur is None:
-            continue
-        m_env = re.match(r'^\s*envKey:\s*([A-Za-z0-9_]+)\s*$', line)
-        if m_env:
-            cur['env'] = m_env.group(1)
-        m_label = re.match(r'^(\s*)label:\s*$', line)
-        if m_label:
-            in_label = True
-            label_indent = len(m_label.group(1))
-            continue
-        if in_label:
-            if not line.strip():
-                continue
-            indent = len(line) - len(line.lstrip(' '))
-            if indent <= (label_indent or 0):
-                in_label = False
-                label_indent = None
-                continue
-            m_loc = re.match(r'^\s*([A-Za-z0-9-]+):\s*(.*)$', line)
-            if m_loc:
-                cur['label'][m_loc.group(1)] = m_loc.group(2).strip().strip('"\'')
-    if cur is not None:
-        items.append(cur)
+        label = field.get('label') or {}
+        if not isinstance(label, dict):
+            label = {}
+        items.append({'env': field.get('envKey') or 'UNKNOWN', 'label': label})
     return items
 
-root_lines = read_lines(root)
-ver_lines = read_lines(ver)
+root_data = read_yaml(root)
+ver_data = read_yaml(ver)
 
 if scope in ('description', 'all'):
-    vals = {k: read_desc_map(root_lines).get(k, '').strip() for k in ['en', 'zh', 'zh-Hant', 'ja', 'ko', 'ru', 'ms', 'pt-br']}
+    vals = {k: str(read_desc_map(root_data).get(k, '')).strip() for k in ['en', 'zh', 'zh-Hant', 'ja', 'ko', 'ru', 'ms', 'pt-br']}
     if all(vals.values()):
         en = vals['en'].lower().strip()
         for key in ['ja', 'ko', 'ru', 'ms', 'pt-br']:
@@ -759,15 +695,15 @@ if scope in ('description', 'all'):
             raise SystemExit(1)
 
 if scope in ('labels', 'all'):
-    for item in read_label_items(ver_lines):
-        en = (item['label'].get('en') or '').strip()
+    for item in read_label_items(ver_data):
+        en = str(item['label'].get('en') or '').strip()
         if not en:
             continue
-        same = sum(1 for key, value in item['label'].items() if key != 'en' and value.strip().lower() == en.lower())
+        same = sum(1 for key, value in item['label'].items() if key != 'en' and str(value).strip().lower() == en.lower())
         if same >= 5 and should_fail(f"formFields[{item['env']}] label map has too many locales identical to English ({same})"):
             raise SystemExit(1)
         for key in ['ja', 'ko', 'ru']:
-            value = (item['label'].get(key) or '').strip()
+            value = str(item['label'].get(key) or '').strip()
             if value and value.lower() == en.lower() and en.lower() not in allow:
                 if should_fail(f"formFields[{item['env']}] label.{key} equals English without whitelist term"):
                     raise SystemExit(1)
