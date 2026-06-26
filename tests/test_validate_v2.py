@@ -188,6 +188,42 @@ class ValidateV2Tests(unittest.TestCase):
         self.assertNotEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         self.assertIn("[A][FAIL] missing source-evidence.json", proc.stdout)
 
+    def test_version_option_validates_selected_version_in_multi_version_app(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            app = self._write_sample_app(pathlib.Path(tmp))
+            historical = app / "1.0.0"
+            historical.mkdir()
+            (historical / "data.yml").write_text("additionalProperties:\n  formFields: []\n", encoding="utf-8")
+            (historical / ".env.sample").write_text("CONTAINER_NAME=\n", encoding="utf-8")
+            (historical / "docker-compose.yml").write_text("services: {}\n", encoding="utf-8")
+            proc = subprocess.run(
+                ["bash", str(VALIDATE), "--dir", str(app), "--version", "latest"],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("selected version directory: latest", proc.stdout)
+
+    def test_multi_version_app_requires_explicit_version_selection(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            app = self._write_sample_app(pathlib.Path(tmp))
+            historical = app / "1.0.0"
+            historical.mkdir()
+            (historical / "data.yml").write_text("additionalProperties:\n  formFields: []\n", encoding="utf-8")
+            (historical / ".env.sample").write_text("CONTAINER_NAME=\n", encoding="utf-8")
+            (historical / "docker-compose.yml").write_text("services: {}\n", encoding="utf-8")
+            proc = subprocess.run(
+                ["bash", str(VALIDATE), "--dir", str(app)],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+
+        self.assertNotEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("multiple version directories found", proc.stdout)
+
     def test_patch_compose_does_not_inject_default_healthcheck(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             compose = pathlib.Path(tmp) / "docker-compose.yml"

@@ -37,6 +37,8 @@ Before adaptation, prioritize reading `references/source-policy.md` and collect 
 - Without official Docker evidence, stop expanding; do not guess images, ports, volumes, UID/GID, or dependency injection methods
 - When using third-party images, user must explicitly accept, and record source and risk in delivery notes
 
+For existing app updates, version additions, image lineage changes, dependency changes, volume/env rewrites, or lifecycle script edits, also read `references/upgrade-maintenance.md` before changing files. Treat upgrade safety as part of the adaptation contract, not a post-submit note.
+
 ## Recommended Directory Structure (Store-Aligned)
 
 ### Field Hierarchy Constraints (Aligned with Official apps/ Facts)
@@ -315,8 +317,9 @@ Use this skill in one of three paths.
 1. Run `bash scripts/migrate-v1-to-v2.sh --src <app-dir> [--version <source-ver>] [--target-version <target-ver>] ...`.
 2. If provenance evidence is useful for the workflow, keep source evidence in the source app (`source-evidence.json`) or provide source-evidence arguments to the migration command.
 3. Review the migrated root metadata, version metadata, compose file, lifecycle scripts, and `.env.sample`, then decide whether any high-quality backfill is still needed.
+   - If this is an update to an existing packaged app, run the upgrade safety audit in `references/upgrade-maintenance.md` against the previous supported version.
 4. If needed, run `bash scripts/finalize_runtime_scripts.sh <app-dir> <version-dir>` to backfill minimal lifecycle scripts.
-5. Run `bash scripts/validate-v2.sh --dir <app-dir> --strict-store`.
+5. Run `bash scripts/validate-v2.sh --dir <app-dir> --strict-store`; if the app keeps multiple version directories, add `--version <target-version>`.
 6. If needed, rerun the patch scripts and validate again until strict-store passes.
 
 ### Path C: import a Baota/aaPanel Docker Store app
@@ -373,6 +376,9 @@ bash scripts/validate-v2.sh --dir examples/joplin
 
 # Strict store validation
 bash scripts/validate-v2.sh --dir examples/joplin --strict-store
+
+# Validate one release in a multi-version app directory
+bash scripts/validate-v2.sh --dir examples/joplin --version latest --strict-store
 
 # Provenance-gated validation, only for workflows that require source evidence
 bash scripts/validate-v2.sh --dir examples/joplin --source-evidence-mode required
@@ -488,6 +494,7 @@ Delivery should at least clarify:
   ```
   The hard requirement here is "**bridge-type application must connect to external network**", not network name must be fixed as `1panel-network`. `1panel-network` is just default common/recommended name; if use other external network, should not be considered error. Validation script should prioritize checking "whether external network exists", not checking network name equals `1panel-network`.
 - **README store-style (default suggestion)**: Root `README.md` should by default organize into 1Panel store style description, not directly retain upstream technical README. Recommend at least clarify: installation method (source build/image), access port, data persistence, key environment variables, version differences and usage suggestions. Unless user explicitly indicates not needed, should be default delivery item.
+- **Update README safety note**: For non-trivial updates, include backup scope, direct-upgrade support, required intermediate versions, migration wait/log hints, and any changed image/database/cache dependency.
 
 ## Output shape
 
