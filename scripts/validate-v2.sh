@@ -2,6 +2,7 @@
 set -euo pipefail
 
 DIR=""
+VERSION_NAME=""
 STRICT_C=0
 STRICT_STORE=0
 I18N_MODE="warn"
@@ -26,9 +27,10 @@ fi
 
 usage() {
   cat <<'USAGE'
-usage: validate-v2.sh --dir <app-dir> [--strict-c] [--strict-store] [--source-evidence-mode warn|required|off] [--i18n-mode off|warn|strict] [--i18n-scope description|labels|all] [--i18n-allow-english-labels CSV]
+usage: validate-v2.sh --dir <app-dir> [--version <version-dir>] [--strict-c] [--strict-store] [--source-evidence-mode warn|required|off] [--i18n-mode off|warn|strict] [--i18n-scope description|labels|all] [--i18n-allow-english-labels CSV]
 
 behavior notes:
+  - multi-version app directories require --version <version-dir> so validation targets one release explicitly
   - --strict-store is intended for delivery-ready artifacts, not raw scaffold placeholders
   - source-evidence.json is optional by default; use --source-evidence-mode required only for provenance-gated delivery workflows
   - when docker compose is available, validator runs a real `docker compose config` render check
@@ -54,6 +56,7 @@ info() {
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --dir) DIR="$2"; shift 2 ;;
+    --version) VERSION_NAME="$2"; shift 2 ;;
     --strict-c) STRICT_C=1; shift ;;
     --strict-store) STRICT_STORE=1; shift ;;
     --source-evidence-mode) SOURCE_EVIDENCE_MODE="$2"; shift 2 ;;
@@ -80,11 +83,28 @@ if [[ ${#version_dirs[@]} -eq 0 ]]; then
   echo "[A][FAIL] missing version directory"
   exit 1
 fi
-if [[ ${#version_dirs[@]} -ne 1 ]]; then
-  echo "[A][FAIL] expected exactly one version directory, found ${#version_dirs[@]}"
-  exit 1
+if [[ -n "$VERSION_NAME" ]]; then
+  if [[ "$VERSION_NAME" == */* || "$VERSION_NAME" == .* ]]; then
+    echo "[A][FAIL] invalid --version value: $VERSION_NAME"
+    exit 1
+  fi
+  VER_DIR="$DIR/$VERSION_NAME"
+  if [[ ! -d "$VER_DIR" ]]; then
+    available_versions=$(printf '%s\n' "${version_dirs[@]}" | xargs -n 1 basename | sort | paste -sd ', ' -)
+    echo "[A][FAIL] requested version directory not found: $VERSION_NAME"
+    echo "[C][INFO] available version directories: $available_versions"
+    exit 1
+  fi
+  info "selected version directory: $VERSION_NAME"
+else
+  if [[ ${#version_dirs[@]} -ne 1 ]]; then
+    available_versions=$(printf '%s\n' "${version_dirs[@]}" | xargs -n 1 basename | sort | paste -sd ', ' -)
+    echo "[A][FAIL] multiple version directories found (${#version_dirs[@]}). Re-run with --version <version-dir>."
+    echo "[C][INFO] available version directories: $available_versions"
+    exit 1
+  fi
+  VER_DIR="${version_dirs[0]}"
 fi
-VER_DIR="${version_dirs[0]}"
 VER="$VER_DIR/data.yml"
 COMPOSE="$VER_DIR/docker-compose.yml"
 
