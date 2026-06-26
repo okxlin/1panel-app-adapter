@@ -263,6 +263,17 @@ Adaptation suggestions:
       API_KEY: ${API_KEY}
     ```
 
+### Registry-backed batch adaptation notes
+
+Use these notes when adapting many apps from one image publisher or registry namespace. They are conventions for keeping generated artifacts reviewable; do not treat publisher-specific behavior as a universal runtime rule unless the upstream source confirms it.
+
+- When a persistence path is exposed through `data.yml` (for example `APP_DATA_DIR`, `APP_CONFIG_DIR`, or numbered variants), lifecycle scripts must use the same variable names with safe defaults instead of hardcoding `./data`. A common pattern is `DATA_DIR="${APP_DATA_DIR:-./data}"` before creating or cleaning host paths.
+- If `docker-compose.yml` references `${CONTAINER_NAME}`, `.env.sample` may keep `CONTAINER_NAME=` for closure, but standalone compose validation must provide a non-empty value, for example `CONTAINER_NAME=<app-key>-compose-check`. Docker Compose rejects an empty `container_name`.
+- App display names should identify the application, not the image publisher, unless the publisher is part of the product name. Put image provenance in README, source notes, or delivery notes instead of root `name` / `title` fields.
+- If the image registry provides both `latest` and numbered release tags, keep the moving `latest` version plus the newest numbered version unless the target appstore policy asks for deeper history.
+- Formize user-meaningful environment variables in `data.yml`, but skip high-surface or topology-changing settings unless they are understood and tested: password-hash alternatives, certificate/private-key path overrides, remote SQL ingestion, debug/client-IP logging, external object storage, remote auth backends, container runtime/Podman socket access, privileged mode, and sidecar generation variables owned by another UI.
+- For sidecar compositions, preserve the upstream service topology only when the selected application actually needs it. Do not expose sidecar bootstrap variables that conflict with the main application's UI-driven configuration workflow.
+
 ## What this skill does
 
 - Scaffold a v2-style 1Panel app directory with richer default fields
@@ -523,6 +534,7 @@ The scaffold command produces a directory in this shape:
 - 1Panel automatically generates `CONTAINER_NAME` at install time (based on app key + instance ID)
 - Users should not manually configure it, so it's excluded from formFields
 - However, `.env.sample` must include it for completeness (compose references it via `${CONTAINER_NAME}`)
+- When running `docker compose config` outside 1Panel, pass a non-empty `CONTAINER_NAME` through a temporary env file or shell override; an empty `container_name` is invalid even though 1Panel fills it during install.
 
 **Validation**: `validate-v2.sh` should check that all `${VAR}` references in `docker-compose.yml` have corresponding entries in `.env.sample`.
 
