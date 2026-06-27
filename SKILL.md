@@ -183,6 +183,7 @@ Adaptation suggestions:
 - **Port envKey must have prefix**: Unified use `PANEL_APP_PORT_` prefix (e.g., `PANEL_APP_PORT_HTTP` / `PANEL_APP_PORT_API`).
 - Single-port web application: Prioritize expose `PANEL_APP_PORT_HTTP`.
 - Multi-port application: Use `PANEL_APP_PORT_HTTP/HTTPS/API/SSH/...` semantic naming (keep all uppercase, underscores), all use `rule: paramPort`.
+- Broad host port ranges are fragile in 1Panel/Docker maintenance flows. If upstream exposes hundreds of protocol ports, do not blindly make the whole range the appstore default; prefer the minimal common port(s), document how to add protocol-specific ports, and only keep a range when install/restart smoke proves it is stable.
 
 ### volumes → Data Directory Fields (Official vs Adaptation Artifact Convention)
 
