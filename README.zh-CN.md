@@ -194,6 +194,12 @@ bash scripts/finalize_runtime_scripts.sh <app-dir> <version-dir>
 
 当你需要在最终校验前确保 `init.sh`、`upgrade.sh`、`uninstall.sh` 存在时，使用这个脚本。
 
+## 运行时启动经验
+
+- 如果 compose wrapper 先以 `root` 修复 bind mount 权限，再用 `setpriv`、`gosu` 或 `su-exec` 降权启动应用，`exec` 前要同步设置目标用户的 `HOME`、`USER`、`LOGNAME`；否则 `pnpm` 等运行时可能仍尝试写 `/root` 下的配置并触发权限错误。
+- 官方 PostgreSQL 18+ 镜像优先把持久化目录挂到 `/var/lib/postgresql`，不要惯性沿用 `/var/lib/postgresql/data`，除非已经明确配置并测试了自定义 `PGDATA`。
+- 生成配置文件需要使用 1Panel 随机密码字段时，优先在应用容器启动阶段生成配置；不要假设 `scripts/init.sh` 一定能收到所有表单生成的 secret。
+
 ## 打包与平台预期
 
 - 面向 GitHub 托管仓库与 Linux 执行环境

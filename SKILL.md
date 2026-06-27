@@ -277,6 +277,14 @@ Use these notes when adapting many apps from one image publisher or registry nam
 - Formize user-meaningful environment variables in `data.yml`, but skip high-surface or topology-changing settings unless they are understood and tested: password-hash alternatives, certificate/private-key path overrides, remote SQL ingestion, debug/client-IP logging, external object storage, remote auth backends, container runtime/Podman socket access, privileged mode, and sidecar generation variables owned by another UI.
 - For sidecar compositions, preserve the upstream service topology only when the selected application actually needs it. Do not expose sidecar bootstrap variables that conflict with the main application's UI-driven configuration workflow.
 
+### Runtime startup lessons
+
+Use these checks when an app needs a wrapper command before delegating back to the official image entrypoint or command.
+
+- If the wrapper starts as `root` to repair bind-mount permissions and then drops privileges with `setpriv`, `gosu`, `su-exec`, or similar, also set `HOME`, `USER`, and `LOGNAME` for the target application user before `exec`. Some runtimes and package managers keep using `/root` after UID/GID changes unless the environment is corrected; for example, `pnpm` can fail with `EACCES` while opening `/root/.config/pnpm/config.yaml`.
+- For apps using the official PostgreSQL 18+ images, do not blindly mount persistent data to `/var/lib/postgresql/data`. PostgreSQL 18 images use major-version-specific cluster directories and the official image error message recommends mounting `/var/lib/postgresql` so future `pg_upgrade --link` flows do not cross mount boundaries. If you customize `PGDATA` or keep the older `/var/lib/postgresql/data` path, require direct compose and 1Panel smoke evidence before delivery.
+- When generated config needs 1Panel random password fields, prefer generating the config inside the application container at startup, where compose environment variables are definitely present. Do not assume `scripts/init.sh` receives every form-generated secret.
+
 ## What this skill does
 
 - Scaffold a v2-style 1Panel app directory with richer default fields
