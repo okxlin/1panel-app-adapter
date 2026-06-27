@@ -194,6 +194,12 @@ bash scripts/finalize_runtime_scripts.sh <app-dir> <version-dir>
 
 Use this when you need to ensure `init.sh`, `upgrade.sh`, and `uninstall.sh` exist before the final validation step.
 
+## Runtime startup lessons
+
+- If a compose wrapper starts as `root` and then drops privileges with `setpriv`, `gosu`, or `su-exec`, set `HOME`, `USER`, and `LOGNAME` for the target user before `exec`; otherwise runtimes such as `pnpm` may still try to write under `/root`.
+- For official PostgreSQL 18+ images, prefer mounting persistent data at `/var/lib/postgresql`, not `/var/lib/postgresql/data`, unless a tested custom `PGDATA` path is intentional.
+- If generated config needs 1Panel random password fields, generate it inside the app container at startup instead of relying on `scripts/init.sh` to receive every secret.
+
 ## Packaging and platform expectations
 
 - intended for GitHub-hosted repositories and Linux execution environments
