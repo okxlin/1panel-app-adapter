@@ -276,6 +276,7 @@ Use these notes when adapting many apps from one image publisher or registry nam
 - If the image registry provides both `latest` and numbered release tags, keep the moving `latest` version plus the newest numbered version unless the target appstore policy asks for deeper history.
 - Formize user-meaningful environment variables in `data.yml`, but skip high-surface or topology-changing settings unless they are understood and tested: password-hash alternatives, certificate/private-key path overrides, remote SQL ingestion, debug/client-IP logging, external object storage, remote auth backends, container runtime/Podman socket access, privileged mode, and sidecar generation variables owned by another UI.
 - For sidecar compositions, preserve the upstream service topology only when the selected application actually needs it. Do not expose sidecar bootstrap variables that conflict with the main application's UI-driven configuration workflow.
+- When the main service joins both a shared external network such as `1panel-network` and an internal app network, avoid generic internal service names in host variables (`redis`, `mongo`, `mysql`, `postgres`, `db`). Prefer app-prefixed service names such as `<app>-redis` or explicit internal network aliases so Docker DNS cannot resolve a same-name service from the shared network.
 
 ### Runtime startup lessons
 
@@ -284,6 +285,7 @@ Use these checks when an app needs a wrapper command before delegating back to t
 - If the wrapper starts as `root` to repair bind-mount permissions and then drops privileges with `setpriv`, `gosu`, `su-exec`, or similar, also set `HOME`, `USER`, and `LOGNAME` for the target application user before `exec`. Some runtimes and package managers keep using `/root` after UID/GID changes unless the environment is corrected; for example, `pnpm` can fail with `EACCES` while opening `/root/.config/pnpm/config.yaml`.
 - For apps using the official PostgreSQL 18+ images, do not blindly mount persistent data to `/var/lib/postgresql/data`. PostgreSQL 18 images use major-version-specific cluster directories and the official image error message recommends mounting `/var/lib/postgresql` so future `pg_upgrade --link` flows do not cross mount boundaries. If you customize `PGDATA` or keep the older `/var/lib/postgresql/data` path, require direct compose and 1Panel smoke evidence before delivery.
 - When generated config needs 1Panel random password fields, prefer generating the config inside the application container at startup, where compose environment variables are definitely present. Do not assume `scripts/init.sh` receives every form-generated secret.
+- Avoid one-shot init sidecars for required startup work when targeting 1Panel app installs. 1Panel may rewrite restart policies during deployment, so `service_completed_successfully` and short-lived init containers can become fragile. Prefer idempotent initialization in the main service startup path, a long-running helper, or a dependency healthcheck that can be retried safely.
 
 ## What this skill does
 
@@ -502,6 +504,7 @@ Delivery should at least clarify:
       external: true
   ```
   The hard requirement here is "**bridge-type application must connect to external network**", not network name must be fixed as `1panel-network`. `1panel-network` is just default common/recommended name; if use other external network, should not be considered error. Validation script should prioritize checking "whether external network exists", not checking network name equals `1panel-network`.
+- **Multi-service DNS collision guard**: If the primary service joins both `1panel-network` and an internal network, do not leave dependency hostnames as generic `redis`, `mongo`, `mysql`, `postgres`, or `db` when those services are defined in the same compose. Use app-prefixed service names or explicit internal aliases. `validate-v2.sh` warns on this pattern because Docker DNS can resolve same-name services from the shared network before the intended internal service.
 - **README store-style (default suggestion)**: Root `README.md` should by default organize into 1Panel store style description, not directly retain upstream technical README. Recommend at least clarify: installation method (source build/image), access port, data persistence, key environment variables, version differences and usage suggestions. Unless user explicitly indicates not needed, should be default delivery item.
 - **Update README safety note**: For non-trivial updates, include backup scope, direct-upgrade support, required intermediate versions, migration wait/log hints, and any changed image/database/cache dependency.
 
