@@ -176,6 +176,7 @@ Validation includes:
 - configurable i18n quality warnings for `additionalProperties.description` and form-field label maps
 - label-map completeness hints, including missing locales and legacy `zh-hant` naming
 - compose bridge-network checks for service-level `networks:` usage and `1panel-network` recommendations
+- multi-service shared-network DNS collision warnings for generic internal service hostnames such as `redis` or `mongo`
 - healthchecks are treated as optional runtime enhancements, not delivery gates
 
 ## Policy and style references
@@ -199,6 +200,8 @@ Use this when you need to ensure `init.sh`, `upgrade.sh`, and `uninstall.sh` exi
 - If a compose wrapper starts as `root` and then drops privileges with `setpriv`, `gosu`, or `su-exec`, set `HOME`, `USER`, and `LOGNAME` for the target user before `exec`; otherwise runtimes such as `pnpm` may still try to write under `/root`.
 - For official PostgreSQL 18+ images, prefer mounting persistent data at `/var/lib/postgresql`, not `/var/lib/postgresql/data`, unless a tested custom `PGDATA` path is intentional.
 - If generated config needs 1Panel random password fields, generate it inside the app container at startup instead of relying on `scripts/init.sh` to receive every secret.
+- For multi-service apps whose main service joins both `1panel-network` and an internal network, use app-prefixed internal service hostnames (`<app>-redis`, `<app>-mongo`, etc.) or explicit internal aliases instead of generic names. Shared Docker DNS can otherwise resolve another app's `redis`, `mongo`, or `db` service.
+- Avoid one-shot init sidecars for required startup work in 1Panel apps. 1Panel deployment may rewrite restart policy behavior, making `service_completed_successfully` fragile; prefer idempotent startup or healthcheck initialization.
 
 ## Packaging and platform expectations
 

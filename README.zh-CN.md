@@ -176,6 +176,7 @@ bash scripts/validate-v2.sh --dir <app-dir> --i18n-mode strict --i18n-scope all
 - 可配置的 i18n 质量告警，覆盖 `additionalProperties.description` 与表单 `label` 多语言映射
 - 表单 `label map` 缺项、旧版 `zh-hant` 命名等提示
 - service 级 `networks:` 与 `1panel-network` 相关的桥接网络检查
+- 多服务应用在共享网络下使用 `redis`、`mongo` 等通用内部服务主机名时的 Docker DNS 碰撞告警
 - healthcheck 作为可选运行增强项处理，不作为交付门禁
 
 ## 策略与风格参考
@@ -199,6 +200,8 @@ bash scripts/finalize_runtime_scripts.sh <app-dir> <version-dir>
 - 如果 compose wrapper 先以 `root` 修复 bind mount 权限，再用 `setpriv`、`gosu` 或 `su-exec` 降权启动应用，`exec` 前要同步设置目标用户的 `HOME`、`USER`、`LOGNAME`；否则 `pnpm` 等运行时可能仍尝试写 `/root` 下的配置并触发权限错误。
 - 官方 PostgreSQL 18+ 镜像优先把持久化目录挂到 `/var/lib/postgresql`，不要惯性沿用 `/var/lib/postgresql/data`，除非已经明确配置并测试了自定义 `PGDATA`。
 - 生成配置文件需要使用 1Panel 随机密码字段时，优先在应用容器启动阶段生成配置；不要假设 `scripts/init.sh` 一定能收到所有表单生成的 secret。
+- 多服务应用的主服务如果同时加入 `1panel-network` 和内部网络，内部依赖主机名使用 `<app>-redis`、`<app>-mongo` 等应用前缀服务名或显式内部 alias，不要直接使用 `redis`、`mongo`、`db` 等通用名，避免 Docker DNS 解析到共享网络上的其他应用服务。
+- 需要在启动前执行初始化逻辑时，避免依赖一次性 init sidecar。1Panel 部署过程可能改写 restart policy 行为，使 `service_completed_successfully` 变脆；优先使用可重试的主服务启动初始化或 healthcheck 初始化。
 
 ## 打包与平台预期
 

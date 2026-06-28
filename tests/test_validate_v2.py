@@ -252,6 +252,54 @@ class ValidateV2Tests(unittest.TestCase):
         self.assertIn('createdBy: "Apps"', patched)
         self.assertNotIn("healthcheck:", patched)
 
+    def test_multi_network_generic_internal_service_name_warns(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            app = self._write_sample_app(pathlib.Path(tmp))
+            compose = app / "latest" / "docker-compose.yml"
+            compose.write_text(
+                textwrap.dedent(
+                    """\
+                    services:
+                      sample:
+                        image: "nginx:alpine"
+                        container_name: ${CONTAINER_NAME}
+                        environment:
+                          - REDIS_HOST=redis
+                        ports:
+                          - "${PANEL_APP_PORT_HTTP}:80"
+                        networks:
+                          - 1panel-network
+                          - sample-network
+                        labels:
+                          createdBy: "Apps"
+                      redis:
+                        image: "redis:7.4"
+                        container_name: ${CONTAINER_NAME}-redis
+                        networks:
+                          - sample-network
+                        labels:
+                          createdBy: "Apps"
+                    networks:
+                      1panel-network:
+                        external: true
+                      sample-network:
+                        driver: bridge
+                    """
+                ),
+                encoding="utf-8",
+            )
+
+            proc = subprocess.run(
+                ["bash", str(VALIDATE), "--dir", str(app)],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("generic internal service name", proc.stdout)
+        self.assertIn("sample->redis", proc.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -381,8 +381,11 @@ set +e
 network_output=$("$PYTHON_BIN" - <<'PY' "$COMPOSE"
 import re, sys
 from pathlib import Path
+import yaml
 
-lines = Path(sys.argv[1]).read_text(encoding='utf-8', errors='ignore').splitlines()
+compose_path = Path(sys.argv[1])
+compose_text = compose_path.read_text(encoding='utf-8', errors='ignore')
+lines = compose_text.splitlines()
 in_services = False
 services_indent = None
 service_indent = None
@@ -487,6 +490,71 @@ if external_networks and '1panel-network' not in external_networks:
     print('[B][WARN] compose uses external network(s) but not default 1panel-network: ' + ', '.join(external_networks))
 elif not external_networks and not found_default_bridge:
     print('[C][INFO] compose does not declare external bridge network; this is fine unless the app should join 1Panel public network')
+
+try:
+    compose_data = yaml.safe_load(compose_text) or {}
+except Exception:
+    compose_data = {}
+
+if isinstance(compose_data, dict):
+    services = compose_data.get('services') or {}
+    top_networks = compose_data.get('networks') or {}
+    if isinstance(services, dict) and isinstance(top_networks, dict):
+        external_net_names = {
+            name
+            for name, cfg in top_networks.items()
+            if isinstance(name, str)
+            and isinstance(cfg, dict)
+            and str(cfg.get('external', '')).lower() == 'true'
+        }
+        generic_names = {
+            'db', 'database', 'mysql', 'mariadb', 'mongo', 'mongodb',
+            'postgres', 'postgresql', 'redis', 'valkey'
+        }
+        internal_generic_services = {
+            name for name in services
+            if isinstance(name, str) and name.lower() in generic_names
+        }
+
+        def service_network_names(service_cfg):
+            nets = service_cfg.get('networks') if isinstance(service_cfg, dict) else None
+            if isinstance(nets, list):
+                return {item for item in nets if isinstance(item, str)}
+            if isinstance(nets, dict):
+                return {item for item in nets if isinstance(item, str)}
+            return set()
+
+        def environment_values(service_cfg):
+            env = service_cfg.get('environment') if isinstance(service_cfg, dict) else None
+            values = []
+            if isinstance(env, list):
+                values.extend(str(item) for item in env)
+            elif isinstance(env, dict):
+                for key, value in env.items():
+                    values.append(f'{key}={value}')
+            return values
+
+        risky_refs = []
+        for service_name, service_cfg in services.items():
+            if not isinstance(service_cfg, dict):
+                continue
+            svc_nets = service_network_names(service_cfg)
+            if not (svc_nets & external_net_names):
+                continue
+            if not (svc_nets - external_net_names):
+                continue
+            values = environment_values(service_cfg)
+            for generic in sorted(internal_generic_services):
+                service_ref = re.escape(generic)
+                pattern = re.compile(rf'(^|[=:/@,]){service_ref}([:/,]|$)', re.IGNORECASE)
+                if any(pattern.search(value) for value in values):
+                    risky_refs.append(f'{service_name}->{generic}')
+        if risky_refs:
+            print(
+                '[B][WARN] multi-service app joins external and internal networks while referencing generic internal service name(s): '
+                + ', '.join(sorted(risky_refs))
+                + '; prefer app-prefixed service names or explicit internal aliases to avoid Docker DNS collisions on shared networks'
+            )
 PY
 )
 network_status=$?
