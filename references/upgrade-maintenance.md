@@ -24,7 +24,14 @@ When adding or renaming environment variables:
 - translate renamed variables in `upgrade.sh` when possible
 - set safe defaults for new optional variables
 - require explicit user input for new required variables that cannot be inferred
+- for public domain / public URL / public IP fields, prefer an empty required field plus README guidance over a test-only placeholder such as `127.0.0.1` or `localhost`
 - keep `.env.sample`, `data.yml` formFields, and compose `${VAR}` references closed and consistent
+
+If a new version directory is a GPU or CUDA variant with narrower platform coverage than the default version:
+
+- keep the version directory name explicit, for example `latest-cuda`
+- preserve the normal package behavior and persistence layout unless upstream documents a real runtime difference
+- document hardware prerequisites and variant-specific architecture limits in README and provenance notes so root-level multi-arch metadata does not overstate support for that variant
 
 Do not silently replace a persisted secret, database password, install path, or public URL during upgrade.
 
