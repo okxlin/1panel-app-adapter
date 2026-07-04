@@ -155,12 +155,7 @@ fi
 "$PYTHON_BIN" "$SCRIPT_DIR/gen_env_sample.py" "$VER_DIR/data.yml" "$VER_DIR/.env.sample" "$VER_DIR/docker-compose.yml"
 
 if [[ ! -f "$VER_DIR/scripts/init.sh" ]]; then
-  cat > "$VER_DIR/scripts/init.sh" <<'SH'
-#!/usr/bin/env bash
-set -euo pipefail
-mkdir -p ./data
-SH
-  chmod +x "$VER_DIR/scripts/init.sh"
+  "$PYTHON_BIN" "$SCRIPT_DIR/runtime_script_utils.py" "$VER_DIR/data.yml" "$VER_DIR/scripts/init.sh"
 fi
 
 if [[ ! -f "$VER_DIR/scripts/upgrade.sh" ]]; then

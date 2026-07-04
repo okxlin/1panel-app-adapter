@@ -17,12 +17,19 @@ fi
 mkdir -p "$VER_DIR/scripts"
 
 if [[ ! -f "$VER_DIR/scripts/init.sh" ]]; then
-  cat > "$VER_DIR/scripts/init.sh" <<'SH'
-#!/usr/bin/env bash
-set -euo pipefail
-mkdir -p ./data
-SH
-  chmod +x "$VER_DIR/scripts/init.sh"
+  python_bin=""
+  for candidate in python3 python; do
+    if command -v "$candidate" >/dev/null 2>&1 && "$candidate" -c "import sys" >/dev/null 2>&1; then
+      python_bin="$candidate"
+      break
+    fi
+  done
+  if [[ -z "$python_bin" ]]; then
+    echo "FAIL: python interpreter not available for init.sh generation" >&2
+    exit 2
+  fi
+  script_dir="$(cd "$(dirname "$0")" && pwd)"
+  "$python_bin" "$script_dir/runtime_script_utils.py" "$VER_DIR/data.yml" "$VER_DIR/scripts/init.sh"
 fi
 
 if [[ ! -f "$VER_DIR/scripts/upgrade.sh" ]]; then

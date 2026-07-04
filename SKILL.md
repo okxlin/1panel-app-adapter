@@ -39,6 +39,8 @@ Before adaptation, prioritize reading `references/source-policy.md` and collect 
 
 For existing app updates, version additions, image lineage changes, dependency changes, volume/env rewrites, or lifecycle script edits, also read `references/upgrade-maintenance.md` before changing files. Treat upgrade safety as part of the adaptation contract, not a post-submit note.
 
+For PHP runtime work, especially when converting a historical package such as `php-unofficial` into a real 1Panel PHP runtime, also read `references/php-runtime.md`. PHP runtimes are not packaged like ordinary website/tool apps, and the runtime picker behavior is source-backed rather than guessable from generic appstore patterns.
+
 ## Recommended Directory Structure (Store-Aligned)
 
 ### Field Hierarchy Constraints (Aligned with Official apps/ Facts)
