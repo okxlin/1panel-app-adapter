@@ -129,6 +129,15 @@ Scaffold supports optional injection template:
 
 Key points for adaptation:
 - `version/data.yml` uses `type: apps` + `child.type: service` to inject `PANEL_DB_HOST` (reference 1Panel store app common dependency injection pattern).
+- PostgreSQL-only rule: if the app relies on panel-side PostgreSQL provisioning (`CreateDatabase` in install task logs), runtime validation should use a real 1Panel-installed PostgreSQL app in the same panel. Pointing the service field at an arbitrary external hostname can bypass the intended provisioning path and create misleading failures.
+- For that PostgreSQL-only path, keep the application PostgreSQL user (`PANEL_DB_USER`) distinct from the PostgreSQL service admin/root account. Reusing the admin username can make a correct package fail during install with `User already exists`.
+- Do not automatically generalize those PostgreSQL-specific behaviors to MySQL; verify MySQL-linked adaptations from their own 1Panel task/runtime evidence before carrying the rule over.
+- For format-sensitive secrets, do not assume a generic random password is a valid application value. Examples: Laravel `APP_KEY` expects Laravel-compatible key material, while Mastodon `ACTIVE_RECORD_*`, `SECRET_KEY_BASE`, `OTP_SECRET`, and `VAPID_*` have upstream-specific generator commands and formats.
+- When official docs expose a generator helper, prefer `scripts/init.sh` / `scripts/upgrade.sh` to generate or normalize those values from the official image/helper command instead of shipping a fixed sample secret in `data.yml` or trusting a generic panel-generated random string.
+- If `scripts/init.sh` or `scripts/upgrade.sh` replaces a panel-provided secret with a normalized/generated value, persist that final value under the app's configurable data path and restore it during later upgrades. Real 1Panel upgrades can replay the original install form value instead of the mutated `.env`, which can break apps that silently rotate `APP_KEY`, `DB_PASSWORD`, or similar persisted secrets.
+- Keep that secret-persistence rule distinct from the PostgreSQL-only provisioning notes above: the replay problem can affect MySQL-, PostgreSQL-, or non-DB secret fields, even though the dependency-provisioning behavior is not shared across engines.
+- If the compose uses `network_mode: host`, verify whether any `PANEL_APP_PORT_*` field is actually consumed by the compose. A disabled/fixed port field should stay aligned with the app's real built-in listening port instead of being treated like a free-to-randomize published port.
+- For host-network adaptations tested from a containerized smoke runner, runtime probing may need the Docker host gateway (or another host-reachable address) rather than `127.0.0.1` inside the panel container.
 - `docker-compose.yml` if application uses `DATABASE_*` variables, need to map in compose:
   - `DATABASE_HOST: ${PANEL_DB_HOST}`
   - `DATABASE_USER: ${PANEL_DB_USER}`
@@ -271,6 +280,10 @@ Adaptation suggestions:
 Use these notes when adapting many apps from one image publisher or registry namespace. They are conventions for keeping generated artifacts reviewable; do not treat publisher-specific behavior as a universal runtime rule unless the upstream source confirms it.
 
 - When a persistence path is exposed through `data.yml` (for example `APP_DATA_DIR`, `APP_CONFIG_DIR`, or numbered variants), lifecycle scripts must use the same variable names with safe defaults instead of hardcoding `./data`. A common pattern is `DATA_DIR="${APP_DATA_DIR:-./data}"` before creating or cleaning host paths.
+- Do not assume 1Panel injects every path form field into the lifecycle-script process environment. If `scripts/init.sh` or `scripts/upgrade.sh` needs a persistence-path variable, prefer `ENV_FILE="${ENV_FILE:-./.env}"` plus a small `read_env_value` fallback before defaulting to `./data` or another relative path.
+- `.env.sample` is a standalone-compose convenience file, not the source of truth for 1Panel runtime parameters. 1Panel installs render their own `.env` from form values and platform injection. Do not reverse-fill `.env.sample` from install-time state, and do not make packaged apps depend on `env_file: ./.env.sample` for 1Panel-only runtime behavior.
+- If a package needs an additional runtime defaults file such as `dify.env`, treat it as a packaged pre-`./.env` layer: document that role clearly, keep user-specific secret samples out of it where possible, and rely on generated `./.env` values or explicit compose env mappings to supply real install-time secrets.
+- For secret-like form fields, do not combine `random: true` with a fixed weak sample default unless the target panel is known to replace it before submission. If the install should generate a value, prefer an empty default and let the panel/test runner supply the random secret.
 - If `docker-compose.yml` references `${CONTAINER_NAME}`, `.env.sample` may keep `CONTAINER_NAME=` for closure, but standalone compose validation must provide a non-empty value, for example `CONTAINER_NAME=<app-key>-compose-check`. Docker Compose rejects an empty `container_name`.
 - App display names should identify the application, not the image publisher, unless the publisher is part of the product name. Put image provenance in README, source notes, or delivery notes instead of root `name` / `title` fields.
 - If the image registry provides both `latest` and numbered release tags, keep the moving `latest` version plus the newest numbered version unless the target appstore policy asks for deeper history.
@@ -534,6 +547,8 @@ The scaffold command produces a directory in this shape:
 **Scope**: Version-level `<app>/<version>/.env.sample`
 
 **Core principle**: `.env.sample` must list **all** environment variables used in `docker-compose.yml`, including those not declared in `data.yml` formFields.
+
+**1Panel boundary**: `.env.sample` is for users who want to run the packaged compose outside 1Panel. It is not the runtime contract for a 1Panel install, and form submission should not mutate `.env.sample`. If a packaged app needs 1Panel runtime values, express them through `data.yml` form fields, panel-injected variables, compose defaults, or explicit lifecycle logic instead of relying on `.env.sample` as an installed `env_file`.
 
 **Recommended values rule**: `.env.sample` should contain **working default values** where possible, so users can `docker compose up` directly after copying:
 - Variables with official defaults → use the default (e.g., `TZ=Asia/Shanghai`, `AUTH_ENABLED=false`)
