@@ -169,6 +169,8 @@ bash scripts/validate-v2.sh --dir <app-dir> --i18n-mode strict --i18n-scope all
 - compose `${VAR}` 与版本级 `data.yml` 的 `envKey` 闭环关系
 - root/version/compose 的重复 YAML key 检测
 - 基于 `.env.sample` 与安全兜底 `CONTAINER_NAME` 的 `docker compose config` 解析校验
+- `.env.sample` 仅视为独立 compose 运行时的参考文件；1Panel 运行时值应来自表单、面板注入、compose 默认值或生命周期脚本，不应依赖 `env_file: ./.env.sample`
+- 如果包内还带有 `dify.env` 这类运行时默认 env 文件，应明确说明它是先于 `./.env` 加载的默认层；其中尽量不要放用户级密钥样例，真实安装值应由后续 env 层或 compose 显式映射覆盖
 - 完整的 compose 渲染校验依赖执行环境中可用的 `docker compose` CLI
 - `--strict-store` 下对 README/元数据占位模板残留的阻断检测
 - `references/implicit-envkeys.md` 中声明的隐式变量例外

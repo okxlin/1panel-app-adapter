@@ -558,13 +558,7 @@ if [[ -n "$VOLUMES" ]]; then
 fi
 
 "$PYTHON_BIN" "$(dirname "$0")/gen_env_sample.py" "$VER_DIR/data.yml" "$VER_DIR/.env.sample" "$VER_DIR/docker-compose.yml"
-
-cat > "$VER_DIR/scripts/init.sh" <<'SH'
-#!/usr/bin/env bash
-set -euo pipefail
-mkdir -p ./data
-SH
-chmod +x "$VER_DIR/scripts/init.sh"
+"$PYTHON_BIN" "$(dirname "$0")/runtime_script_utils.py" "$VER_DIR/data.yml" "$VER_DIR/scripts/init.sh"
 
 cat > "$VER_DIR/scripts/upgrade.sh" <<'SH'
 #!/usr/bin/env bash

@@ -25,6 +25,8 @@ except ImportError:
     )
     raise SystemExit(1)
 
+from runtime_script_utils import render_init_script_content
+
 # ── Error Codes ───────────────────────────────────────────────────────
 E_BAOTA_REQUIRED_FILES = "E_BAOTA_REQUIRED_FILES"
 E_BAOTA_APP_JSON_MISSING = "E_BAOTA_APP_JSON_MISSING"
@@ -211,12 +213,12 @@ def _normalize_form_field(field: Dict[str, Any]) -> Dict[str, Any]:
     return normalized
 
 
-def _write_default_runtime_files(app_out: pathlib.Path, ver_out: pathlib.Path) -> None:
+def _write_default_runtime_files(app_out: pathlib.Path, ver_out: pathlib.Path, version_data: Optional[Dict[str, Any]] = None) -> None:
     (ver_out / "data").mkdir(parents=True, exist_ok=True)
     scripts_dir = ver_out / "scripts"
     scripts_dir.mkdir(parents=True, exist_ok=True)
     scripts = {
-        "init.sh": "#!/bin/bash\nset -e\n",
+        "init.sh": render_init_script_content(version_data or {}),
         "upgrade.sh": "#!/bin/bash\nset -e\n",
         "uninstall.sh": "#!/bin/bash\nset -e\ndocker-compose down --volumes\n",
     }
@@ -1273,7 +1275,7 @@ class ImportRunner:
         app_out = pathlib.Path(out_dir) / app_key
         ver_out = app_out / version
         ver_out.mkdir(parents=True, exist_ok=True)
-        _write_default_runtime_files(app_out, ver_out)
+        (ver_out / "data").mkdir(parents=True, exist_ok=True)
 
         # Root data.yml
         root_data = self._build_root_data_yml(appspec)
@@ -1284,6 +1286,7 @@ class ImportRunner:
         ver_data = self._build_version_data_yml(appspec)
         with open(ver_out / "data.yml", "w", encoding="utf-8") as fh:
             yaml.dump(ver_data, fh, default_flow_style=False, allow_unicode=True)
+        _write_default_runtime_files(app_out, ver_out, ver_data)
 
         # Transformed docker-compose.yml (strip _transform metadata)
         clean_compose = {k: v for k, v in compose_data.items() if not k.startswith("_")}

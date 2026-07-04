@@ -32,6 +32,7 @@ except ImportError:
     raise SystemExit(1)
 
 from baota_import_lib import _i18n_map, _normalize_form_field, _sanitize_env_suffix, _strip_internal_metadata
+from runtime_script_utils import write_init_script
 
 EXIT_SUCCESS = 0
 EXIT_FAILURE = 1
@@ -461,10 +462,10 @@ class AppSpecGenerator:
         scripts_dir = self.version_dir / "scripts"
         scripts_dir.mkdir(parents=True, exist_ok=True)
         scripts = {
-            "init.sh": "#!/bin/bash\nset -e\n",
             "upgrade.sh": "#!/bin/bash\nset -e\n",
             "uninstall.sh": "#!/bin/bash\nset -e\ndocker-compose down --volumes\n",
         }
+        write_init_script(self.version_dir / "data.yml", scripts_dir / "init.sh")
         for name, content in scripts.items():
             path = scripts_dir / name
             path.write_text(content, encoding="utf-8")

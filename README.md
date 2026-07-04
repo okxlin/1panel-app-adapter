@@ -169,6 +169,8 @@ Validation includes:
 - compose `${VAR}` closure against version `data.yml` envKey declarations
 - duplicate YAML key detection for root/version/compose files
 - `docker compose config` validation using `.env.sample` with a safe fallback `CONTAINER_NAME`
+- `.env.sample` is treated as a standalone compose reference file; 1Panel runtime values should come from form fields, panel injection, compose defaults, or lifecycle logic instead of relying on `env_file: ./.env.sample`
+- when a package also ships a runtime defaults env file such as `dify.env`, keep it documented as a pre-`./.env` defaults layer and avoid embedding user-specific secret samples unless later env layers or explicit compose env mappings override them
 - full compose-render validation expects an available `docker compose` CLI in the execution environment
 - strict-store placeholder/template residue detection for README and metadata
 - implicit env key exceptions from `references/implicit-envkeys.md`
