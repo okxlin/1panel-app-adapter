@@ -126,11 +126,18 @@ Common fixed envKeys (recommend using as needed):
 - Database: `PANEL_DB_TYPE`, `PANEL_DB_HOST`, `PANEL_DB_NAME`, `PANEL_DB_USER`, `PANEL_DB_USER_PASSWORD`
 - Redis: `REDIS_HOST`, `REDIS_PORT`, `PANEL_REDIS_ROOT_PASSWORD`, `REDIS_DB`
 
+If users are expected to choose a reusable 1Panel-managed dependency from the install UI, do not leave the dependency host field as plain `type: text`.
+- For database-family selectors, prefer `type: apps` plus `child.type: service`.
+- For single-step selectors such as Redis service reuse, prefer `type: service` with the dependency `key` (for example `key: redis`) on the host envKey field.
+- A package that only accepts manual host input is not equivalent to a package whose UI can actually select a store/local dependency app.
+
 Scaffold supports optional injection template:
 - When running `scripts/scaffold-v2.sh`, add `--with-panel-deps` (or alias `--with-panel-db-redis`), will automatically add above DB/Redis related formFields in generated `<version>/data.yml` (including `labelEn/labelZh` + `label` map, includes `zh-Hant`).
 
 Key points for adaptation:
 - `version/data.yml` uses `type: apps` + `child.type: service` to inject `PANEL_DB_HOST` (reference 1Panel store app common dependency injection pattern).
+- When converting an existing package from manual host input to a selector-backed dependency, keep the effective runtime envKey stable when possible. For example, changing `REDIS_HOST` from `type: text` to `type: service` is usually upgrade-safe because existing `.env` values still map to the same compose/app variable.
+- If the selector conversion requires a renamed envKey or adds a new selector-driving field such as `PANEL_DB_TYPE`, treat that as an upgrade migration item and backfill it in `scripts/upgrade.sh` when possible.
 - PostgreSQL-only rule: if the app relies on panel-side PostgreSQL provisioning (`CreateDatabase` in install task logs), runtime validation should use a real 1Panel-installed PostgreSQL app in the same panel. Pointing the service field at an arbitrary external hostname can bypass the intended provisioning path and create misleading failures.
 - For that PostgreSQL-only path, keep the application PostgreSQL user (`PANEL_DB_USER`) distinct from the PostgreSQL service admin/root account. Reusing the admin username can make a correct package fail during install with `User already exists`.
 - Do not automatically generalize those PostgreSQL-specific behaviors to MySQL; verify MySQL-linked adaptations from their own 1Panel task/runtime evidence before carrying the rule over.
@@ -146,6 +153,7 @@ Key points for adaptation:
   - `DATABASE_PASSWORD: ${PANEL_DB_USER_PASSWORD}`
   - `DATABASE_DBNAME: ${PANEL_DB_NAME}`
 - Redis password similarly: `REDIS_PASSWORD: ${PANEL_REDIS_ROOT_PASSWORD}` (if application field name differs, map as needed).
+- Validation must prove the selector path, not only connectivity. A smoke/install report should show the dependency host envKey under the install payload `services` object; manually injecting only `params.REDIS_HOST=...` or `params.PANEL_DB_HOST=...` is not enough evidence that the packaged UI selector works.
 > - version `data.yml` `formFields[].label` should keep both `labelZh/labelEn` and `label` map (compatible with different repositories/versions).
 > - volumes host paths default prefer falling under `./data/*` subdirectories (e.g., `./cache` normalizes to `./data/cache`).
 > - **Named volumes (named volume) maintain upstream semantics**:

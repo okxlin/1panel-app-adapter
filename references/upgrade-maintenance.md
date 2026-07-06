@@ -24,6 +24,8 @@ When adding or renaming environment variables:
 - translate renamed variables in `upgrade.sh` when possible
 - set safe defaults for new optional variables
 - require explicit user input for new required variables that cannot be inferred
+- if converting a dependency host field from manual text input to a 1Panel selector, prefer keeping the same effective envKey when possible so existing `.env` files remain valid
+- if selector support adds a new driving field such as `PANEL_DB_TYPE` or renames an existing host envKey, backfill it in `upgrade.sh` instead of assuming old installs will recreate `.env` from scratch
 - for public domain / public URL / public IP fields, prefer an empty required field plus README guidance over a test-only placeholder such as `127.0.0.1` or `localhost`
 - keep `.env.sample`, `data.yml` formFields, and compose `${VAR}` references closed and consistent
 
