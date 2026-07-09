@@ -427,7 +427,7 @@ class AppSpecGenerator:
                 "## Import Source",
                 "",
                 f"- **Source**: {import_source.get('type', 'unknown')}",
-                f"- **Version**: {import_source.get('version', 'unknown')}",
+                "- **Version**: see the app store version list and source-evidence.json",
                 "",
             ])
 

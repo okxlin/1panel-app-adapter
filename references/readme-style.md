@@ -25,5 +25,8 @@ Do not include the following in app README files:
 - test execution steps
 - generator diagnostics
 - raw validation transcripts
+- fixed numeric version lines such as `Version: 1.2.3` or `当前提交仅包含固定版本 1.2.3`
 
 These belong to delivery evidence, not end-user README content.
+
+README text should stay valid after image or version-directory updates. When version context matters, refer users to the app store version selector, release directory, or source-evidence/delivery notes instead of embedding a concrete version number in README prose.

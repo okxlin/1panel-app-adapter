@@ -239,7 +239,7 @@ def _write_default_readme(app_out: pathlib.Path, appspec: Dict[str, Any], versio
         "## Information",
         "",
         f"- App Key: {appspec.get('appKey', '')}",
-        f"- Version: {version}",
+        "- Version: select the required version from the app store version list",
         f"- Type: {appspec.get('type', 'Tool')}",
         "",
     ]

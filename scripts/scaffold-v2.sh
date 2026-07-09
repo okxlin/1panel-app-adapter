@@ -250,7 +250,7 @@ ${TITLE} is a generated 1Panel app template produced by 1panel-app-adapter.
 - Baseline 1Panel fields and lifecycle scripts
 
 - app key: ${APP_KEY}
-- version: ${VERSION}
+- version: select the required version from the app store version list
 MD
 
 "$PYTHON_BIN" - "$APP_DIR/source-evidence.json" "$SOURCE_REPOSITORY" "$SOURCE_DOCKER_DOCS" "$SOURCE_COMPOSE_FILE" <<'PY'

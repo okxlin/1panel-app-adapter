@@ -643,6 +643,9 @@ class TestImportRunner(unittest.TestCase):
         self.assertTrue((out / "latest" / "docker-compose.yml").is_file())
         self.assertTrue((out / "latest" / ".env.sample").is_file())
         self.assertTrue((out / "README.md").is_file())
+        readme_text = (out / "README.md").read_text(encoding="utf-8")
+        self.assertNotIn("- Version: latest", readme_text)
+        self.assertIn("app store version list", readme_text)
         self.assertTrue((out / "latest" / "data").is_dir())
         self.assertTrue((out / "latest" / "scripts" / "init.sh").is_file())
         self.assertTrue((out / "latest" / "scripts" / "upgrade.sh").is_file())
@@ -817,6 +820,9 @@ class TestCliAndGenerator(unittest.TestCase):
 
         root = out_dir / "alist"
         self.assertTrue((root / "README.md").is_file())
+        readme_text = (root / "README.md").read_text(encoding="utf-8")
+        self.assertNotIn("- **Version**: latest", readme_text)
+        self.assertIn("source-evidence.json", readme_text)
         self.assertTrue((root / "logo.png").is_file())
         self.assertTrue((root / "latest" / "data").is_dir())
         self.assertTrue((root / "latest" / "scripts" / "init.sh").is_file())
