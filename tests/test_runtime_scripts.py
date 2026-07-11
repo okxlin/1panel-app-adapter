@@ -49,9 +49,38 @@ class RuntimeScriptGenerationTest(unittest.TestCase):
 
         content = runtime_utils.render_init_script_content(version_data)
 
-        self.assertIn('mkdir -p "${APP_DATA_DIR:-./data}"', content)
-        self.assertIn('ensure_parent_dir "${CUSTOM_ENV_FILE:-./data/custom.env}"', content)
+        self.assertIn('ensure_dir "APP_DATA_DIR" "./data"', content)
+        self.assertIn('ensure_file_parent "CUSTOM_ENV_FILE" "./data/custom.env"', content)
+        self.assertIn('ENV_FILE="${ENV_FILE:-$ROOT_DIR/.env}"', content)
         self.assertNotIn("mkdir -p ./data\n", content)
+
+    def test_rendered_init_reads_quoted_env_paths_from_app_root(self):
+        version_data = {
+            "additionalProperties": {
+                "formFields": [
+                    {"envKey": "APP_DATA_DIR", "default": "./data"},
+                    {"envKey": "CUSTOM_ENV_FILE", "default": "./data/custom.env"},
+                ]
+            }
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp) / "app" / "latest"
+            scripts_dir = root / "scripts"
+            scripts_dir.mkdir(parents=True)
+            init_script = scripts_dir / "init.sh"
+            init_script.write_text(runtime_utils.render_init_script_content(version_data), encoding="utf-8")
+            init_script.chmod(0o755)
+            (root / ".env").write_text(
+                "APP_DATA_DIR='./custom-data'\nCUSTOM_ENV_FILE=\"./config/runtime.env\"\n",
+                encoding="utf-8",
+            )
+
+            subprocess.run(["bash", str(init_script)], check=True, cwd=tmp)
+
+            self.assertTrue((root / "custom-data").is_dir())
+            self.assertTrue((root / "config").is_dir())
+            self.assertFalse((pathlib.Path(tmp) / "custom-data").exists())
 
     def test_finalize_runtime_scripts_uses_version_data_defaults(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -79,8 +108,8 @@ additionalProperties:
 
             init_text = (ver_dir / "scripts" / "init.sh").read_text(encoding="utf-8")
 
-            self.assertIn('mkdir -p "${CONFIG_PATH:-./data/config}"', init_text)
-            self.assertIn('ensure_parent_dir "${CUSTOM_ENV_FILE:-./data/custom.env}"', init_text)
+            self.assertIn('ensure_dir "CONFIG_PATH" "./data/config"', init_text)
+            self.assertIn('ensure_file_parent "CUSTOM_ENV_FILE" "./data/custom.env"', init_text)
             self.assertNotIn("mkdir -p ./data\n", init_text)
 
     def test_generate_from_appspec_runtime_files_follow_volume_defaults(self):
@@ -133,8 +162,8 @@ additionalProperties:
 
             init_text = (out_dir / "demo" / "latest" / "scripts" / "init.sh").read_text(encoding="utf-8")
 
-            self.assertIn('mkdir -p "${APP_DATA_DIR:-./data}"', init_text)
-            self.assertIn('ensure_parent_dir "${CUSTOM_ENV_FILE:-./data/custom.env}"', init_text)
+            self.assertIn('ensure_dir "APP_DATA_DIR" "./data"', init_text)
+            self.assertIn('ensure_file_parent "CUSTOM_ENV_FILE" "./data/custom.env"', init_text)
 
 
 if __name__ == "__main__":

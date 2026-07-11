@@ -195,7 +195,7 @@ bash scripts/validate-v2.sh --dir <app-dir> --i18n-mode strict --i18n-scope all
 bash scripts/finalize_runtime_scripts.sh <app-dir> <version-dir>
 ```
 
-当你需要在最终校验前确保 `init.sh`、`upgrade.sh`、`uninstall.sh` 存在时，使用这个脚本。
+当你需要在最终校验前确保 `init.sh`、`upgrade.sh`、`uninstall.sh` 存在时，使用这个脚本。生成的 `init.sh` 在路径表单值未注入脚本进程环境时，会回退读取应用根目录的 `.env`，去除 1Panel 写入的成对引号，并基于应用根目录解析相对路径。
 
 ## 运行时启动经验
 

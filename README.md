@@ -195,7 +195,7 @@ Validation includes:
 bash scripts/finalize_runtime_scripts.sh <app-dir> <version-dir>
 ```
 
-Use this when you need to ensure `init.sh`, `upgrade.sh`, and `uninstall.sh` exist before the final validation step.
+Use this when you need to ensure `init.sh`, `upgrade.sh`, and `uninstall.sh` exist before the final validation step. Generated `init.sh` files read path form values from the app-root `.env` when they are not exported to the script process, remove matching quotes written by 1Panel, and resolve relative paths against the app root.
 
 ## Runtime startup lessons
 
