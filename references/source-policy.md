@@ -40,6 +40,19 @@ When an app is supposed to reuse a 1Panel-managed database service, do not stop 
 
 If details are unknown, keep defaults minimal and mark follow-up work outside generated artifacts.
 
+## Registry Access Verification
+
+Do not classify a public image as private from one `docker pull ... denied` result. A stale registry credential in the active Docker client config can override anonymous token negotiation even when the registry manifest is public.
+
+For GHCR and similar token registries:
+
+1. Request an anonymous pull token for the exact repository scope.
+2. Request the target manifest with that bearer token and an OCI/Docker manifest `Accept` header.
+3. Repeat the pull with a temporary empty `DOCKER_CONFIG` so existing user credentials remain untouched.
+4. Verify every packaged tag and architecture; a readable `latest` manifest does not prove a numbered tag exists.
+
+Keep registry HTTP evidence separate from local image-cache evidence. A cached image can make a deployment test pass even when a fresh user cannot pull it.
+
 ## Baota/aaPanel Import Evidence
 
 Baota/aaPanel apphub metadata can be used as format evidence for the import process, but it is not by itself official upstream evidence for the target application.
