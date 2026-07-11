@@ -122,7 +122,14 @@ Based on official v2 app library `docker-compose.yml` and same-directory version
 
 ## Database / Redis Dependency Injection (Panel Fixed envKey)
 
-When applications need to reuse 1Panel store's database/cache applications, **recommend prioritizing panel built-in convention envKeys**, otherwise panel may not correctly inject service address/credentials.
+Before preserving an upstream-bundled database/cache sidecar, inspect the target appstore and a current 1Panel store for reusable runtime applications and service registration. When a compatible 1Panel-managed runtime exists and the application supports an external service, **prefer the panel runtime selector path** and panel fixed envKeys; do not wait for a later review reminder to replace the bundled dependency.
+
+Dependency preference order:
+1. A compatible, selectable 1Panel-managed runtime exposed through `/apps/services/<key>` and the corresponding resource records.
+2. A documented external service configuration when no reusable panel runtime is available.
+3. The upstream-bundled database/cache sidecar only when the runtime selector path is unavailable, unregistered, incompatible, or the upstream application requires the bundled topology.
+
+For applications supporting multiple database engines, keep one app key and expose the engines that have independent panel/runtime evidence through one `type: apps` plus `child.type: service` selector. Map engine-specific ports through selector `params`. Do not create database-specific app keys or version directories merely to represent engine choice, and do not advertise an engine that only passes static compose validation.
 
 Common fixed envKeys (recommend using as needed):
 - Database: `PANEL_DB_TYPE`, `PANEL_DB_HOST`, `PANEL_DB_NAME`, `PANEL_DB_USER`, `PANEL_DB_USER_PASSWORD`
@@ -137,6 +144,7 @@ Scaffold supports optional injection template:
 - When running `scripts/scaffold-v2.sh`, add `--with-panel-deps` (or alias `--with-panel-db-redis`), will automatically add above DB/Redis related formFields in generated `<version>/data.yml` (including `labelEn/labelZh` + `label` map, includes `zh-Hant`).
 
 Key points for adaptation:
+- Treat store-runtime discovery as an adaptation preflight step: search existing app definitions for the dependency key, query the panel store metadata, and verify that an installed instance appears in `/apps/services/<key>` before deciding the final service topology.
 - `version/data.yml` uses `type: apps` + `child.type: service` to inject `PANEL_DB_HOST` (reference 1Panel store app common dependency injection pattern).
 - When converting an existing package from manual host input to a selector-backed dependency, keep the effective runtime envKey stable when possible. For example, changing `REDIS_HOST` from `type: text` to `type: service` is usually upgrade-safe because existing `.env` values still map to the same compose/app variable.
 - If the selector conversion requires a renamed envKey or adds a new selector-driving field such as `PANEL_DB_TYPE`, treat that as an upgrade migration item and backfill it in `scripts/upgrade.sh` when possible.

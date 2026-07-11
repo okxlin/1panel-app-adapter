@@ -34,6 +34,8 @@ This includes:
 - UID/GID and user/group assumptions
 - dependency relationships (DB, Redis, sidecars, service topology)
 
+Before accepting an upstream compose topology with a bundled database or cache, search the target 1Panel appstore and current panel store for a compatible reusable runtime. If the application supports external dependencies and the runtime is selectable, prefer the panel-managed service path. Record why a bundled sidecar remains only when no compatible/selectable runtime exists or upstream requires that topology.
+
 When an app is supposed to reuse a 1Panel-managed database service, do not stop at compose syntax or app install success. Verify with real panel evidence that the chosen dependency is actually exposed through `/apps/services/<db-key>` and the corresponding `databases` resource records. A local runtime app package may install cleanly yet still fail to register as a reusable database service for other apps.
 
 If details are unknown, keep defaults minimal and mark follow-up work outside generated artifacts.
