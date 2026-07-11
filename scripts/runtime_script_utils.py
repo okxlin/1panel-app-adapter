@@ -65,43 +65,77 @@ def _shell_double_quote(value: str) -> str:
     return value.replace("\\", "\\\\").replace('"', '\\"').replace("$", "\\$").replace("`", "\\`")
 
 
-def _var_expr(env_key: str, default: str) -> str:
-    return f'${{{env_key}:-{_shell_double_quote(default)}}}'
-
-
 def render_init_script_content(version_data: dict[str, Any]) -> str:
     path_fields = collect_runtime_path_fields(version_data)
     lines = [
         "#!/usr/bin/env bash",
         "set -euo pipefail",
+        "",
+        'ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"',
+        'ENV_FILE="${ENV_FILE:-$ROOT_DIR/.env}"',
     ]
     if not path_fields:
-        lines.append("mkdir -p ./data")
+        lines.extend(["", 'mkdir -p "$ROOT_DIR/data"'])
         return "\n".join(lines) + "\n"
 
-    file_fields = [field for field in path_fields if field["kind"] == "file"]
-    if file_fields:
-        lines.extend(
-            [
-                "",
-                "ensure_parent_dir() {",
-                '  local path="$1"',
-                "  local parent",
-                '  parent="$(dirname "$path")"',
-                '  if [[ -n "$parent" && "$parent" != "." ]]; then',
-                '    mkdir -p "$parent"',
-                "  fi",
-                "}",
-            ]
-        )
-
-    lines.append("")
+    lines.extend(
+        [
+            "",
+            "read_env_value() {",
+            '  local key="$1"',
+            '  [[ -f "$ENV_FILE" ]] || return 0',
+            "  local value",
+            '  value="$(sed -n "s/^${key}=//p" "$ENV_FILE" | tail -n 1)"',
+            '  case "$value" in',
+            '    \\"*\\") value="${value#\\\"}"; value="${value%\\\"}" ;;',
+            "    \\'*\\') value=\"${value#\\'}\"; value=\"${value%\\'}\" ;;",
+            "  esac",
+            "  printf '%s\\n' \"$value\"",
+            "}",
+            "",
+            "configured_value() {",
+            '  local key="$1"',
+            '  local default_value="$2"',
+            "  local value",
+            '  value="${!key:-}"',
+            '  if [[ -z "$value" ]]; then',
+            '    value="$(read_env_value "$key")"',
+            "  fi",
+            '  printf \'%s\\n\' "${value:-$default_value}"',
+            "}",
+            "",
+            "resolve_app_path() {",
+            '  local raw="$1"',
+            '  if [[ "$raw" = /* ]]; then',
+            "    printf '%s\\n' \"$raw\"",
+            "  else",
+            "    printf '%s\\n' \"$ROOT_DIR/${raw#./}\"",
+            "  fi",
+            "}",
+            "",
+            "ensure_dir() {",
+            "  local path",
+            '  path="$(resolve_app_path "$(configured_value "$1" "$2")")"',
+            '  mkdir -p "$path"',
+            "}",
+            "",
+            "ensure_file_parent() {",
+            "  local path",
+            "  local parent",
+            '  path="$(resolve_app_path "$(configured_value "$1" "$2")")"',
+            '  parent="$(dirname "$path")"',
+            '  mkdir -p "$parent"',
+            "}",
+            "",
+        ]
+    )
     for field in path_fields:
-        expr = _var_expr(field["envKey"], field["default"])
+        env_key = _shell_double_quote(field["envKey"])
+        default = _shell_double_quote(field["default"])
         if field["kind"] == "file":
-            lines.append(f'ensure_parent_dir "{expr}"')
+            lines.append(f'ensure_file_parent "{env_key}" "{default}"')
         else:
-            lines.append(f'mkdir -p "{expr}"')
+            lines.append(f'ensure_dir "{env_key}" "{default}"')
     return "\n".join(lines) + "\n"
 
 
