@@ -32,7 +32,9 @@ Only rules backed by runtime behavior or explicit official documentation should 
 
 ## Source Policy (Evidence First)
 
-Before adaptation, prioritize reading `references/source-policy.md` and collect evidence according to source priority:
+Before adapting a new candidate, read both `references/source-policy.md` and `references/topology-preflight.md`. Complete the topology decision before scaffolding or deployment testing: ordinary candidates may proceed, specialized conditional candidates need their recorded prerequisites satisfied, and platform-stack terminal candidates stop unless the user opens a separately scoped project.
+
+Collect evidence according to source priority:
 - User-provided official repository/documentation > official image docs > official appstore structure facts > third-party examples
 - Without official Docker evidence, stop expanding; do not guess images, ports, volumes, UID/GID, or dependency injection methods
 - When using third-party images, user must explicitly accept, and record source and risk in delivery notes
@@ -109,6 +111,8 @@ Notes:
 - `paramExtUrl`
 - `paramCommon`
 - `paramComplexity`
+
+Treat this as an allowed set, not a requirement to populate `rule`. Normally only externally published port fields use `rule: paramPort`; omit `rule` from secrets, URLs, selectors, domains, and ordinary text unless a demonstrated 1Panel parser or application-format requirement needs it.
 
 ### `formFields[].edit` (install form editability)
 
