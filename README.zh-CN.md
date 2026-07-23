@@ -205,6 +205,13 @@ bash scripts/finalize_runtime_scripts.sh <app-dir> <version-dir>
 - 多服务应用的主服务如果同时加入 `1panel-network` 和内部网络，内部依赖主机名使用 `<app>-redis`、`<app>-mongo` 等应用前缀服务名或显式内部 alias，不要直接使用 `redis`、`mongo`、`db` 等通用名，避免 Docker DNS 解析到共享网络上的其他应用服务。
 - 需要在启动前执行初始化逻辑时，避免依赖一次性 init sidecar。1Panel 部署过程可能改写 restart policy 行为，使 `service_completed_successfully` 变脆；优先使用可重试的主服务启动初始化或 healthcheck 初始化。
 
+## Runtime 选择器证据
+
+- `mysql` 与 `localmysql` 是不同的 1Panel 应用 key，必须分别验证 `PANEL_DB_TYPE` 实际使用的 `/apps/services/<key>`。
+- service 列表返回运行实例只证明可枚举，不证明数据库生命周期已接入。数据库表单还应在安装 payload 的 `services` 中出现主机字段，并在安装后、升级后获得 `linkDB` 或匹配的 `resourceKeys` 证据。
+- 上游初始化必须使用数据库管理员密码时，应读取所选 runtime 的真实安装值；表单默认值不是现有 runtime 凭据。
+- 升级不得覆盖旧安装已有的 selector、主机、库名、用户和密码。发起升级前先验证源版本 HTTP readiness，并将 selector 关联资源清理与手工外部数据库清理分开审计。
+
 ## 打包与平台预期
 
 - 面向 GitHub 托管仓库与 Linux 执行环境

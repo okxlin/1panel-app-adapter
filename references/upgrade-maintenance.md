@@ -26,6 +26,8 @@ When adding or renaming environment variables:
 - require explicit user input for new required variables that cannot be inferred
 - if converting a dependency host field from manual text input to a 1Panel selector, prefer keeping the same effective envKey when possible so existing `.env` files remain valid
 - if selector support adds a new driving field such as `PANEL_DB_TYPE` or renames an existing host envKey, backfill it in `upgrade.sh` instead of assuming old installs will recreate `.env` from scratch
+- preserve an existing selector value such as `localmysql` even when new installs no longer offer it; removing an option from `data.yml` must not rewrite a working old `.env` or database host
+- source any required runtime administrator password from the selected installed runtime during validation; do not replace an old application's stored database password with a form default or a newly generated value
 - for public domain / public URL / public IP fields, prefer an empty required field plus README guidance over a test-only placeholder such as `127.0.0.1` or `localhost`
 - keep `.env.sample`, `data.yml` formFields, and compose `${VAR}` references closed and consistent
 
@@ -64,4 +66,4 @@ For updates that are not a plain patch-level image refresh, README should mentio
 
 ## Validation Handoff
 
-Static validation is not enough for updates. After `validate-v2.sh --strict-store` passes, run a real 1Panel upgrade test from the previous supported version to the candidate version. The report should record app key, install name, `fromVersion`, `toVersion`, seeded persistence data, upgrade action, migration log/wait condition when relevant, restart/access verification, uninstall, and cleanup.
+Static validation is not enough for updates. After `validate-v2.sh --strict-store` passes, run a real 1Panel upgrade test from the previous supported version to the candidate version. Before submitting the upgrade request, wait for and record source-version HTTP readiness; a running container alone does not prove the source application was usable. The report should record app key, install name, `fromVersion`, `toVersion`, seeded persistence data, source readiness, upgrade action, migration log/wait condition when relevant, selector/link evidence before and after upgrade, restart/access verification, uninstall, and cleanup. Audit linked database cleanup separately from manually managed external schemas/users.
