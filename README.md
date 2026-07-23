@@ -205,6 +205,13 @@ Use this when you need to ensure `init.sh`, `upgrade.sh`, and `uninstall.sh` exi
 - For multi-service apps whose main service joins both `1panel-network` and an internal network, use app-prefixed internal service hostnames (`<app>-redis`, `<app>-mongo`, etc.) or explicit internal aliases instead of generic names. Shared Docker DNS can otherwise resolve another app's `redis`, `mongo`, or `db` service.
 - Avoid one-shot init sidecars for required startup work in 1Panel apps. 1Panel deployment may rewrite restart policy behavior, making `service_completed_successfully` fragile; prefer idempotent startup or healthcheck initialization.
 
+## Runtime selector evidence
+
+- Treat `mysql` and `localmysql` as distinct 1Panel app keys and verify the exact `/apps/services/<key>` endpoint used by `PANEL_DB_TYPE`.
+- A running service option proves enumeration, not database lifecycle integration. Database-backed forms should produce a host entry in the install `services` payload and post-install/post-upgrade `linkDB` or matching `resourceKeys` evidence.
+- Use the selected runtime's actual installed administrator password when upstream initialization requires it; form defaults are not runtime credentials.
+- Preserve existing selector, host, database, user, and password values during upgrades. Verify source HTTP readiness before upgrading, and audit selector-linked cleanup separately from manually managed external databases.
+
 ## Packaging and platform expectations
 
 - intended for GitHub-hosted repositories and Linux execution environments

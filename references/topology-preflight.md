@@ -48,9 +48,12 @@ Keep these concepts separate:
 1. the dependency exists in the official store;
 2. its root `additionalProperties.type` is `runtime`;
 3. it registers a selectable service through the relevant 1Panel service/resource path;
-4. the candidate application is compatible with that runtime's actual contract.
+4. the candidate application is compatible with that runtime's actual contract;
+5. 1Panel links and manages the application database lifecycle expected by the form.
 
 A store app typed as `website` or `tool` is not automatically a Runtime selector candidate.
+
+Selector values are app keys, not interchangeable product labels. Verify `mysql` and `localmysql` independently against their exact `/apps/services/<key>` endpoints. A service returned as `Running` proves enumeration and reachability only. For forms that request database name, user, and password, also require a real install report with the host envKey in `services`, then verify `linkDB` or matching `resourceKeys`, schema/user creation, upgrade retention, and uninstall cleanup. Record manually managed external schemas/users as a separate lifecycle boundary.
 
 “Supports external PostgreSQL” is not enough to claim compatibility with the standard PostgreSQL Runtime. Audit:
 
