@@ -124,13 +124,19 @@ bash scripts/finalize_runtime_scripts.sh <app-dir> <version-dir> \
 bash scripts/validate-v2.sh --dir <app-dir>
 
 # AppStore 交付检查
-bash scripts/validate-v2.sh --dir <app-dir> --strict-store
+bash scripts/validate-v2.sh --dir <app-dir> --strict-store \
+  --source-evidence-mode required --require-delivery-evidence
 
 # 校验多版本应用中的一个版本
-bash scripts/validate-v2.sh --dir <app-dir> --version <version> --strict-store
+bash scripts/validate-v2.sh --dir <app-dir> --version <version> --strict-store \
+  --source-evidence-mode required --require-delivery-evidence
 
 # 在有溯源门禁的流程中强制要求来源证据
 bash scripts/validate-v2.sh --dir <app-dir> --source-evidence-mode required
+
+# 强制要求已验证的许可证与哈希绑定的再分发交付证据
+bash scripts/validate-v2.sh --dir <app-dir> --source-evidence-mode required \
+  --require-delivery-evidence
 ```
 
 校验覆盖：
@@ -141,7 +147,7 @@ bash scripts/validate-v2.sh --dir <app-dir> --source-evidence-mode required
 - `en`、`zh`、`zh-Hant`、`ja`、`ko`、`ru`、`ms`、`pt-br` 的描述与表单标签；
 - 可选来源证据和 strict-store 交付规则。
 
-完整 Compose 渲染依赖 `docker compose` CLI。来源证据默认只告警，只有显式传入 `--source-evidence-mode required` 时才会成为必需项。
+完整 Compose 渲染依赖 `docker compose` CLI。来源证据默认只告警，只有显式传入 `--source-evidence-mode required` 时才会成为必需项；该历史模式负责溯源校验，需要把许可证和再分发交付作为发布门禁时，再加 `--require-delivery-evidence`。
 
 ## 环境要求
 

@@ -31,9 +31,14 @@ Provide a stable `spec -> artifacts` path with explicit source evidence and repr
 - `sourceEvidence.imageEvidence` object with optional immutable `digest` and verified `platforms`
 - `sourceEvidence.licenseEvidence` object with optional `spdx` and `url`
 - `sourceEvidence.logoEvidence` object with required `source` when present and optional `license` / `sha256`
+- `sourceEvidence.redistributionEvidence` object with `status`, package-relative `requiredFiles`,
+  hash-bound `materials`, and an `assets` ledger containing delivered path, source, license,
+  SHA-256, and asset-specific required files
 
-The optional provenance objects are copied unchanged into `source-evidence.json` after validation.
-They do not replace the three mandatory source URLs and may be omitted for older AppSpec inputs.
+The optional provenance objects are copied into `source-evidence.json` after validation. A selected
+built-in fallback replaces only the `logo.png` ledger entry with the fallback's actual source,
+license, delivered hash, and license material; application-level redistribution requirements and
+materials are preserved. These objects do not replace the three mandatory source URLs.
 
 ## Mapping to Generated Artifacts
 
@@ -72,6 +77,11 @@ You can also emit an audit-friendly report JSON:
 
 `--validate` runs baseline validation suitable for raw generated output.
 `--strict-store-validate` runs `validate-v2.sh --strict-store` and should be used only after README / metadata placeholders are replaced.
+The standalone delivery command must pass `--source-evidence-mode required
+--require-delivery-evidence`; this requires application-license evidence and verifies every
+redistribution asset and required material against the delivered artifact. Strict-store plus
+required source evidence implies the delivery flag for compatibility, but callers should keep the
+explicit flag so the intended gate remains visible.
 
 When validation is enabled, report JSON also includes:
 

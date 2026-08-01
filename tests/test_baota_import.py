@@ -7,6 +7,7 @@ Tests cover: BaotaPrecheck, BaotaParser, BaotaToAppSpecMapper,
 """
 
 import atexit
+import hashlib
 import json
 import os
 import pathlib
@@ -871,7 +872,12 @@ class TestImportRunner(unittest.TestCase):
         self.assertFalse(result["delivery"]["ready"])
         self.assertEqual(
             {blocker["code"] for blocker in result["delivery"]["blockers"]},
-            {"unverified-source", "unverified-architectures"},
+            {
+                "unverified-source",
+                "unverified-architectures",
+                "unverified-application-license",
+                "unverified-redistribution",
+            },
         )
 
         out = pathlib.Path(result["outputPath"])
@@ -922,7 +928,7 @@ class TestImportRunner(unittest.TestCase):
         self.assertEqual(evidence["architectureEvidence"], "unverified_default")
         self.assertEqual(root_data["additionalProperties"]["architectures"], ["amd64"])
 
-    def test_strict_store_validation_runs_real_validator_and_fails_closed(self):
+    def test_strict_store_validation_requires_provenance_and_delivery_evidence(self):
         result = self.runner.import_one(
             _sample("alist"),
             self.tmpdir,
@@ -935,8 +941,24 @@ class TestImportRunner(unittest.TestCase):
         self.assertEqual(result["stage"], "strict_store_validate")
         self.assertEqual(result["validation"]["mode"], "strict-store")
         self.assertIn("validate-v2.sh", result["validation"]["validator"])
-        self.assertEqual(result["validation"]["returncode"], 0)
-        self.assertTrue(result["validation"]["valid"])
+        evidence = json.loads(
+            (pathlib.Path(result["outputPath"]) / "source-evidence.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(evidence["repository"], "")
+        self.assertEqual(evidence["composeFile"], "")
+        self.assertNotIn("licenseEvidence", evidence)
+        self.assertEqual(evidence["redistributionEvidence"]["status"], "unresolved")
+        self.assertNotEqual(result["validation"]["returncode"], 0)
+        self.assertFalse(result["validation"]["valid"])
+        self.assertTrue(result["validation"]["failed"])
+        self.assertIn("source-evidence.json missing key: repository", result["validation"]["stdout"])
+        self.assertIn("source-evidence.json missing key: licenseEvidence", result["validation"]["stdout"])
+        self.assertIn(
+            "redistributionEvidence.status must be verified for delivery",
+            result["validation"]["stdout"],
+        )
         self.assertIn("SUMMARY:", result["validation"]["stdout"])
         self.assertFalse(result["delivery"]["ready"])
 
@@ -1274,13 +1296,24 @@ class TestCliAndGenerator(unittest.TestCase):
 
         self.assertNotEqual(gen_proc.returncode, 0)
         report = json.loads(report_path.read_text(encoding="utf-8"))
-        self.assertTrue(report["strictValidation"]["valid"])
+        self.assertFalse(report["strictValidation"]["valid"])
+        self.assertTrue(report["strictValidation"]["failed"])
+        self.assertNotEqual(report["strictValidation"]["returncode"], 0)
+        self.assertTrue(
+            any("missing key: licenseEvidence" in error for error in report["strictValidation"]["errors"]),
+            report["strictValidation"]["errors"],
+        )
         self.assertEqual(report["strictValidation"]["mode"], "strict-store")
         self.assertIn("validate-v2.sh", report["strictValidation"]["validator"])
         self.assertFalse(report["delivery"]["ready"])
         self.assertEqual(
             {blocker["code"] for blocker in report["delivery"]["blockers"]},
-            {"unverified-source", "unverified-architectures"},
+            {
+                "unverified-source",
+                "unverified-architectures",
+                "unverified-application-license",
+                "unverified-redistribution",
+            },
         )
 
     def test_generate_from_multiple_baota_appspecs_merges_version_evidence(self):
@@ -1488,6 +1521,7 @@ class TestCliAndGenerator(unittest.TestCase):
     def test_generate_from_appspec_uses_default_logo(self):
         spec_path = pathlib.Path(self.tmpdir) / "min.appspec.json"
         out_dir = pathlib.Path(self.tmpdir) / "out"
+        report_path = pathlib.Path(self.tmpdir) / "report.json"
         spec_path.write_text(json.dumps({
             "appKey": "minapp",
             "title": "Min App",
@@ -1506,10 +1540,196 @@ class TestCliAndGenerator(unittest.TestCase):
             "--out-dir", str(out_dir),
             "--validate",
             "--require-validate",
+            "--report", str(report_path),
         ]
         proc = subprocess.run(gen_cmd, cwd=str(self.project_dir), text=True, capture_output=True)
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertGreater((out_dir / "minapp" / "logo.png").stat().st_size, 0)
+        app_dir = out_dir / "minapp"
+        logo_path = app_dir / "logo.png"
+        self.assertGreater(logo_path.stat().st_size, 0)
+        notice_path = app_dir / "ASSET-LICENSES" / "default-logo.txt"
+        self.assertTrue(notice_path.is_file())
+        self.assertIn("Permission is hereby granted", notice_path.read_text(encoding="utf-8"))
+        evidence = json.loads((app_dir / "source-evidence.json").read_text(encoding="utf-8"))
+        self.assertEqual(evidence["logoEvidence"]["license"], "MIT")
+        self.assertEqual(
+            evidence["logoEvidence"]["sha256"],
+            hashlib.sha256(logo_path.read_bytes()).hexdigest(),
+        )
+        redistribution = evidence["redistributionEvidence"]
+        self.assertEqual(redistribution["status"], "verified")
+        self.assertEqual(
+            redistribution["requiredFiles"],
+            ["ASSET-LICENSES/default-logo.txt"],
+        )
+        self.assertEqual(
+            redistribution["materials"][0]["sha256"],
+            hashlib.sha256(notice_path.read_bytes()).hexdigest(),
+        )
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        self.assertEqual(report["status"], "generated_candidate")
+        self.assertFalse(report["delivery"]["ready"])
+        self.assertIn(
+            "unverified-application-license",
+            {blocker["code"] for blocker in report["delivery"]["blockers"]},
+        )
+
+    def test_default_logo_preserves_application_redistribution_requirements(self):
+        spec_path = pathlib.Path(self.tmpdir) / "licensed.appspec.json"
+        out_dir = pathlib.Path(self.tmpdir) / "licensed-output"
+        app_dir = out_dir / "licensed-app"
+        license_bytes = b"MIT application license\n"
+        app_dir.mkdir(parents=True)
+        (app_dir / "LICENSE").write_bytes(license_bytes)
+        default_logo = self.project_dir / "assets" / "default-logo.png"
+        _write_json(spec_path, {
+            "appKey": "licensed-app",
+            "title": "Licensed App",
+            "description": "Application with redistribution obligations",
+            "shortDescZh": "带再分发要求的应用",
+            "type": "Tool",
+            "tag": "Tool",
+            "version": "latest",
+            "image": "nginx:latest",
+            "licenseEvidence": {"spdx": "MIT"},
+            "redistributionEvidence": {
+                "status": "verified",
+                "requiredFiles": ["LICENSE"],
+                "materials": [{
+                    "path": "LICENSE",
+                    "sha256": hashlib.sha256(license_bytes).hexdigest(),
+                    "purpose": "application license",
+                }],
+                "assets": [{
+                    "path": "logo.png",
+                    "source": "bundled:assets/default-logo.svg",
+                    "license": "MIT",
+                    "sha256": hashlib.sha256(default_logo.read_bytes()).hexdigest(),
+                    "requiredFiles": [],
+                }],
+            },
+            "ports": [{
+                "envKey": "PANEL_APP_PORT_HTTP",
+                "containerPort": 80,
+                "hostDefault": 8080,
+            }],
+        })
+
+        proc = subprocess.run(
+            [
+                sys.executable,
+                str(self.project_dir / "scripts" / "generate-from-appspec.py"),
+                "--spec", str(spec_path),
+                "--out-dir", str(out_dir),
+            ],
+            cwd=str(self.project_dir),
+            text=True,
+            capture_output=True,
+        )
+
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        evidence = json.loads(
+            (app_dir / "source-evidence.json").read_text(encoding="utf-8")
+        )
+        redistribution = evidence["redistributionEvidence"]
+        self.assertEqual(redistribution["status"], "verified")
+        self.assertCountEqual(
+            redistribution["requiredFiles"],
+            ["LICENSE", "ASSET-LICENSES/default-logo.txt"],
+        )
+        materials_by_path = {
+            material["path"]: material
+            for material in redistribution["materials"]
+        }
+        self.assertEqual(
+            materials_by_path["LICENSE"]["sha256"],
+            hashlib.sha256(license_bytes).hexdigest(),
+        )
+        self.assertIn("ASSET-LICENSES/default-logo.txt", materials_by_path)
+        logo_assets = [
+            asset
+            for asset in redistribution["assets"]
+            if asset.get("path") == "logo.png"
+        ]
+        self.assertEqual(len(logo_assets), 1)
+        self.assertEqual(
+            logo_assets[0]["requiredFiles"],
+            ["ASSET-LICENSES/default-logo.txt"],
+        )
+
+    def test_generation_without_validation_cannot_report_delivery_ready(self):
+        spec_path = pathlib.Path(self.tmpdir) / "unvalidated.appspec.json"
+        out_dir = pathlib.Path(self.tmpdir) / "unvalidated-output"
+        report_path = pathlib.Path(self.tmpdir) / "unvalidated-report.json"
+        default_logo = self.project_dir / "assets" / "default-logo.png"
+        _write_json(spec_path, {
+            "appKey": "unvalidated-app",
+            "title": "Unvalidated App",
+            "description": "License-complete but structurally unvalidated",
+            "shortDescZh": "许可完整但未校验的应用",
+            "type": "Tool",
+            "tag": "Tool",
+            "version": "latest",
+            "image": "nginx:latest",
+            "licenseEvidence": {"spdx": "MIT"},
+            "redistributionEvidence": {
+                "status": "verified",
+                "requiredFiles": [],
+                "materials": [],
+                "assets": [{
+                    "path": "logo.png",
+                    "source": "bundled:assets/default-logo.svg",
+                    "license": "MIT",
+                    "sha256": hashlib.sha256(default_logo.read_bytes()).hexdigest(),
+                    "requiredFiles": [],
+                }],
+            },
+            "ports": [{
+                "envKey": "PANEL_APP_PORT_HTTP",
+                "containerPort": 80,
+                "hostDefault": 8080,
+            }],
+        })
+
+        proc = subprocess.run(
+            [
+                sys.executable,
+                str(self.project_dir / "scripts" / "generate-from-appspec.py"),
+                "--spec", str(spec_path),
+                "--out-dir", str(out_dir),
+                "--report", str(report_path),
+            ],
+            cwd=str(self.project_dir),
+            text=True,
+            capture_output=True,
+        )
+
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        self.assertFalse(report["validateRequested"])
+        self.assertIsNone(report["validation"])
+        self.assertIsNone(report["strictValidation"])
+        self.assertEqual(
+            {
+                "reportStatus": report["status"],
+                "applicable": report["delivery"]["applicable"],
+                "baotaApplicable": report["delivery"]["baotaApplicable"],
+                "ready": report["delivery"]["ready"],
+                "deliveryStatus": report["delivery"]["status"],
+                "blockerCodes": {
+                    blocker["code"]
+                    for blocker in report["delivery"]["blockers"]
+                },
+            },
+            {
+                "reportStatus": "generated_candidate",
+                "applicable": True,
+                "baotaApplicable": False,
+                "ready": False,
+                "deliveryStatus": "manual_review_required",
+                "blockerCodes": {"validation-not-run"},
+            },
+        )
 
 
 # ═══════════════════════════════════════════════════════════════════════

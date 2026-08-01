@@ -175,7 +175,13 @@ class SkillRoutingTests(unittest.TestCase):
     def test_source_policy_documents_backward_compatible_optional_evidence(self) -> None:
         policy = (REPO_ROOT / "references" / "source-policy.md").read_text(encoding="utf-8")
         appspec = (REPO_ROOT / "references" / "appspec.md").read_text(encoding="utf-8")
-        for field in ("sourceRevision", "imageEvidence", "licenseEvidence", "logoEvidence"):
+        for field in (
+            "sourceRevision",
+            "imageEvidence",
+            "licenseEvidence",
+            "logoEvidence",
+            "redistributionEvidence",
+        ):
             with self.subTest(field=field):
                 self.assertIn(field, policy)
                 self.assertIn(field, appspec)
@@ -238,6 +244,40 @@ class SkillRoutingTests(unittest.TestCase):
             with self.subTest(guard=guard):
                 self.assertIn(guard, flat_policy)
 
+    def test_source_policy_delivers_required_redistribution_materials(self) -> None:
+        policy = (REPO_ROOT / "references" / "source-policy.md").read_text(encoding="utf-8")
+        flat_policy = " ".join(policy.split())
+        required_rule = (
+            "When the exact application or asset terms require attribution, a copyright notice, "
+            "a license copy, source disclosure, or a NOTICE file for redistribution, include the "
+            "required material in the delivered AppStore package; a URL in `source-evidence.json` "
+            "is not a substitute."
+        )
+        self.assertIn(required_rule, flat_policy)
+        self.assertIn(
+            "Verify asset terms separately; do not assume the application code license covers a "
+            "logo, icon, font, trademark, or other bundled media.",
+            flat_policy,
+        )
+        for weakened_rule in (
+            "permissive licenses never require notice delivery",
+            "a license URL is always sufficient for redistribution",
+            "the application license automatically covers the logo",
+        ):
+            with self.subTest(weakened_rule=weakened_rule):
+                self.assertNotIn(weakened_rule, flat_policy.casefold())
+
+    def test_output_contract_distinguishes_delivered_files_from_run_only_evidence(self) -> None:
+        output_contract = self.skill[
+            self.skill.index("## Output Contract") : self.skill.index("## Notes")
+        ]
+        flat_skill = " ".join(output_contract.split())
+        self.assertIn(
+            "Which cited files are delivered in the AppStore package and which evidence caches "
+            "remain run-only",
+            flat_skill,
+        )
+
     def test_completion_gates_front_load_low_model_quality_guards(self) -> None:
         router = self.skill[self.start : self.rule_priority]
         flat_router = " ".join(router.split())
@@ -252,6 +292,7 @@ class SkillRoutingTests(unittest.TestCase):
             "internal listener",
             "current upstream variable",
             "material use restrictions",
+            "redistribution",
             "minimal install form",
             "Never `source` or `eval`",
             "every Compose service",
@@ -265,6 +306,7 @@ class SkillRoutingTests(unittest.TestCase):
             "URL-encode",
             "unresolved asset license",
             "neutral placeholder immediately",
+            "run-only evidence caches",
         ):
             with self.subTest(guard=guard):
                 self.assertIn(guard, router)

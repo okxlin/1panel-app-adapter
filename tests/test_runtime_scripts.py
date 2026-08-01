@@ -1,4 +1,5 @@
 import importlib.util
+import hashlib
 import json
 import os
 import pathlib
@@ -14,6 +15,7 @@ FINALIZE = SCRIPTS_DIR / "finalize_runtime_scripts.sh"
 GENERATE = SCRIPTS_DIR / "generate-from-appspec.py"
 RUNTIME_UTILS = SCRIPTS_DIR / "runtime_script_utils.py"
 SCAFFOLD = SCRIPTS_DIR / "scaffold-v2.sh"
+MIGRATE = SCRIPTS_DIR / "migrate-v1-to-v2.sh"
 
 
 def load_module(path: pathlib.Path, name: str):
@@ -920,6 +922,678 @@ additionalProperties:
                 ver_dir / "scripts" / "uninstall.sh", ver_dir
             )
 
+    def test_scaffold_delivers_licensed_default_logo_with_hash_bound_evidence(self):
+        with tempfile.TemporaryDirectory(prefix="adapter-scaffold-logo-") as tmp:
+            out_dir = pathlib.Path(tmp) / "out"
+            subprocess.run(
+                [
+                    "bash",
+                    str(SCAFFOLD),
+                    "--app-key",
+                    "demo",
+                    "--title",
+                    "Demo",
+                    "--image",
+                    "example/demo:1.0",
+                    "--version",
+                    "1.0",
+                    "--out-dir",
+                    str(out_dir),
+                    "--source-repository",
+                    "https://example.invalid/demo",
+                    "--source-docker-docs",
+                    "https://example.invalid/demo/docker",
+                    "--source-compose-file",
+                    "https://example.invalid/demo/compose.yml",
+                ],
+                check=True,
+                cwd=ROOT,
+            )
+            app_dir = out_dir / "demo"
+            logo = app_dir / "logo.png"
+            notice = app_dir / "ASSET-LICENSES" / "default-logo.txt"
+            evidence = json.loads(
+                (app_dir / "source-evidence.json").read_text(encoding="utf-8")
+            )
+
+            self.assertTrue(notice.is_file())
+            self.assertEqual(evidence["logoEvidence"]["license"], "MIT")
+            self.assertEqual(
+                evidence["logoEvidence"]["sha256"],
+                hashlib.sha256(logo.read_bytes()).hexdigest(),
+            )
+            self.assertEqual(evidence["redistributionEvidence"]["status"], "verified")
+            self.assertEqual(
+                evidence["redistributionEvidence"]["requiredFiles"],
+                ["ASSET-LICENSES/default-logo.txt"],
+            )
+            self.assertEqual(
+                evidence["redistributionEvidence"]["materials"][0]["sha256"],
+                hashlib.sha256(notice.read_bytes()).hexdigest(),
+            )
+
+    def test_scaffold_force_rejects_symlinked_default_logo_notice(self):
+        with tempfile.TemporaryDirectory(prefix="adapter-scaffold-logo-link-") as tmp:
+            tmp_path = pathlib.Path(tmp)
+            out_dir = tmp_path / "out"
+            license_dir = out_dir / "demo" / "ASSET-LICENSES"
+            license_dir.mkdir(parents=True)
+            external_notice = tmp_path / "external-notice.txt"
+            sentinel = "external sentinel must remain unchanged\n"
+            external_notice.write_text(sentinel, encoding="utf-8")
+            (license_dir / "default-logo.txt").symlink_to(external_notice)
+
+            proc = subprocess.run(
+                [
+                    "bash",
+                    str(SCAFFOLD),
+                    "--app-key",
+                    "demo",
+                    "--title",
+                    "Demo",
+                    "--image",
+                    "example/demo:1.0",
+                    "--version",
+                    "1.0",
+                    "--out-dir",
+                    str(out_dir),
+                    "--force",
+                    "--source-repository",
+                    "https://example.invalid/demo",
+                    "--source-docker-docs",
+                    "https://example.invalid/demo/docker",
+                    "--source-compose-file",
+                    "https://example.invalid/demo/compose.yml",
+                ],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                cwd=ROOT,
+            )
+
+            self.assertNotEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+            self.assertEqual(external_notice.read_text(encoding="utf-8"), sentinel)
+
+    def test_migration_delivers_licensed_default_logo_with_hash_bound_evidence(self):
+        with tempfile.TemporaryDirectory(prefix="adapter-migrate-logo-") as tmp:
+            tmp_path = pathlib.Path(tmp)
+            source_root = tmp_path / "source"
+            subprocess.run(
+                [
+                    "bash",
+                    str(SCAFFOLD),
+                    "--app-key",
+                    "demo",
+                    "--title",
+                    "Demo",
+                    "--image",
+                    "example/demo:1.0",
+                    "--version",
+                    "1.0",
+                    "--out-dir",
+                    str(source_root),
+                    "--source-repository",
+                    "https://example.invalid/demo",
+                    "--source-docker-docs",
+                    "https://example.invalid/demo/docker",
+                    "--source-compose-file",
+                    "https://example.invalid/demo/compose.yml",
+                ],
+                check=True,
+                cwd=ROOT,
+            )
+            source_app = source_root / "demo"
+            (source_app / "logo.png").unlink()
+            out_dir = tmp_path / "out"
+
+            subprocess.run(
+                [
+                    "bash",
+                    str(MIGRATE),
+                    "--src",
+                    str(source_app),
+                    "--out",
+                    str(out_dir),
+                    "--version",
+                    "1.0",
+                    "--target-version",
+                    "2.0",
+                ],
+                check=True,
+                cwd=ROOT,
+            )
+            app_dir = out_dir / "demo"
+            logo = app_dir / "logo.png"
+            notice = app_dir / "ASSET-LICENSES" / "default-logo.txt"
+            evidence = json.loads(
+                (app_dir / "source-evidence.json").read_text(encoding="utf-8")
+            )
+            notice_exists = notice.is_file()
+            delivered_logo_hash = hashlib.sha256(logo.read_bytes()).hexdigest()
+            delivered_notice_hash = hashlib.sha256(notice.read_bytes()).hexdigest()
+
+        self.assertTrue(notice_exists)
+        redistribution = evidence["redistributionEvidence"]
+        self.assertEqual(redistribution["status"], "verified")
+        self.assertEqual(
+            redistribution["assets"][0]["sha256"],
+            delivered_logo_hash,
+        )
+        self.assertEqual(
+            redistribution["materials"][0]["sha256"],
+            delivered_notice_hash,
+        )
+
+    def test_migration_rejects_symlinked_default_logo_notice(self):
+        with tempfile.TemporaryDirectory(prefix="adapter-migrate-logo-link-") as tmp:
+            tmp_path = pathlib.Path(tmp)
+            source_root = tmp_path / "source"
+            subprocess.run(
+                [
+                    "bash",
+                    str(SCAFFOLD),
+                    "--app-key",
+                    "demo",
+                    "--title",
+                    "Demo",
+                    "--image",
+                    "example/demo:1.0",
+                    "--version",
+                    "1.0",
+                    "--out-dir",
+                    str(source_root),
+                    "--source-repository",
+                    "https://example.invalid/demo",
+                    "--source-docker-docs",
+                    "https://example.invalid/demo/docker",
+                    "--source-compose-file",
+                    "https://example.invalid/demo/compose.yml",
+                ],
+                check=True,
+                cwd=ROOT,
+            )
+            source_app = source_root / "demo"
+            (source_app / "logo.png").unlink()
+
+            out_dir = tmp_path / "out"
+            license_dir = out_dir / "demo" / "ASSET-LICENSES"
+            license_dir.mkdir(parents=True)
+            external_notice = tmp_path / "external-notice.txt"
+            sentinel = "external sentinel must remain unchanged\n"
+            external_notice.write_text(sentinel, encoding="utf-8")
+            (license_dir / "default-logo.txt").symlink_to(external_notice)
+
+            proc = subprocess.run(
+                [
+                    "bash",
+                    str(MIGRATE),
+                    "--src",
+                    str(source_app),
+                    "--out",
+                    str(out_dir),
+                    "--version",
+                    "1.0",
+                    "--target-version",
+                    "2.0",
+                ],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                cwd=ROOT,
+            )
+
+            self.assertNotEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+            self.assertEqual(external_notice.read_text(encoding="utf-8"), sentinel)
+
+    def test_scaffold_rejects_escaping_app_key_and_version(self):
+        with tempfile.TemporaryDirectory(prefix="adapter-scaffold-components-") as tmp:
+            tmp_path = pathlib.Path(tmp)
+            cases = (
+                ("app-key", "../escaped-app", "1.0", "escaped-app"),
+                ("version", "demo", "../../escaped-version", "escaped-version"),
+            )
+            for label, app_key, version, escaped_name in cases:
+                with self.subTest(label=label):
+                    case_root = tmp_path / label
+                    out_dir = case_root / "out"
+                    proc = subprocess.run(
+                        [
+                            "bash",
+                            str(SCAFFOLD),
+                            "--app-key",
+                            app_key,
+                            "--title",
+                            "Demo",
+                            "--image",
+                            "example/demo:1.0",
+                            "--version",
+                            version,
+                            "--out-dir",
+                            str(out_dir),
+                            "--source-repository",
+                            "https://example.invalid/demo",
+                            "--source-docker-docs",
+                            "https://example.invalid/demo/docker",
+                            "--source-compose-file",
+                            "https://example.invalid/demo/compose.yml",
+                        ],
+                        text=True,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        cwd=ROOT,
+                    )
+
+                    self.assertNotEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+                    self.assertFalse((case_root / escaped_name).exists())
+
+    def test_migration_rejects_escaping_app_key_and_target_version(self):
+        with tempfile.TemporaryDirectory(prefix="adapter-migrate-components-") as tmp:
+            tmp_path = pathlib.Path(tmp)
+            cases = (
+                ("app-key", "../escaped-app", "2.0", "escaped-app"),
+                ("version", "demo", "../../escaped-version", "escaped-version"),
+            )
+            for label, app_key, target_version, escaped_name in cases:
+                with self.subTest(label=label):
+                    case_root = tmp_path / label
+                    source_root = case_root / "source"
+                    subprocess.run(
+                        [
+                            "bash",
+                            str(SCAFFOLD),
+                            "--app-key",
+                            "demo",
+                            "--title",
+                            "Demo",
+                            "--image",
+                            "example/demo:1.0",
+                            "--version",
+                            "1.0",
+                            "--out-dir",
+                            str(source_root),
+                            "--source-repository",
+                            "https://example.invalid/demo",
+                            "--source-docker-docs",
+                            "https://example.invalid/demo/docker",
+                            "--source-compose-file",
+                            "https://example.invalid/demo/compose.yml",
+                        ],
+                        check=True,
+                        cwd=ROOT,
+                    )
+                    source_app = source_root / "demo"
+                    if app_key != "demo":
+                        data_path = source_app / "data.yml"
+                        data_path.write_text(
+                            data_path.read_text(encoding="utf-8").replace(
+                                "key: demo", f"key: {app_key}", 1
+                            ),
+                            encoding="utf-8",
+                        )
+
+                    proc = subprocess.run(
+                        [
+                            "bash",
+                            str(MIGRATE),
+                            "--src",
+                            str(source_app),
+                            "--out",
+                            str(case_root / "out"),
+                            "--version",
+                            "1.0",
+                            "--target-version",
+                            target_version,
+                        ],
+                        text=True,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        cwd=ROOT,
+                    )
+
+                    self.assertNotEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+                    self.assertFalse((case_root / escaped_name).exists())
+
+    def test_migration_rejects_symlinked_output_app_directory(self):
+        with tempfile.TemporaryDirectory(prefix="adapter-migrate-app-link-") as tmp:
+            tmp_path = pathlib.Path(tmp)
+            source_root = tmp_path / "source"
+            subprocess.run(
+                [
+                    "bash",
+                    str(SCAFFOLD),
+                    "--app-key",
+                    "demo",
+                    "--title",
+                    "Demo",
+                    "--image",
+                    "example/demo:1.0",
+                    "--version",
+                    "1.0",
+                    "--out-dir",
+                    str(source_root),
+                    "--source-repository",
+                    "https://example.invalid/demo",
+                    "--source-docker-docs",
+                    "https://example.invalid/demo/docker",
+                    "--source-compose-file",
+                    "https://example.invalid/demo/compose.yml",
+                ],
+                check=True,
+                cwd=ROOT,
+            )
+            out_dir = tmp_path / "out"
+            out_dir.mkdir()
+            external = tmp_path / "external"
+            external.mkdir()
+            sentinel = "external sentinel must remain unchanged\n"
+            (external / "data.yml").write_text(sentinel, encoding="utf-8")
+            (out_dir / "demo").symlink_to(external, target_is_directory=True)
+
+            proc = subprocess.run(
+                [
+                    "bash",
+                    str(MIGRATE),
+                    "--src",
+                    str(source_root / "demo"),
+                    "--out",
+                    str(out_dir),
+                    "--version",
+                    "1.0",
+                    "--target-version",
+                    "2.0",
+                ],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                cwd=ROOT,
+            )
+
+            self.assertNotEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+            self.assertEqual((external / "data.yml").read_text(encoding="utf-8"), sentinel)
+
+    def test_migration_preserves_and_delivers_existing_redistribution_materials(self):
+        with tempfile.TemporaryDirectory(prefix="adapter-migrate-materials-") as tmp:
+            tmp_path = pathlib.Path(tmp)
+            source_root = tmp_path / "source"
+            subprocess.run(
+                [
+                    "bash",
+                    str(SCAFFOLD),
+                    "--app-key",
+                    "demo",
+                    "--title",
+                    "Demo",
+                    "--image",
+                    "example/demo:1.0",
+                    "--version",
+                    "1.0",
+                    "--out-dir",
+                    str(source_root),
+                    "--source-repository",
+                    "https://example.invalid/demo",
+                    "--source-docker-docs",
+                    "https://example.invalid/demo/docker",
+                    "--source-compose-file",
+                    "https://example.invalid/demo/compose.yml",
+                ],
+                check=True,
+                cwd=ROOT,
+            )
+            source_app = source_root / "demo"
+            app_license = source_app / "LICENSE"
+            app_license.write_text("application license\n", encoding="utf-8")
+            evidence_path = source_app / "source-evidence.json"
+            evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+            redistribution = evidence["redistributionEvidence"]
+            redistribution["requiredFiles"].append("LICENSE")
+            redistribution["materials"].append({
+                "path": "LICENSE",
+                "sha256": hashlib.sha256(app_license.read_bytes()).hexdigest(),
+                "purpose": "application license",
+            })
+            evidence["licenseEvidence"] = {"spdx": "MIT"}
+            evidence_path.write_text(
+                json.dumps(evidence, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+
+            out_dir = tmp_path / "out"
+            proc = subprocess.run(
+                [
+                    "bash",
+                    str(MIGRATE),
+                    "--src",
+                    str(source_app),
+                    "--out",
+                    str(out_dir),
+                    "--version",
+                    "1.0",
+                    "--target-version",
+                    "2.0",
+                ],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                cwd=ROOT,
+            )
+
+            self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+            migrated = out_dir / "demo"
+            migrated_evidence = json.loads(
+                (migrated / "source-evidence.json").read_text(encoding="utf-8")
+            )
+            migrated_redistribution = migrated_evidence["redistributionEvidence"]
+            self.assertEqual(
+                (migrated / "LICENSE").read_text(encoding="utf-8"),
+                "application license\n",
+            )
+            self.assertIn("LICENSE", migrated_redistribution["requiredFiles"])
+            self.assertIn(
+                "LICENSE",
+                {item["path"] for item in migrated_redistribution["materials"]},
+            )
+
+    def test_migration_auto_detects_only_real_version_directories(self):
+        with tempfile.TemporaryDirectory(prefix="adapter-migrate-auto-version-") as tmp:
+            tmp_path = pathlib.Path(tmp)
+            source_root = tmp_path / "source"
+            subprocess.run(
+                [
+                    "bash",
+                    str(SCAFFOLD),
+                    "--app-key",
+                    "demo",
+                    "--title",
+                    "Demo",
+                    "--image",
+                    "example/demo:1.0",
+                    "--version",
+                    "1.0",
+                    "--out-dir",
+                    str(source_root),
+                    "--source-repository",
+                    "https://example.invalid/demo",
+                    "--source-docker-docs",
+                    "https://example.invalid/demo/docker",
+                    "--source-compose-file",
+                    "https://example.invalid/demo/compose.yml",
+                ],
+                check=True,
+                cwd=ROOT,
+            )
+            out_dir = tmp_path / "out"
+
+            proc = subprocess.run(
+                [
+                    "bash",
+                    str(MIGRATE),
+                    "--src",
+                    str(source_root / "demo"),
+                    "--out",
+                    str(out_dir),
+                    "--target-version",
+                    "2.0",
+                ],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                cwd=ROOT,
+            )
+
+            self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+            self.assertTrue((out_dir / "demo" / "2.0" / "docker-compose.yml").is_file())
+
+    def test_migration_rejects_redistribution_material_hash_mismatch(self):
+        with tempfile.TemporaryDirectory(prefix="adapter-migrate-material-hash-") as tmp:
+            tmp_path = pathlib.Path(tmp)
+            source_root = tmp_path / "source"
+            subprocess.run(
+                [
+                    "bash",
+                    str(SCAFFOLD),
+                    "--app-key",
+                    "demo",
+                    "--title",
+                    "Demo",
+                    "--image",
+                    "example/demo:1.0",
+                    "--version",
+                    "1.0",
+                    "--out-dir",
+                    str(source_root),
+                    "--source-repository",
+                    "https://example.invalid/demo",
+                    "--source-docker-docs",
+                    "https://example.invalid/demo/docker",
+                    "--source-compose-file",
+                    "https://example.invalid/demo/compose.yml",
+                ],
+                check=True,
+                cwd=ROOT,
+            )
+            source_app = source_root / "demo"
+            license_path = source_app / "LICENSE"
+            license_path.write_text("actual license text\n", encoding="utf-8")
+            evidence_path = source_app / "source-evidence.json"
+            evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+            redistribution = evidence["redistributionEvidence"]
+            redistribution["requiredFiles"].append("LICENSE")
+            redistribution["materials"].append({
+                "path": "LICENSE",
+                "sha256": hashlib.sha256(b"different license text\n").hexdigest(),
+                "purpose": "application license",
+            })
+            evidence_path.write_text(
+                json.dumps(evidence, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+
+            proc = subprocess.run(
+                [
+                    "bash",
+                    str(MIGRATE),
+                    "--src",
+                    str(source_app),
+                    "--out",
+                    str(tmp_path / "out"),
+                    "--version",
+                    "1.0",
+                    "--target-version",
+                    "2.0",
+                ],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                cwd=ROOT,
+            )
+
+            self.assertNotEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+            self.assertNotIn("OK: migrated", proc.stdout)
+
+    def test_migration_copies_unreferenced_redistribution_material_ledger_entries(self):
+        with tempfile.TemporaryDirectory(prefix="adapter-migrate-extra-material-") as tmp:
+            tmp_path = pathlib.Path(tmp)
+            source_root = tmp_path / "source"
+            subprocess.run(
+                [
+                    "bash",
+                    str(SCAFFOLD),
+                    "--app-key",
+                    "demo",
+                    "--title",
+                    "Demo",
+                    "--image",
+                    "example/demo:1.0",
+                    "--version",
+                    "1.0",
+                    "--out-dir",
+                    str(source_root),
+                    "--source-repository",
+                    "https://example.invalid/demo",
+                    "--source-docker-docs",
+                    "https://example.invalid/demo/docker",
+                    "--source-compose-file",
+                    "https://example.invalid/demo/compose.yml",
+                ],
+                check=True,
+                cwd=ROOT,
+            )
+            source_app = source_root / "demo"
+            extra_notice = source_app / "EXTRA-NOTICE"
+            extra_notice.write_text("additional attribution\n", encoding="utf-8")
+            evidence_path = source_app / "source-evidence.json"
+            evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+            evidence["redistributionEvidence"]["materials"].append({
+                "path": "EXTRA-NOTICE",
+                "sha256": hashlib.sha256(extra_notice.read_bytes()).hexdigest(),
+                "purpose": "additional attribution",
+            })
+            evidence_path.write_text(
+                json.dumps(evidence, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+
+            out_dir = tmp_path / "out"
+            proc = subprocess.run(
+                [
+                    "bash",
+                    str(MIGRATE),
+                    "--src",
+                    str(source_app),
+                    "--out",
+                    str(out_dir),
+                    "--version",
+                    "1.0",
+                    "--target-version",
+                    "2.0",
+                ],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                cwd=ROOT,
+            )
+
+            self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+            migrated = out_dir / "demo"
+            self.assertEqual(
+                (migrated / "EXTRA-NOTICE").read_text(encoding="utf-8"),
+                "additional attribution\n",
+            )
+            validation = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPTS_DIR / "source_evidence.py"),
+                    str(migrated / "source-evidence.json"),
+                    "--artifact-root",
+                    str(migrated),
+                ],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                cwd=ROOT,
+            )
+            self.assertEqual(validation.returncode, 0, validation.stdout + validation.stderr)
+
     def test_finalize_runtime_scripts_rejects_symlinked_scripts_directory(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = pathlib.Path(tmp)
@@ -1173,6 +1847,9 @@ additionalProperties:
             tmp_path = pathlib.Path(tmp)
             spec_path = tmp_path / "spec.json"
             out_dir = tmp_path / "out"
+            custom_logo = tmp_path / "logo.png"
+            custom_logo.write_bytes(b"verified-custom-logo")
+            custom_logo_hash = hashlib.sha256(custom_logo.read_bytes()).hexdigest()
             optional_evidence = {
                 "sourceRevision": {"tag": "v1.2.3", "commit": "a" * 40},
                 "imageEvidence": {
@@ -1186,7 +1863,18 @@ additionalProperties:
                 "logoEvidence": {
                     "source": "https://example.com/logo.png",
                     "license": "MIT",
-                    "sha256": "c" * 64,
+                    "sha256": custom_logo_hash,
+                },
+                "redistributionEvidence": {
+                    "status": "verified",
+                    "requiredFiles": [],
+                    "assets": [{
+                        "path": "logo.png",
+                        "source": "https://example.com/logo.png",
+                        "license": "MIT",
+                        "sha256": custom_logo_hash,
+                        "requiredFiles": [],
+                    }],
                 },
             }
             spec_path.write_text(
@@ -1196,6 +1884,7 @@ additionalProperties:
                         "title": "Demo",
                         "version": "latest",
                         "image": "ghcr.io/example/demo:latest",
+                        "logoPath": str(custom_logo),
                         "sourceEvidence": {
                             "repository": "https://github.com/example/demo",
                             "dockerDocs": "https://example.com/docker",
