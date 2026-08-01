@@ -7,17 +7,47 @@ description: Adapt, generate, migrate, and validate 1Panel App Store (AppStore/a
 
 Adapt Docker applications into reviewable 1Panel AppStore packages, then validate their structure, metadata, Compose configuration, localization, and upgrade behavior against source-backed rules.
 
-## Applicability / Non-applicability
+## Start Here: Choose One Route
 
-**Applicable:**
-- Applications with reliable Docker installation paths (official repository, official documentation, official images, official `docker-compose.yml` / `compose.yml`).
-- Existing compose that needs to be organized into 1Panel v2 directory structure.
-- Existing v1/mixed structure that needs migration, field completion, and pre-submission strict validation.
+Work from the skill directory so every `scripts/...` and `references/...` path resolves. First classify the input, then follow exactly one route below. Open and read every reference named by that route before running its command, and state how the references affected the plan or artifact. Every route ends at **Completion Gates**. If official Docker deployment evidence is unavailable, stop and report the missing evidence; do not guess a package. Publishing is outside this skill.
 
-**Not applicable:**
-- Applications without reliable Docker deployment paths, where installation method can only be guessed by inferring images, ports, volumes, environment variables, and dependencies.
-- Scenarios requiring determination of whether third-party images, tutorials, or unofficial compose fragments are trustworthy.
-- Direct publishing to remote appstore repositories; this skill's responsibility is generation/adaptation/validation, not replacing the submission workflow.
+1. **New app from official Docker/Compose**: Read `references/source-policy.md` and `references/topology-preflight.md`. Run `bash scripts/scaffold-v2.sh --app-key <key> --title <title> --image <image> --version <version> --out-dir <out-dir> --source-repository <url> --source-docker-docs <url> --source-compose-file <url>`. Review every generated file against the authoritative Compose and replace all placeholder metadata and translations.
+2. **AppSpec input**: Read `references/appspec.md`, `references/source-policy.md`, and `references/topology-preflight.md`. Run `python3 scripts/generate-from-appspec.py --spec <appspec.json> --out-dir <out-dir> --validate --require-validate`. Review the generated topology, variables, metadata, translations, and validation report against the AppSpec and official sources.
+3. **Existing v1 or mixed package**: Read `references/source-policy.md`, `references/topology-preflight.md`, and `references/upgrade-maintenance.md`. Run `bash scripts/migrate-v1-to-v2.sh --src <app-dir> --out <out-dir> [--version <source-version>] [--target-version <target-version>] --source-repository <url> --source-docker-docs <url> --source-compose-file <url>`. Review the migrated root/version metadata, Compose, `.env.sample`, lifecycle scripts, and upgrade compatibility; source URL flags may be omitted only when the source package already has valid `source-evidence.json`.
+4. **aaPanel/Baota input**: Read `references/baota-app-format.md`, `references/baota-to-1panel-mapping.md`, `references/source-policy.md`, and `references/topology-preflight.md`. For one app run `python3 scripts/import-baota-app.py --input <baota-app-dir> --out-dir <out-dir> --version latest --validate --require-validate`; for apphub batch input add `--batch --report <report.json>`. Review every candidate against official upstream evidence because Baota metadata is not authoritative Docker evidence.
+5. **Update an existing v2 app**: Read `references/upgrade-maintenance.md`, `references/source-policy.md`, and `references/topology-preflight.md`. Compare the old and new package before editing; use only the needed helper commands below. Review image lineage, persisted data, changed variables, dependencies, lifecycle scripts, and direct-upgrade behavior, then run final validation.
+6. **Validate only**: Read `references/source-policy.md` and `references/topology-preflight.md`; also read `references/upgrade-maintenance.md` when several versions or an update are involved. Start with `bash scripts/validate-v2.sh --dir <app-dir>` and review every failure and warning before strict validation. Validation does not authorize guessing or silently patching unknown semantics.
+7. **PHP runtime**: Read `references/php-runtime.md`, `references/source-policy.md`, and `references/topology-preflight.md` before choosing a generator. Follow the runtime-specific package shape, review picker metadata and actual runtime integration, then use the applicable helper commands and final validation below. Do not treat a PHP runtime as an ordinary website/tool app.
+
+### Exact Helper Commands
+
+Use scripts for their named job instead of manually recreating their behavior. Review each diff after a mutating helper; patch helpers normalize structure but cannot prove application semantics.
+
+| Job | Command |
+| --- | --- |
+| New v2 scaffold | `bash scripts/scaffold-v2.sh --app-key <key> --title <title> --image <image> --version <version> --out-dir <out-dir> --source-repository <url> --source-docker-docs <url> --source-compose-file <url>` |
+| AppSpec generation | `python3 scripts/generate-from-appspec.py --spec <appspec.json> --out-dir <out-dir> --validate --require-validate` |
+| v1 migration | `bash scripts/migrate-v1-to-v2.sh --src <app-dir> --out <out-dir> [--version <source-version>] [--target-version <target-version>] --source-repository <url> --source-docker-docs <url> --source-compose-file <url>` |
+| Single Baota import | `python3 scripts/import-baota-app.py --input <baota-app-dir> --out-dir <out-dir> --version latest --validate --require-validate` |
+| Batch Baota import | `python3 scripts/import-baota-app.py --input <apphub-dir> --batch --out-dir <out-dir> --validate --report <report.json> --require-validate` |
+| Root metadata patch | `python3 scripts/patch_root_data_yml.py <app-dir>/data.yml [app-key] [architectures]` |
+| Version metadata patch | `python3 scripts/patch_version_data_yml.py <app-dir>/<version>/data.yml` |
+| Compose patch | `python3 scripts/patch_compose_yml.py <app-dir>/<version>/docker-compose.yml [app-type]` |
+| Regenerate env sample | `bash scripts/gen-env-sample.sh <app-dir>/<version>/data.yml <app-dir>/<version>/.env.sample` |
+| Backfill lifecycle scripts | `bash scripts/finalize_runtime_scripts.sh <app-dir> <app-dir>/<version>` |
+| Normalize logo | `bash scripts/normalize-logo.sh <app-dir>/logo.png` |
+| Baseline validation | `bash scripts/validate-v2.sh --dir <app-dir> [--version <version>]` |
+| Delivery validation | `bash scripts/validate-v2.sh --dir <app-dir> [--version <version>] --strict-store --i18n-mode strict` |
+
+### Completion Gates
+
+- Confirm authoritative repository, Docker documentation, Compose/image evidence, and topology; record unsupported or unverified facts instead of inventing them.
+- Review root metadata, version metadata, Compose, `.env.sample`, README, logo, lifecycle scripts, persisted paths, dependencies, and upgrade behavior where applicable.
+- Replace scaffold/import placeholders with real product metadata and meaningful translations in all required locales.
+- Render Compose with a populated temporary environment and prove Compose variables, form fields, and `.env.sample` have closure.
+- Run baseline validation first; resolve understood findings, then run `bash scripts/validate-v2.sh --dir <app-dir> [--version <version>] --strict-store --i18n-mode strict` and record the result.
+- Test in a real 1Panel development/test instance: install from clean state, prove application-specific readiness, restart, upgrade when applicable, uninstall, and verify task-owned cleanup. Static validation or HTTP 200 alone is insufficient.
+- Report artifact paths, evidence sources, test results, risk-bearing permissions, remaining assumptions, warnings, and manual follow-ups.
 
 ## Rule Priority
 
@@ -330,42 +360,6 @@ Use these checks when an app needs a wrapper command before delegating back to t
 - Avoid one-shot init sidecars for required startup work when targeting 1Panel app installs. 1Panel may rewrite restart policies during deployment, so `service_completed_successfully` and short-lived init containers can become fragile. Prefer idempotent initialization in the main service startup path, a long-running helper, or a dependency healthcheck that can be retried safely.
 - Treat database initialization assets as runtime-critical. In containerized 1Panel/Docker setups, a relative single-file bind such as `./schema.sql:/docker-entrypoint-initdb.d/schema.sql` can resolve against a path the Docker daemon cannot see and appear inside the container as a directory. Prefer an existing store-proven data-directory staging pattern, an image-contained asset, or another initialization path that does not depend on an unverified daemon-visible source path. Test the actual mounted file type and database tables on a clean data directory.
 - A healthy container and HTTP `200` do not prove a database-backed app is usable. Before delivery, verify an app-specific business-ready path on clean state: required tables/schema exist and a documented login works, or the official first-run setup page/API is reachable and requires no preparation unavailable to a panel user.
-
-## Recommended execution flow
-
-Use this skill in one of three paths.
-
-### Path A: generate a new 1Panel app
-
-1. Run `bash scripts/scaffold-v2.sh ...` to create the v2 app skeleton.
-   - provide the required `--source-repository`, `--source-docker-docs`, and `--source-compose-file` URLs from authoritative sources.
-2. Review the generated `data.yml`, version `data.yml`, and `docker-compose.yml` (including default tag, TZ, optional healthcheck, and dependency/env fields when applicable).
-3. Review `<app>/source-evidence.json` if it is present; remove it before final appstore delivery when the target repository does not keep process evidence.
-4. If needed, run `bash scripts/finalize_runtime_scripts.sh <app-dir> <version-dir>` to ensure lifecycle scripts exist.
-5. Run `bash scripts/validate-v2.sh --dir <app-dir> --strict-store`.
-6. If validation reports issues, use the patch scripts to normalize root metadata, version metadata, or compose content, then validate again.
-
-### Path B: migrate an existing app
-
-1. Run `bash scripts/migrate-v1-to-v2.sh --src <app-dir> [--version <source-ver>] [--target-version <target-ver>] ...`.
-2. If provenance evidence is useful for the workflow, keep source evidence in the source app (`source-evidence.json`) or provide source-evidence arguments to the migration command.
-3. Review the migrated root metadata, version metadata, compose file, lifecycle scripts, and `.env.sample`, then decide whether any high-quality backfill is still needed.
-   - If this is an update to an existing packaged app, run the upgrade safety audit in `references/upgrade-maintenance.md` against the previous supported version.
-4. If needed, run `bash scripts/finalize_runtime_scripts.sh <app-dir> <version-dir>` to backfill minimal lifecycle scripts.
-5. Run `bash scripts/validate-v2.sh --dir <app-dir> --strict-store`; if the app keeps multiple version directories, add `--version <target-version>`.
-6. If needed, rerun the patch scripts and validate again until strict-store passes.
-
-### Path C: import a Baota/aaPanel Docker Store app
-
-1. Confirm the input app directory follows the public `aaPanel/apphub` structure: `app.json`, `icon.png`, and a version directory containing `docker-compose.yml` and `.env`.
-2. Run `python3 scripts/import-baota-app.py --input <baota-app-dir> --out-dir <out-dir> --version latest --validate --require-validate`.
-3. For apphub-style batch input, run `python3 scripts/import-baota-app.py --input <apphub-dir> --batch --out-dir <out-dir> --validate --report <report.json>`.
-4. Review `source-evidence.json` and migration notes. Baota metadata alone is not proof that the upstream image, ports, volumes, or env semantics are official.
-5. For delivery candidates, run `docker compose --env-file <version>/.env.sample -f <version>/docker-compose.yml config` with a safe `CONTAINER_NAME` value, then run `bash scripts/validate-v2.sh --dir <app-dir> --strict-store`. Add `--source-evidence-mode required` only when the current workflow explicitly requires provenance evidence as a gate.
-
-Baota import rules are grounded in `references/baota-app-format.md` and `references/baota-to-1panel-mapping.md`. The public `aaPanel/apphub` template defines `HOST_IP`, `CPUS`, `MEMORY_LIMIT`, and `APP_PATH` as required `.env` variables, and aaPanel source creates/reuses `baota_net` before app installation. Imported artifacts convert those runtime assumptions into 1Panel conventions instead of preserving Baota-only variables.
-
-The intended finish line for this skill is: generated, migrated, or imported output exists, root/version/compose structure is normalized, and `validate-v2.sh --strict-store` has been executed with its result recorded for follow-up decisions.
 
 ## i18n Translation Quality Check Switch
 
