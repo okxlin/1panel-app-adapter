@@ -69,6 +69,17 @@ See the [AppSpec reference](./references/appspec.md) and [sample AppSpec](./asse
 
 ### Import aaPanel or Baota Apps
 
+Precheck a prepared input without generating adapter output:
+
+```bash
+python3 scripts/import-baota-app.py \
+  --input <baota-app-dir-or-batch-root> \
+  --precheck-only \
+  --report artifacts/baota-precheck.json
+```
+
+Add `--batch` when the input is a prepared batch root.
+
 Import one app:
 
 ```bash
@@ -91,7 +102,7 @@ python3 scripts/import-baota-app.py \
   --report artifacts/baota-import-report.json
 ```
 
-The importer translates aaPanel/Baota ports, bind mounts, network settings, resource limits, and metadata into 1Panel conventions. Imported values still require verification against the application's official sources. See the [format notes](./references/baota-app-format.md) and [mapping rules](./references/baota-to-1panel-mapping.md).
+The importer translates aaPanel/Baota ports, bind mounts, network settings, resource limits, and metadata into a conversion candidate. It does not fetch a live market or prove delivery readiness. Imported values still require independent source, image, security, strict-store, and real 1Panel lifecycle verification. Start with the [migration workflow](./references/baota-migration-workflow.md), then use the [format notes](./references/baota-app-format.md) and [mapping rules](./references/baota-to-1panel-mapping.md) as needed.
 
 ### Migrate v1 to v2
 

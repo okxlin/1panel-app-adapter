@@ -8,6 +8,7 @@ Tests cover: BaotaPrecheck, BaotaParser, BaotaToAppSpecMapper,
 
 import atexit
 import json
+import os
 import pathlib
 import shutil
 import subprocess
@@ -32,6 +33,7 @@ from baota_import_lib import (
     E_BAOTA_APP_JSON_INVALID,
     E_BAOTA_COMPOSE_INVALID,
     E_BAOTA_COMPOSE_MISSING,
+    E_BAOTA_ENV_MISSING,
     E_BAOTA_VERSION_INVALID,
     E_BAOTA_VERSION_DIR_MISSING,
     E_BAOTA_VERSION_MISSING,
@@ -463,6 +465,63 @@ class TestBaotaPrecheck(unittest.TestCase):
         codes = [error["code"] for error in report["errors"]]
         self.assertIn(E_BAOTA_COMPOSE_INVALID, codes)
 
+    def test_required_file_symlink_is_rejected(self):
+        with tempfile.TemporaryDirectory(prefix="baota_symlink_file_") as tmpdir:
+            app_dir = pathlib.Path(tmpdir) / "source"
+            _write_app(
+                app_dir,
+                _base_app_json("linked-icon", "Linked Icon", "Symlink input."),
+                "services:\n  app:\n    image: busybox:latest\n",
+            )
+            outside_icon = pathlib.Path(tmpdir) / "outside.png"
+            outside_icon.write_bytes(_ICON_BYTES)
+            (app_dir / "icon.png").unlink()
+            os.symlink(outside_icon, app_dir / "icon.png")
+
+            report = self.precheck.validate(str(app_dir))
+
+        codes = [error["code"] for error in report["errors"]]
+        self.assertIn("E_BAOTA_ICON_MISSING", codes)
+
+    def test_version_directory_symlink_is_rejected(self):
+        with tempfile.TemporaryDirectory(prefix="baota_symlink_version_") as tmpdir:
+            app_dir = pathlib.Path(tmpdir) / "source"
+            outside_version = pathlib.Path(tmpdir) / "outside-version"
+            _write_app(
+                app_dir,
+                _base_app_json("linked-version", "Linked Version", "Symlink input."),
+                None,
+            )
+            shutil.rmtree(app_dir / "latest")
+            _write_text(
+                outside_version / "docker-compose.yml",
+                "services:\n  app:\n    image: busybox:latest\n",
+            )
+            os.symlink(outside_version, app_dir / "latest")
+
+            report = self.precheck.validate(str(app_dir))
+
+        codes = [error["code"] for error in report["errors"]]
+        self.assertIn(E_BAOTA_VERSION_INVALID, codes)
+
+    def test_env_symlink_is_rejected(self):
+        with tempfile.TemporaryDirectory(prefix="baota_symlink_env_") as tmpdir:
+            app_dir = pathlib.Path(tmpdir) / "source"
+            _write_app(
+                app_dir,
+                _base_app_json("linked-env", "Linked Env", "Symlink input."),
+                "services:\n  app:\n    image: busybox:latest\n",
+            )
+            outside_env = pathlib.Path(tmpdir) / "outside.env"
+            outside_env.write_text("SECRET=not-for-import\n", encoding="utf-8")
+            (app_dir / "latest" / ".env").unlink()
+            os.symlink(outside_env, app_dir / "latest" / ".env")
+
+            report = self.precheck.validate(str(app_dir))
+
+        codes = [error["code"] for error in report["errors"]]
+        self.assertIn(E_BAOTA_ENV_MISSING, codes)
+
     def test_standard_fields_detected(self):
         parser = BaotaParser()
         app_json = parser.parse_app_json(_sample("alist"))
@@ -786,6 +845,20 @@ class TestImportRunner(unittest.TestCase):
         self.assertEqual(result["errorCode"], "E_BAOTA_OUTPUT_PATH_INVALID")
         self.assertFalse((outside / "data.yml").exists())
 
+    def test_import_rejects_existing_output_file_symlink(self):
+        out_dir = pathlib.Path(self.tmpdir) / "file-symlink-output"
+        app_dir = out_dir / "alist"
+        outside = pathlib.Path(self.tmpdir) / "outside-data.yml"
+        app_dir.mkdir(parents=True)
+        outside.write_text("sentinel\n", encoding="utf-8")
+        os.symlink(outside, app_dir / "data.yml")
+
+        result = self.runner.import_one(_sample("alist"), str(out_dir), "latest")
+
+        self.assertFalse(result["success"])
+        self.assertEqual(result["errorCode"], "E_BAOTA_OUTPUT_PATH_INVALID")
+        self.assertEqual(outside.read_text(encoding="utf-8"), "sentinel\n")
+
     def test_import_alist_success(self):
         result = self.runner.import_one(
             _sample("alist"), self.tmpdir, "latest", validate=True, require_validate=True,
@@ -890,6 +963,79 @@ class TestImportRunner(unittest.TestCase):
             evidence["composeFile"],
             "https://github.com/example/apphub/blob/main/apphub/alist/latest/docker-compose.yml",
         )
+
+    def test_repeated_imports_record_all_packaged_versions(self):
+        source = pathlib.Path(self.tmpdir) / "source"
+        shutil.copytree(_sample("alist"), source)
+        shutil.copytree(source / "latest", source / "3.42.0")
+        out_dir = pathlib.Path(self.tmpdir) / "versions-out"
+
+        latest = self.runner.import_one(str(source), str(out_dir), "latest")
+        fixed = self.runner.import_one(str(source), str(out_dir), "3.42.0")
+
+        self.assertTrue(latest["success"], latest.get("errors"))
+        self.assertTrue(fixed["success"], fixed.get("errors"))
+        self.assertEqual(fixed["availableVersions"], ["latest", "3.42.0"])
+        self.assertEqual(fixed["selectedVersion"], "3.42.0")
+        self.assertEqual(fixed["packagedVersions"], ["latest", "3.42.0"])
+        evidence = json.loads(
+            (out_dir / "alist" / "source-evidence.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(evidence["importSource"]["versions"], ["latest", "3.42.0"])
+        self.assertEqual(set(evidence["versionEvidence"]), {"latest", "3.42.0"})
+
+    def test_cross_source_import_keeps_per_version_provenance_separate(self):
+        source_a = pathlib.Path(self.tmpdir) / "source-a"
+        source_b = pathlib.Path(self.tmpdir) / "source-b"
+        shutil.copytree(_sample("alist"), source_a)
+        shutil.copytree(_sample("alist"), source_b)
+        shutil.copytree(source_b / "latest", source_b / "3.42.0")
+        out_dir = pathlib.Path(self.tmpdir) / "cross-source-out"
+
+        first = self.runner.import_one(str(source_a), str(out_dir), "latest")
+        second = self.runner.import_one(str(source_b), str(out_dir), "3.42.0")
+
+        self.assertTrue(first["success"], first.get("errors"))
+        self.assertTrue(second["success"], second.get("errors"))
+        evidence = json.loads(
+            (out_dir / "alist" / "source-evidence.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(evidence["importSource"]["versions"], ["3.42.0"])
+        self.assertEqual(
+            evidence["versionEvidence"]["latest"]["importSource"]["sourcePath"],
+            str(source_a),
+        )
+        self.assertEqual(
+            evidence["versionEvidence"]["3.42.0"]["importSource"]["sourcePath"],
+            str(source_b),
+        )
+
+    def test_invalid_existing_evidence_does_not_leave_partial_version(self):
+        source = pathlib.Path(self.tmpdir) / "bad-evidence-source"
+        shutil.copytree(_sample("alist"), source)
+        shutil.copytree(source / "latest", source / "3.42.0")
+        out_dir = pathlib.Path(self.tmpdir) / "bad-evidence-out"
+        first = self.runner.import_one(str(source), str(out_dir), "latest")
+        self.assertTrue(first["success"], first.get("errors"))
+        (out_dir / "alist" / "source-evidence.json").write_text("{", encoding="utf-8")
+
+        second = self.runner.import_one(str(source), str(out_dir), "3.42.0")
+
+        self.assertFalse(second["success"])
+        self.assertEqual(second["errorCode"], "E_BAOTA_EVIDENCE_INVALID")
+        self.assertFalse((out_dir / "alist" / "3.42.0").exists())
+
+    def test_packaged_versions_are_stable_unique_and_ignore_symlinks(self):
+        app_dir = pathlib.Path(self.tmpdir) / "packaged"
+        _write_text(app_dir / "latest" / "docker-compose.yml", "services: {}\n")
+        _write_text(app_dir / "2.0" / "docker-compose.yml", "services: {}\n")
+        os.symlink(app_dir / "latest", app_dir / "linked")
+
+        versions = self.runner._list_packaged_versions(
+            str(app_dir), ["2.0", "latest", "2.0"]
+        )
+
+        self.assertEqual(versions, ["latest", "2.0"])
 
     def test_import_disabled_skipped(self):
         result = self.runner.import_one(
@@ -1003,6 +1149,48 @@ class TestCliAndGenerator(unittest.TestCase):
         self.assertNotEqual(proc.returncode, 0)
         self.assertIn("requires --validate or --strict-store-validate", proc.stderr)
 
+    def test_cli_precheck_only_does_not_create_adapter_output(self):
+        out_dir = pathlib.Path(self.tmpdir) / "must-not-exist"
+        report_path = pathlib.Path(self.tmpdir) / "precheck.json"
+
+        proc = self._run_cli(
+            "--input", _sample("alist"),
+            "--out-dir", str(out_dir),
+            "--precheck-only",
+            "--report", str(report_path),
+        )
+
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertFalse(out_dir.exists())
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        self.assertEqual(report["mode"], "precheck")
+        self.assertTrue(report["success"])
+        self.assertIn("latest", report["result"]["fields"]["versions"])
+
+    def test_cli_batch_precheck_reports_every_immediate_directory(self):
+        source = pathlib.Path(self.tmpdir) / "prepared-market"
+        shutil.copytree(_sample("alist"), source / "valid")
+        (source / "invalid").mkdir(parents=True)
+        report_path = pathlib.Path(self.tmpdir) / "batch-precheck.json"
+
+        proc = self._run_cli(
+            "--input", str(source),
+            "--batch",
+            "--precheck-only",
+            "--report", str(report_path),
+        )
+
+        self.assertNotEqual(proc.returncode, 0)
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        self.assertEqual(report["mode"], "batch-precheck")
+        self.assertEqual(report["checked_count"], 2)
+        self.assertEqual(report["passed_count"], 1)
+        self.assertEqual(report["failed_count"], 1)
+        self.assertEqual(
+            {item["directory"] for item in report["items"]},
+            {"valid", "invalid"},
+        )
+
     def test_generate_from_appspec_roundtrip_complete_structure(self):
         appspec_path = pathlib.Path(self.tmpdir) / "alist.appspec.json"
         out_dir = pathlib.Path(self.tmpdir) / "generated"
@@ -1082,6 +1270,179 @@ class TestCliAndGenerator(unittest.TestCase):
             {blocker["code"] for blocker in report["delivery"]["blockers"]},
             {"unverified-source", "unverified-architectures"},
         )
+
+    def test_generate_from_multiple_baota_appspecs_merges_version_evidence(self):
+        source = pathlib.Path(self.tmpdir) / "multi-source"
+        shutil.copytree(_sample("alist"), source)
+        shutil.copytree(source / "latest", source / "3.42.0")
+        out_dir = pathlib.Path(self.tmpdir) / "multi-generated"
+
+        for version in ("latest", "3.42.0"):
+            appspec_path = pathlib.Path(self.tmpdir) / f"alist-{version}.json"
+            emit_proc = self._run_cli(
+                "--input", str(source),
+                "--emit-appspec", str(appspec_path),
+                "--version", version,
+            )
+            self.assertEqual(emit_proc.returncode, 0, emit_proc.stderr)
+            gen_proc = subprocess.run(
+                [
+                    sys.executable,
+                    str(self.project_dir / "scripts" / "generate-from-appspec.py"),
+                    "--spec", str(appspec_path),
+                    "--out-dir", str(out_dir),
+                ],
+                cwd=str(self.project_dir),
+                text=True,
+                capture_output=True,
+            )
+            self.assertEqual(gen_proc.returncode, 0, gen_proc.stderr)
+
+        evidence = json.loads(
+            (out_dir / "alist" / "source-evidence.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(evidence["importSource"]["versions"], ["latest", "3.42.0"])
+        self.assertEqual(set(evidence["versionEvidence"]), {"latest", "3.42.0"})
+        self.assertTrue((out_dir / "alist" / "latest" / "docker-compose.yml").is_file())
+        self.assertTrue((out_dir / "alist" / "3.42.0" / "docker-compose.yml").is_file())
+
+    def test_generate_from_appspec_rejects_unsafe_output_paths(self):
+        base_spec_path = pathlib.Path(self.tmpdir) / "safe-appspec.json"
+        emit_proc = self._run_cli(
+            "--input", _sample("alist"),
+            "--emit-appspec", str(base_spec_path),
+            "--version", "latest",
+        )
+        self.assertEqual(emit_proc.returncode, 0, emit_proc.stderr)
+        base_spec = json.loads(base_spec_path.read_text(encoding="utf-8"))
+
+        cases = (
+            ("../escaped-app", "latest", pathlib.Path(self.tmpdir) / "escaped-app"),
+            ("alist", "../escaped-version", pathlib.Path(self.tmpdir) / "generated" / "escaped-version"),
+        )
+        for index, (app_key, version, escaped_path) in enumerate(cases):
+            with self.subTest(app_key=app_key, version=version):
+                spec = dict(base_spec)
+                spec["appKey"] = app_key
+                spec["version"] = version
+                spec_path = pathlib.Path(self.tmpdir) / f"unsafe-{index}.json"
+                _write_json(spec_path, spec)
+                proc = subprocess.run(
+                    [
+                        sys.executable,
+                        str(self.project_dir / "scripts" / "generate-from-appspec.py"),
+                        "--spec", str(spec_path),
+                        "--out-dir", str(pathlib.Path(self.tmpdir) / "generated"),
+                    ],
+                    cwd=str(self.project_dir),
+                    text=True,
+                    capture_output=True,
+                )
+                self.assertNotEqual(proc.returncode, 0)
+                self.assertFalse(escaped_path.exists())
+
+    def test_generate_rejects_output_symlink_escape(self):
+        spec_path = pathlib.Path(self.tmpdir) / "symlink-appspec.json"
+        emit_proc = self._run_cli(
+            "--input", _sample("alist"),
+            "--emit-appspec", str(spec_path),
+            "--version", "latest",
+        )
+        self.assertEqual(emit_proc.returncode, 0, emit_proc.stderr)
+        out_dir = pathlib.Path(self.tmpdir) / "symlink-output"
+        outside = pathlib.Path(self.tmpdir) / "outside"
+        out_dir.mkdir()
+        outside.mkdir()
+        os.symlink(outside, out_dir / "alist")
+
+        proc = subprocess.run(
+            [
+                sys.executable,
+                str(self.project_dir / "scripts" / "generate-from-appspec.py"),
+                "--spec", str(spec_path),
+                "--out-dir", str(out_dir),
+            ],
+            cwd=str(self.project_dir),
+            text=True,
+            capture_output=True,
+        )
+
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertEqual(list(outside.iterdir()), [])
+
+    def test_generate_rejects_existing_output_file_symlink(self):
+        spec_path = pathlib.Path(self.tmpdir) / "file-symlink-appspec.json"
+        emit_proc = self._run_cli(
+            "--input", _sample("alist"),
+            "--emit-appspec", str(spec_path),
+            "--version", "latest",
+        )
+        self.assertEqual(emit_proc.returncode, 0, emit_proc.stderr)
+        out_dir = pathlib.Path(self.tmpdir) / "file-symlink-generated"
+        app_dir = out_dir / "alist"
+        outside = pathlib.Path(self.tmpdir) / "outside-generated-data.yml"
+        app_dir.mkdir(parents=True)
+        outside.write_text("sentinel\n", encoding="utf-8")
+        os.symlink(outside, app_dir / "data.yml")
+
+        proc = subprocess.run(
+            [
+                sys.executable,
+                str(self.project_dir / "scripts" / "generate-from-appspec.py"),
+                "--spec", str(spec_path),
+                "--out-dir", str(out_dir),
+            ],
+            cwd=str(self.project_dir),
+            text=True,
+            capture_output=True,
+        )
+
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertEqual(outside.read_text(encoding="utf-8"), "sentinel\n")
+
+    def test_generate_invalid_existing_evidence_leaves_no_partial_version(self):
+        source = pathlib.Path(self.tmpdir) / "generator-source"
+        shutil.copytree(_sample("alist"), source)
+        shutil.copytree(source / "latest", source / "3.42.0")
+        out_dir = pathlib.Path(self.tmpdir) / "generator-output"
+
+        for version in ("latest", "3.42.0"):
+            spec_path = pathlib.Path(self.tmpdir) / f"generator-{version}.json"
+            emit_proc = self._run_cli(
+                "--input", str(source),
+                "--emit-appspec", str(spec_path),
+                "--version", version,
+            )
+            self.assertEqual(emit_proc.returncode, 0, emit_proc.stderr)
+            if version == "latest":
+                first = subprocess.run(
+                    [
+                        sys.executable,
+                        str(self.project_dir / "scripts" / "generate-from-appspec.py"),
+                        "--spec", str(spec_path),
+                        "--out-dir", str(out_dir),
+                    ],
+                    cwd=str(self.project_dir),
+                    text=True,
+                    capture_output=True,
+                )
+                self.assertEqual(first.returncode, 0, first.stderr)
+                (out_dir / "alist" / "source-evidence.json").write_text("{", encoding="utf-8")
+            else:
+                second = subprocess.run(
+                    [
+                        sys.executable,
+                        str(self.project_dir / "scripts" / "generate-from-appspec.py"),
+                        "--spec", str(spec_path),
+                        "--out-dir", str(out_dir),
+                    ],
+                    cwd=str(self.project_dir),
+                    text=True,
+                    capture_output=True,
+                )
+                self.assertNotEqual(second.returncode, 0)
+
+        self.assertFalse((out_dir / "alist" / "3.42.0").exists())
 
     def test_generate_from_legacy_appspec_preserves_core_fields(self):
         spec_path = self.project_dir / "assets" / "sample-appspec.json"

@@ -31,9 +31,16 @@ except ImportError:
     raise SystemExit(1)
 
 from baota_import_lib import (
+    _assert_safe_output_targets,
+    _generated_output_targets,
     _i18n_map,
+    _is_safe_app_key,
+    _is_safe_version,
+    _load_existing_evidence,
+    _merge_baota_source_evidence,
     _normalize_form_field,
     _sanitize_env_suffix,
+    _resolve_child,
     _strip_internal_metadata,
     _write_default_readme,
     evaluate_baota_delivery_readiness,
@@ -157,11 +164,24 @@ class AppSpecGenerator:
 
     def __init__(self, spec: Dict[str, Any], out_dir: str, validate: bool = False):
         self.spec = _normalize_appspec(spec)
-        self.out_dir = pathlib.Path(out_dir)
         self.app_key = self.spec.get("appKey", "unknown")
         self.version = self.spec.get("version", "latest")
-        self.app_dir = self.out_dir / self.app_key
-        self.version_dir = self.app_dir / self.version
+        if not _is_safe_app_key(self.app_key):
+            raise ValueError(f"Unsafe app key: {self.app_key}")
+        if not _is_safe_version(self.version):
+            raise ValueError(f"Unsafe version directory name: {self.version}")
+        self.out_dir = pathlib.Path(out_dir).resolve()
+        raw_app_dir = self.out_dir / self.app_key
+        raw_version_dir = raw_app_dir / self.version
+        _assert_safe_output_targets(
+            self.out_dir,
+            _generated_output_targets(raw_app_dir, raw_version_dir),
+        )
+        self.app_dir = _resolve_child(self.out_dir, self.app_key)
+        self.version_dir = _resolve_child(self.app_dir, self.version)
+        self._existing_source_evidence = _load_existing_evidence(
+            self.app_dir / "source-evidence.json"
+        )
 
     def generate(self) -> str:
         """Generate the complete 1Panel v2 app directory. Returns output path."""
@@ -410,7 +430,11 @@ class AppSpecGenerator:
         if notes:
             evidence["migrationNotes"] = notes
 
-        with open(self.app_dir / "source-evidence.json", "w", encoding="utf-8") as fh:
+        evidence_path = self.app_dir / "source-evidence.json"
+        evidence = _merge_baota_source_evidence(
+            self._existing_source_evidence, evidence, self.version
+        )
+        with open(evidence_path, "w", encoding="utf-8") as fh:
             json.dump(evidence, fh, ensure_ascii=False, indent=2)
 
     # ── README.md ─────────────────────────────────────────────────────
@@ -591,9 +615,9 @@ def main() -> int:
         return finish(EXIT_FAILURE)
 
     # Generate
-    generator = AppSpecGenerator(spec, args.out_dir, args.validate)
     try:
         report["step"] = "generate"
+        generator = AppSpecGenerator(spec, args.out_dir, args.validate)
         output_path = generator.generate()
     except Exception as exc:
         report["error"] = f"Generation failed: {exc}"

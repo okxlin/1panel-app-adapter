@@ -357,13 +357,15 @@ Use this skill in one of three paths.
 
 ### Path C: import a Baota/aaPanel Docker Store app
 
-1. Confirm the input app directory follows the public `aaPanel/apphub` structure: `app.json`, `icon.png`, and a version directory containing `docker-compose.yml` and `.env`.
-2. Run `python3 scripts/import-baota-app.py --input <baota-app-dir> --out-dir <out-dir> --version latest --validate --require-validate`.
-3. For apphub-style batch input, run `python3 scripts/import-baota-app.py --input <apphub-dir> --batch --out-dir <out-dir> --validate --report <report.json>`.
-4. Review `source-evidence.json` and migration notes. Baota metadata alone is not proof that the upstream image, ports, volumes, or env semantics are official.
-5. For delivery candidates, run `docker compose --env-file <version>/.env.sample -f <version>/docker-compose.yml config` with a safe `CONTAINER_NAME` value, then run `bash scripts/validate-v2.sh --dir <app-dir> --strict-store`. Add `--source-evidence-mode required` only when the current workflow explicitly requires provenance evidence as a gate.
+Read and follow `references/baota-migration-workflow.md` before conversion. It separates live catalog/template retrieval from prepared-directory input and defines the complete gate order.
 
-Baota import rules are grounded in `references/baota-app-format.md` and `references/baota-to-1panel-mapping.md`. The public `aaPanel/apphub` template defines `HOST_IP`, `CPUS`, `MEMORY_LIMIT`, and `APP_PATH` as required `.env` variables, and aaPanel source creates/reuses `baota_net` before app installation. Imported artifacts convert those runtime assumptions into 1Panel conventions instead of preserving Baota-only variables.
+1. Freeze the source and store snapshots, remove duplicates, and safely prepare local app directories. The importer does not fetch catalog JSON or template archives.
+2. Run the full prepared input through `--precheck-only`; for a batch, combine it with `--batch` and require every direct child to appear in the report.
+3. Convert one explicitly selected version per invocation. Repeat for every packaged version; never infer newest-version order from Baota metadata.
+4. Treat output as `converted_candidate`. Independently verify official upstream sources, topology, every image/tag/architecture, security policy, and all manual-review reasons.
+5. Require strict-store plus strict i18n validation and real 1Panel v2 lifecycle evidence for every packaged runtime contract before delivery.
+
+Mapping details remain in `references/baota-app-format.md` and `references/baota-to-1panel-mapping.md`. Raw Baota metadata, successful conversion, and importer validation are never sufficient delivery evidence.
 
 The intended finish line for this skill is: generated, migrated, or imported output exists, root/version/compose structure is normalized, and `validate-v2.sh --strict-store` has been executed with its result recorded for follow-up decisions.
 

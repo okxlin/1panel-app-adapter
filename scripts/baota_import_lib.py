@@ -35,12 +35,14 @@ E_BAOTA_APP_JSON_MISSING = "E_BAOTA_APP_JSON_MISSING"
 E_BAOTA_APP_JSON_INVALID = "E_BAOTA_APP_JSON_INVALID"
 E_BAOTA_COMPOSE_INVALID = "E_BAOTA_COMPOSE_INVALID"
 E_BAOTA_COMPOSE_MISSING = "E_BAOTA_COMPOSE_MISSING"
+E_BAOTA_ENV_MISSING = "E_BAOTA_ENV_MISSING"
 E_BAOTA_ICON_MISSING = "E_BAOTA_ICON_MISSING"
 E_BAOTA_OUTPUT_PATH_INVALID = "E_BAOTA_OUTPUT_PATH_INVALID"
 E_BAOTA_VERSION_INVALID = "E_BAOTA_VERSION_INVALID"
 E_BAOTA_VERSION_DIR_MISSING = "E_BAOTA_VERSION_DIR_MISSING"
 E_BAOTA_VERSION_MISSING = "E_BAOTA_VERSION_MISSING"
 E_BAOTA_DISABLED = "E_BAOTA_DISABLED"
+E_BAOTA_EVIDENCE_INVALID = "E_BAOTA_EVIDENCE_INVALID"
 E_1PANEL_VALIDATION_MODE_REQUIRED = "E_1PANEL_VALIDATION_MODE_REQUIRED"
 
 APP_KEY_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,127}$")
@@ -105,6 +107,82 @@ def _resolve_child(root: pathlib.Path, *components: str) -> pathlib.Path:
     except ValueError as exc:
         raise ValueError(f"Path escapes root directory: {candidate}") from exc
     return candidate
+
+
+class BaotaEvidenceError(ValueError):
+    """Existing conversion evidence is malformed and cannot be merged safely."""
+
+
+def _load_existing_evidence(path: pathlib.Path) -> Dict[str, Any]:
+    if path.is_symlink():
+        raise BaotaEvidenceError(f"Existing source evidence must not be a symlink: {path}")
+    if not path.is_file():
+        return {}
+    try:
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        raise BaotaEvidenceError(f"Invalid existing source evidence at {path}: {exc}") from exc
+    if not isinstance(loaded, dict):
+        raise BaotaEvidenceError(f"Invalid existing source evidence at {path}: expected a JSON object")
+    return loaded
+
+
+def _version_sort_key(version: str) -> Tuple[int, str]:
+    return (0 if version == "latest" else 1, version)
+
+
+def _stable_versions(versions: List[str]) -> List[str]:
+    return sorted(
+        {version for version in versions if _is_safe_version(version)},
+        key=_version_sort_key,
+    )
+
+
+def _generated_output_targets(
+    app_dir: pathlib.Path,
+    version_dir: pathlib.Path,
+) -> List[pathlib.Path]:
+    scripts_dir = version_dir / "scripts"
+    return [
+        app_dir,
+        version_dir,
+        version_dir / "data",
+        scripts_dir,
+        app_dir / "data.yml",
+        app_dir / "README.md",
+        app_dir / "logo.png",
+        app_dir / "source-evidence.json",
+        version_dir / "data.yml",
+        version_dir / "docker-compose.yml",
+        version_dir / ".env.sample",
+        scripts_dir / "init.sh",
+        scripts_dir / "upgrade.sh",
+        scripts_dir / "uninstall.sh",
+    ]
+
+
+def _assert_safe_output_targets(
+    output_root: pathlib.Path,
+    targets: List[pathlib.Path],
+) -> None:
+    root = output_root.resolve()
+    for target in targets:
+        absolute = target.absolute()
+        try:
+            relative = absolute.relative_to(root)
+        except ValueError as exc:
+            raise ValueError(f"Output target escapes root directory: {target}") from exc
+
+        current = root
+        for component in relative.parts:
+            current = current / component
+            if current.is_symlink():
+                raise ValueError(f"Output target must not traverse a symlink: {current}")
+
+        try:
+            target.resolve().relative_to(root)
+        except ValueError as exc:
+            raise ValueError(f"Output target escapes root directory: {target}") from exc
 
 
 def _load_compose_document(compose_path: pathlib.Path) -> Dict[str, Any]:
@@ -208,6 +286,73 @@ def evaluate_baota_delivery_readiness(
         "status": "ready" if not blockers else "manual_review_required",
         "blockers": blockers,
     }
+
+
+def _merge_baota_source_evidence(
+    existing: Dict[str, Any],
+    current: Dict[str, Any],
+    version: str,
+) -> Dict[str, Any]:
+    merged = copy.deepcopy(current)
+    current_import = merged.get("importSource", {})
+    if not isinstance(current_import, dict) or current_import.get("type") != "baota":
+        return merged
+
+    existing_import = existing.get("importSource", {}) if isinstance(existing, dict) else {}
+    same_app = (
+        isinstance(existing_import, dict)
+        and existing_import.get("type") == "baota"
+        and existing_import.get("appName") == current_import.get("appName")
+    )
+    existing_source = (
+        existing_import.get("sourcePath"),
+        existing.get("repository"),
+        existing_import.get("declaredHome"),
+        existing_import.get("declaredHelp"),
+    )
+    current_source = (
+        current_import.get("sourcePath"),
+        current.get("repository"),
+        current_import.get("declaredHome"),
+        current_import.get("declaredHelp"),
+    )
+    same_source = same_app and any(current_source) and existing_source == current_source
+    versions: List[str] = []
+    if same_source:
+        prior_versions = existing_import.get("versions", [])
+        if isinstance(prior_versions, list):
+            versions.extend(item for item in prior_versions if _is_safe_version(item))
+        prior_selected = existing_import.get("version")
+        if _is_safe_version(prior_selected):
+            versions.append(prior_selected)
+    versions.append(version)
+    current_import["versions"] = _stable_versions(versions)
+    merged["importSource"] = current_import
+
+    version_evidence: Dict[str, Any] = {}
+    if same_app and isinstance(existing.get("versionEvidence"), dict):
+        version_evidence.update({
+            key: copy.deepcopy(value)
+            for key, value in existing["versionEvidence"].items()
+            if _is_safe_version(key) and isinstance(value, dict)
+        })
+    version_import = copy.deepcopy(current_import)
+    version_import.pop("versions", None)
+    version_import["version"] = version
+    version_evidence[version] = {
+        "repository": merged.get("repository", ""),
+        "dockerDocs": merged.get("dockerDocs", ""),
+        "composeFile": merged.get("composeFile", ""),
+        "evidenceStatus": merged.get("evidenceStatus", "third_party_only"),
+        "architectures": merged.get("architectures", ["amd64"]),
+        "architectureEvidence": merged.get("architectureEvidence", "unverified_default"),
+        "importSource": version_import,
+    }
+    merged["versionEvidence"] = {
+        key: version_evidence[key]
+        for key in sorted(version_evidence, key=_version_sort_key)
+    }
+    return merged
 
 
 def _normalize_git_remote_url(remote_url: str) -> str:
@@ -450,10 +595,12 @@ class BaotaPrecheck:
             "icon": input_path / "icon.png",
         }
         for label, fp in files.items():
-            exists = fp.is_file()
+            is_symlink = fp.is_symlink()
+            exists = fp.is_file() and not is_symlink
             report["files"][label] = {
                 "path": str(fp),
                 "present": exists,
+                "symlink": is_symlink,
             }
             if not exists:
                 code_map = {
@@ -462,7 +609,11 @@ class BaotaPrecheck:
                 }
                 report["errors"].append({
                     "code": code_map.get(label, E_BAOTA_REQUIRED_FILES),
-                    "message": f"Required file missing: {fp.name}",
+                    "message": (
+                        f"Required file must not be a symlink: {fp.name}"
+                        if is_symlink
+                        else f"Required file missing: {fp.name}"
+                    ),
                     "path": str(fp),
                 })
 
@@ -530,7 +681,23 @@ class BaotaPrecheck:
             return
         found_any = False
         for ver in versions:
-            version_dir = _resolve_child(input_path, ver)
+            raw_version_dir = input_path / ver
+            if raw_version_dir.is_symlink():
+                report["errors"].append({
+                    "code": E_BAOTA_VERSION_INVALID,
+                    "message": f"Version directory must not be a symlink: {ver}",
+                    "path": str(raw_version_dir),
+                })
+                continue
+            try:
+                version_dir = _resolve_child(input_path, ver)
+            except ValueError as exc:
+                report["errors"].append({
+                    "code": E_BAOTA_VERSION_INVALID,
+                    "message": str(exc),
+                    "path": str(raw_version_dir),
+                })
+                continue
             if not version_dir.is_dir():
                 report["warnings"].append({
                     "code": E_BAOTA_VERSION_DIR_MISSING,
@@ -540,10 +707,11 @@ class BaotaPrecheck:
                 continue
             found_any = True
             compose_file = version_dir / "docker-compose.yml"
-            compose_present = compose_file.is_file()
+            compose_present = compose_file.is_file() and not compose_file.is_symlink()
             report["files"][f"compose_{ver}"] = {
                 "path": str(compose_file),
                 "present": compose_present,
+                "symlink": compose_file.is_symlink(),
             }
             if not compose_present:
                 report["errors"].append({
@@ -552,6 +720,19 @@ class BaotaPrecheck:
                     "path": str(compose_file),
                 })
                 continue
+            env_file = version_dir / ".env"
+            env_present = env_file.is_file() and not env_file.is_symlink()
+            report["files"][f"env_{ver}"] = {
+                "path": str(env_file),
+                "present": env_present,
+                "symlink": env_file.is_symlink(),
+            }
+            if not env_present:
+                report["errors"].append({
+                    "code": E_BAOTA_ENV_MISSING,
+                    "message": f".env missing or is a symlink for version {ver}",
+                    "path": str(env_file),
+                })
             try:
                 _load_compose_document(compose_file)
             except (OSError, ValueError) as exc:
@@ -1024,6 +1205,7 @@ class BaotaToAppSpecMapper:
     ) -> Dict[str, Any]:
         """Build the complete AppSpec JSON."""
         appspec: Dict[str, Any] = {}
+        appspec["version"] = version
         self.map_metadata(app_json, appspec)
         self.map_app_type(app_json, appspec)
         self.map_source_evidence(app_json, appspec, input_dir, version)
@@ -1332,6 +1514,11 @@ class ImportRunner:
             "stage": "precheck",
             "candidateStatus": "blocked",
             "outputPath": "",
+            "declaredVersions": [],
+            "importableVersions": [],
+            "availableVersions": [],
+            "selectedVersion": None,
+            "packagedVersions": [],
             "errors": [],
             "warnings": [],
         }
@@ -1374,13 +1561,22 @@ class ImportRunner:
         app_name = app_json.get("appname", pathlib.Path(input_dir).name)
         result["app"] = app_name
 
-        versions = self.parser.list_versions(input_dir)
+        versions = _stable_versions(self.parser.list_versions(input_dir))
+        result["declaredVersions"] = versions
+        result["availableVersions"] = versions
+        input_path = pathlib.Path(input_dir)
+        result["importableVersions"] = [
+            item
+            for item in versions
+            if (_resolve_child(input_path, item) / "docker-compose.yml").is_file()
+        ]
         try:
             selected_version = self.parser.select_version(versions, version)
         except ValueError as exc:
             result["errors"].append({"code": E_BAOTA_VERSION_DIR_MISSING, "message": str(exc)})
             return result
         result["version"] = selected_version
+        result["selectedVersion"] = selected_version
 
         # 3. Transform compose
         try:
@@ -1396,11 +1592,16 @@ class ImportRunner:
         # 5. Write output
         try:
             output_path = self._write_output(appspec, compose_data, input_dir, out_dir, selected_version)
+        except BaotaEvidenceError as exc:
+            result["errors"].append({"code": E_BAOTA_EVIDENCE_INVALID, "message": str(exc)})
+            result["errorCode"] = E_BAOTA_EVIDENCE_INVALID
+            return result
         except (OSError, ValueError) as exc:
             result["errors"].append({"code": E_BAOTA_OUTPUT_PATH_INVALID, "message": str(exc)})
             result["errorCode"] = E_BAOTA_OUTPUT_PATH_INVALID
             return result
         result["outputPath"] = output_path
+        result["packagedVersions"] = self._list_packaged_versions(output_path, versions)
         result["success"] = True
         result["stage"] = "converted_candidate"
 
@@ -1496,8 +1697,16 @@ class ImportRunner:
             raise ValueError(f"Unsafe version directory name: {version}")
         output_root = pathlib.Path(out_dir).resolve()
         output_root.mkdir(parents=True, exist_ok=True)
+        raw_app_out = output_root / app_key
+        raw_ver_out = raw_app_out / version
+        _assert_safe_output_targets(
+            output_root,
+            _generated_output_targets(raw_app_out, raw_ver_out),
+        )
         app_out = _resolve_child(output_root, app_key)
         ver_out = _resolve_child(app_out, version)
+        evidence_path = app_out / "source-evidence.json"
+        existing_evidence = _load_existing_evidence(evidence_path)
         ver_out.mkdir(parents=True, exist_ok=True)
         (ver_out / "data").mkdir(parents=True, exist_ok=True)
 
@@ -1524,7 +1733,8 @@ class ImportRunner:
 
         # source-evidence.json
         evidence = self._build_source_evidence(appspec)
-        with open(app_out / "source-evidence.json", "w", encoding="utf-8") as fh:
+        evidence = _merge_baota_source_evidence(existing_evidence, evidence, version)
+        with open(evidence_path, "w", encoding="utf-8") as fh:
             json.dump(evidence, fh, ensure_ascii=False, indent=2)
 
         # Copy icon → logo.png
@@ -1593,6 +1803,37 @@ class ImportRunner:
             except OSError as exc:
                 errors.append(f"Invalid: compose/env validation failed: {exc}")
         return {"valid": not errors, "errors": errors, "failed": bool(errors)}
+
+    @staticmethod
+    def _list_packaged_versions(app_dir: str, declared_versions: List[str]) -> List[str]:
+        app_path = pathlib.Path(app_dir)
+        app_root = app_path.resolve()
+
+        def is_packaged(path: pathlib.Path) -> bool:
+            if path.is_symlink():
+                return False
+            try:
+                path.resolve().relative_to(app_root)
+            except ValueError:
+                return False
+            return path.is_dir() and (path / "docker-compose.yml").is_file()
+
+        declared = [
+            version
+            for version in _stable_versions(declared_versions)
+            if is_packaged(app_path / version)
+        ]
+        extras = sorted(
+            (
+                path.name
+                for path in app_path.iterdir()
+                if is_packaged(path)
+                and _is_safe_version(path.name)
+                and path.name not in declared
+            ),
+            key=_version_sort_key,
+        )
+        return [*declared, *extras]
 
     # ── data.yml builders ─────────────────────────────────────────────
 
