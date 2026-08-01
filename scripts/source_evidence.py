@@ -329,14 +329,14 @@ def validate_source_evidence(
         sha256 = logo_evidence.get("sha256")
         if not isinstance(source, str) or LOGO_SOURCE.fullmatch(source.strip()) is None:
             errors.append(
-                "logoEvidence.source must be an https URL or bundled:<repo-relative-path>"
+                "logoEvidence.source must be an https URL or bundled:<package-relative-path>"
             )
         elif source != source.strip():
             errors.append("logoEvidence.source must not contain surrounding whitespace")
         elif source.startswith("bundled:") and not _is_safe_package_path(
             source.removeprefix("bundled:")
         ):
-            errors.append("logoEvidence.source must use a safe bundled repo-relative path")
+            errors.append("logoEvidence.source must use a safe bundled package-relative path")
         if logo_license is not None and (
             not isinstance(logo_license, str) or not logo_license.strip()
         ):
@@ -423,7 +423,7 @@ def validate_source_evidence(
         elif source.startswith("bundled:") and not _is_safe_package_path(
             source.removeprefix("bundled:")
         ):
-            errors.append(f"{field}.source must use a safe bundled repo-relative path")
+            errors.append(f"{field}.source must use a safe bundled package-relative path")
         elif status == "verified" and source.startswith("unverified:"):
             errors.append(f"{field}.source must be verified when status is verified")
         license_value = asset.get("license")
@@ -478,6 +478,18 @@ def validate_source_evidence(
         asset_required = asset.get("requiredFiles", [])
         if isinstance(asset_required, list):
             required_paths.extend(item for item in asset_required if _is_safe_package_path(item))
+    if status == "verified" and (require_delivery or artifact_root is not None):
+        for index, asset in enumerate(assets):
+            if not isinstance(asset, dict):
+                continue
+            source = asset.get("source")
+            if isinstance(source, str) and source.startswith("bundled:"):
+                bundled_path = source.removeprefix("bundled:")
+                if bundled_path not in required_paths:
+                    errors.append(
+                        f"redistributionEvidence.assets[{index}].source bundled source "
+                        "must be a hash-bound required file"
+                    )
     if status == "verified":
         for required_path in dict.fromkeys(required_paths):
             if required_path not in material_paths:

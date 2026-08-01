@@ -137,6 +137,14 @@ class LifecycleSafetyReferenceTests(unittest.TestCase):
         self.assertIn("steady-state identity", self.text)
         self.assertIn("entrypoint", self.text)
 
+    def test_observed_owner_and_mode_are_not_reported_as_portable_guarantees(self) -> None:
+        for text in (self.text, self.skill_text):
+            with self.subTest(source=text[:32]):
+                self.assertIn("invoking UID/GID", text)
+                self.assertIn("umask", text)
+                self.assertIn("portable guarantee", text)
+                self.assertIn("explicitly enforces", text)
+
     def test_file_secret_and_url_contracts_are_explicit(self) -> None:
         for guard in (
             "exact source file",

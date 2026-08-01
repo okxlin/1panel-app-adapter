@@ -15,6 +15,81 @@ from source_evidence import validate_source_evidence
 
 
 class SourceEvidenceDeliveryTests(unittest.TestCase):
+    def test_verified_bundled_source_must_be_a_hash_bound_required_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            app_dir = pathlib.Path(tmp)
+            logo = app_dir / "logo.png"
+            logo.write_bytes(b"verified-logo")
+            logo_hash = hashlib.sha256(logo.read_bytes()).hexdigest()
+            payload = {
+                "licenseEvidence": {"spdx": "MIT"},
+                "logoEvidence": {
+                    "source": "bundled:assets/default-logo.svg",
+                    "license": "MIT",
+                    "sha256": logo_hash,
+                },
+                "redistributionEvidence": {
+                    "status": "verified",
+                    "requiredFiles": [],
+                    "materials": [],
+                    "assets": [{
+                        "path": "logo.png",
+                        "source": "bundled:assets/default-logo.svg",
+                        "license": "MIT",
+                        "sha256": logo_hash,
+                        "requiredFiles": [],
+                    }],
+                },
+            }
+
+            errors = validate_source_evidence(
+                payload,
+                require_urls=False,
+                artifact_root=app_dir,
+                require_delivery=True,
+            )
+
+        self.assertIn(
+            "redistributionEvidence.assets[0].source bundled source must be a hash-bound required file",
+            errors,
+        )
+
+    def test_unbound_bundled_source_blocks_delivery_readiness(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            app_dir = pathlib.Path(tmp)
+            logo = app_dir / "logo.png"
+            logo.write_bytes(b"verified-logo")
+            logo_hash = hashlib.sha256(logo.read_bytes()).hexdigest()
+            spec = {
+                "appKey": "demo",
+                "licenseEvidence": {"spdx": "MIT"},
+                "logoEvidence": {
+                    "source": "bundled:assets/default-logo.svg",
+                    "license": "MIT",
+                    "sha256": logo_hash,
+                },
+                "redistributionEvidence": {
+                    "status": "verified",
+                    "requiredFiles": [],
+                    "materials": [],
+                    "assets": [{
+                        "path": "logo.png",
+                        "source": "bundled:assets/default-logo.svg",
+                        "license": "MIT",
+                        "sha256": logo_hash,
+                        "requiredFiles": [],
+                    }],
+                },
+            }
+
+            delivery = evaluate_baota_delivery_readiness(spec, app_dir=app_dir)
+
+        self.assertFalse(delivery["ready"])
+        self.assertIn(
+            "invalid-redistribution-evidence",
+            {blocker["code"] for blocker in delivery["blockers"]},
+        )
+
     def test_required_delivery_rejects_placeholder_application_spdx(self) -> None:
         for spdx in ("unknown", "placeholder"):
             with self.subTest(spdx=spdx):
@@ -206,7 +281,8 @@ class SourceEvidenceDeliveryTests(unittest.TestCase):
             ),
             (
                 "bundled:../logo.png",
-                "redistributionEvidence.assets[0].source must use a safe bundled repo-relative path",
+                "redistributionEvidence.assets[0].source must use a safe bundled "
+                "package-relative path",
             ),
         ):
             with self.subTest(source=source):

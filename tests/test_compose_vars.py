@@ -144,6 +144,55 @@ class ComposeVariableTests(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         self.assertIn("compose_vars=5", proc.stdout)
 
+    def test_env_sample_closure_rejects_empty_container_name(self) -> None:
+        for empty_value in (
+            "",
+            "   ",
+            " # empty",
+            '""',
+            '"" # empty',
+            "''",
+            "'' # empty",
+        ):
+            with self.subTest(empty_value=empty_value), tempfile.TemporaryDirectory() as tmp:
+                app = self._write_app(
+                    pathlib.Path(tmp),
+                    [
+                        "PLAIN",
+                        "COLON_DEFAULT",
+                        "DASH_DEFAULT",
+                        "COLON_REQUIRED",
+                        "REQUIRED",
+                        "CONTAINER_NAME",
+                    ],
+                )
+                version = app / "latest"
+                compose = version / "docker-compose.yml"
+                compose.write_text(
+                    compose.read_text(encoding="utf-8").replace(
+                        "    image: example/sample:latest\n",
+                        "    image: example/sample:latest\n"
+                        "    container_name: ${CONTAINER_NAME}\n",
+                    ),
+                    encoding="utf-8",
+                )
+                env_sample = version / ".env.sample"
+                env_sample.write_text(
+                    env_sample.read_text(encoding="utf-8").replace(
+                        "CONTAINER_NAME=value", f"CONTAINER_NAME={empty_value}"
+                    ),
+                    encoding="utf-8",
+                )
+                proc = subprocess.run(
+                    ["bash", str(CLOSURE), str(app)],
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                )
+
+            self.assertNotEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+            self.assertIn("CONTAINER_NAME must be non-empty", proc.stdout)
+
     def test_env_sample_closure_reports_normalized_missing_name(self) -> None:
         names = ["PLAIN", "COLON_DEFAULT", "DASH_DEFAULT", "COLON_REQUIRED"]
         with tempfile.TemporaryDirectory() as tmp:

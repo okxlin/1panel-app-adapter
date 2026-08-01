@@ -9,10 +9,13 @@ import tempfile
 import unittest
 from unittest import mock
 
+import yaml
+
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 SCRIPTS_DIR = ROOT / "scripts"
 FINALIZE = SCRIPTS_DIR / "finalize_runtime_scripts.sh"
 GENERATE = SCRIPTS_DIR / "generate-from-appspec.py"
+GEN_ENV_SAMPLE = SCRIPTS_DIR / "gen_env_sample.py"
 RUNTIME_UTILS = SCRIPTS_DIR / "runtime_script_utils.py"
 SCAFFOLD = SCRIPTS_DIR / "scaffold-v2.sh"
 MIGRATE = SCRIPTS_DIR / "migrate-v1-to-v2.sh"
@@ -922,6 +925,50 @@ additionalProperties:
                 ver_dir / "scripts" / "uninstall.sh", ver_dir
             )
 
+    def test_env_sample_helper_replaces_legacy_container_name_form_field(self):
+        with tempfile.TemporaryDirectory(prefix="adapter-env-container-name-") as tmp:
+            version_dir = pathlib.Path(tmp) / "demo" / "1.0"
+            version_dir.mkdir(parents=True)
+            data_yml = version_dir / "data.yml"
+            data_yml.write_text(
+                "additionalProperties:\n"
+                "  formFields:\n"
+                "    - envKey: CONTAINER_NAME\n"
+                "      type: text\n"
+                "      required: false\n"
+                "      default: ''\n",
+                encoding="utf-8",
+            )
+            compose = version_dir / "docker-compose.yml"
+            compose.write_text(
+                "services:\n"
+                "  demo:\n"
+                "    image: example/demo:1.0\n"
+                "    container_name: ${CONTAINER_NAME}\n",
+                encoding="utf-8",
+            )
+            env_sample = version_dir / ".env.sample"
+
+            proc = subprocess.run(
+                [
+                    sys.executable,
+                    str(GEN_ENV_SAMPLE),
+                    str(data_yml),
+                    str(env_sample),
+                    str(compose),
+                    "demo-compose-check",
+                ],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+
+            self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+            self.assertEqual(
+                env_sample.read_text(encoding="utf-8").splitlines(),
+                ["CONTAINER_NAME=demo-compose-check"],
+            )
+
     def test_scaffold_delivers_licensed_default_logo_with_hash_bound_evidence(self):
         with tempfile.TemporaryDirectory(prefix="adapter-scaffold-logo-") as tmp:
             out_dir = pathlib.Path(tmp) / "out"
@@ -952,11 +999,19 @@ additionalProperties:
             app_dir = out_dir / "demo"
             logo = app_dir / "logo.png"
             notice = app_dir / "ASSET-LICENSES" / "default-logo.txt"
+            source = app_dir / "assets" / "default-logo.svg"
             evidence = json.loads(
                 (app_dir / "source-evidence.json").read_text(encoding="utf-8")
             )
 
             self.assertTrue(notice.is_file())
+            self.assertEqual(
+                source.read_bytes(), (ROOT / "assets" / "default-logo.svg").read_bytes()
+            )
+            self.assertIn(
+                "CONTAINER_NAME=demo-compose-check",
+                (app_dir / "1.0" / ".env.sample").read_text(encoding="utf-8"),
+            )
             self.assertEqual(evidence["logoEvidence"]["license"], "MIT")
             self.assertEqual(
                 evidence["logoEvidence"]["sha256"],
@@ -964,12 +1019,23 @@ additionalProperties:
             )
             self.assertEqual(evidence["redistributionEvidence"]["status"], "verified")
             self.assertEqual(
-                evidence["redistributionEvidence"]["requiredFiles"],
-                ["ASSET-LICENSES/default-logo.txt"],
+                set(evidence["redistributionEvidence"]["requiredFiles"]),
+                {
+                    "ASSET-LICENSES/default-logo.txt",
+                    "assets/default-logo.svg",
+                },
+            )
+            materials = {
+                item["path"]: item
+                for item in evidence["redistributionEvidence"]["materials"]
+            }
+            self.assertEqual(
+                materials["ASSET-LICENSES/default-logo.txt"]["sha256"],
+                hashlib.sha256(notice.read_bytes()).hexdigest(),
             )
             self.assertEqual(
-                evidence["redistributionEvidence"]["materials"][0]["sha256"],
-                hashlib.sha256(notice.read_bytes()).hexdigest(),
+                materials["assets/default-logo.svg"]["sha256"],
+                hashlib.sha256(source.read_bytes()).hexdigest(),
             )
 
     def test_scaffold_force_rejects_symlinked_default_logo_notice(self):
@@ -1065,24 +1131,120 @@ additionalProperties:
             app_dir = out_dir / "demo"
             logo = app_dir / "logo.png"
             notice = app_dir / "ASSET-LICENSES" / "default-logo.txt"
+            source = app_dir / "assets" / "default-logo.svg"
             evidence = json.loads(
                 (app_dir / "source-evidence.json").read_text(encoding="utf-8")
             )
             notice_exists = notice.is_file()
+            source_exists = source.is_file()
             delivered_logo_hash = hashlib.sha256(logo.read_bytes()).hexdigest()
             delivered_notice_hash = hashlib.sha256(notice.read_bytes()).hexdigest()
+            delivered_source_hash = hashlib.sha256(source.read_bytes()).hexdigest()
+            env_sample = (app_dir / "2.0" / ".env.sample").read_text(encoding="utf-8")
 
         self.assertTrue(notice_exists)
+        self.assertTrue(source_exists)
+        self.assertIn("CONTAINER_NAME=demo-compose-check", env_sample)
         redistribution = evidence["redistributionEvidence"]
         self.assertEqual(redistribution["status"], "verified")
         self.assertEqual(
             redistribution["assets"][0]["sha256"],
             delivered_logo_hash,
         )
+        material_hashes = {
+            item["path"]: item["sha256"] for item in redistribution["materials"]
+        }
         self.assertEqual(
-            redistribution["materials"][0]["sha256"],
-            delivered_notice_hash,
+            material_hashes["ASSET-LICENSES/default-logo.txt"], delivered_notice_hash
         )
+        self.assertEqual(
+            material_hashes["assets/default-logo.svg"], delivered_source_hash
+        )
+
+    def test_migration_removes_legacy_container_name_form_field(self):
+        with tempfile.TemporaryDirectory(prefix="adapter-migrate-container-name-") as tmp:
+            tmp_path = pathlib.Path(tmp)
+            source_root = tmp_path / "source"
+            subprocess.run(
+                [
+                    "bash",
+                    str(SCAFFOLD),
+                    "--app-key",
+                    "demo",
+                    "--title",
+                    "Demo",
+                    "--image",
+                    "example/demo:1.0",
+                    "--version",
+                    "1.0",
+                    "--out-dir",
+                    str(source_root),
+                    "--source-repository",
+                    "https://example.invalid/demo",
+                    "--source-docker-docs",
+                    "https://example.invalid/demo/docker",
+                    "--source-compose-file",
+                    "https://example.invalid/demo/compose.yml",
+                ],
+                check=True,
+                cwd=ROOT,
+            )
+            source_app = source_root / "demo"
+            source_version_data = source_app / "1.0" / "data.yml"
+            version_data = yaml.safe_load(
+                source_version_data.read_text(encoding="utf-8")
+            )
+            fields = version_data["additionalProperties"]["formFields"]
+            fields.append({
+                "default": "",
+                "edit": True,
+                "envKey": "CONTAINER_NAME",
+                "required": False,
+                "type": "text",
+            })
+            source_version_data.write_text(
+                yaml.safe_dump(version_data, allow_unicode=True, sort_keys=False),
+                encoding="utf-8",
+            )
+            out_dir = tmp_path / "out"
+
+            proc = subprocess.run(
+                [
+                    "bash",
+                    str(MIGRATE),
+                    "--src",
+                    str(source_app),
+                    "--out",
+                    str(out_dir),
+                    "--version",
+                    "1.0",
+                    "--target-version",
+                    "2.0",
+                ],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                cwd=ROOT,
+            )
+
+            self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+            delivered_version = out_dir / "demo" / "2.0"
+            delivered_data = yaml.safe_load(
+                (delivered_version / "data.yml").read_text(encoding="utf-8")
+            )
+            delivered_fields = delivered_data["additionalProperties"]["formFields"]
+            self.assertNotIn(
+                "CONTAINER_NAME",
+                {field.get("envKey") for field in delivered_fields},
+            )
+            container_lines = [
+                line
+                for line in (delivered_version / ".env.sample")
+                .read_text(encoding="utf-8")
+                .splitlines()
+                if line.startswith("CONTAINER_NAME=")
+            ]
+            self.assertEqual(container_lines, ["CONTAINER_NAME=demo-compose-check"])
 
     def test_migration_rejects_symlinked_default_logo_notice(self):
         with tempfile.TemporaryDirectory(prefix="adapter-migrate-logo-link-") as tmp:

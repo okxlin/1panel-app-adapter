@@ -70,4 +70,18 @@ if [[ ${#missing[@]} -gt 0 ]]; then
   exit 1
 fi
 
+if [[ -v "sample_lookup[CONTAINER_NAME]" ]]; then
+  container_name_value="$(sed -nE 's/^CONTAINER_NAME=(.*)$/\1/p' "$ENV_SAMPLE" | tail -1)"
+  container_name_value="${container_name_value#"${container_name_value%%[![:space:]]*}"}"
+  container_name_value="${container_name_value%"${container_name_value##*[![:space:]]}"}"
+  double_quoted_empty='^"[[:space:]]*"([[:space:]]+#.*)?$'
+  single_quoted_empty="^'[[:space:]]*'([[:space:]]+#.*)?$"
+  if [[ -z "$container_name_value" || "$container_name_value" == \#* \
+    || "$container_name_value" =~ $double_quoted_empty \
+    || "$container_name_value" =~ $single_quoted_empty ]]; then
+    echo "FAIL: CONTAINER_NAME must be non-empty in .env.sample"
+    exit 1
+  fi
+fi
+
 echo "PASS: .env.sample closure ok (compose_vars=${#vars_in_compose[@]}, sample_vars=${#vars_in_sample[@]})"

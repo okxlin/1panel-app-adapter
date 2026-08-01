@@ -67,12 +67,18 @@ only when their values were verified from official source, registry, license, or
 
 - `sourceRevision.tag` is the exact release tag; `sourceRevision.commit` is the full 40- or
   64-hex commit identifier resolved for that tag.
-- `imageEvidence.digest` is an immutable `sha256:` image digest. `imageEvidence.platforms`
-  records verified OCI platform strings and must not be inferred from the host running the test.
+- `imageEvidence.digest` is an immutable `sha256:` image digest. For a multi-platform tag, use the
+  OCI index digest here and record each platform child digest separately in the report.
+  `imageEvidence.platforms` records verified OCI platform strings and must not be inferred from the
+  host running the test. Use the same registry descriptor to build every platform-to-child-digest
+  association and require it to name both values. Never assign a platform child digest by list
+  position, current host architecture, or a separate registry query.
 - `licenseEvidence.spdx` records an SPDX expression when known; `licenseEvidence.url` links the
   exact upstream license evidence.
-- `logoEvidence.source` is an HTTPS source URL or `bundled:<repo-relative-path>` for a repository
-  asset. Record its license when known and the delivered PNG SHA-256 when calculated.
+- `logoEvidence.source` is an HTTPS source URL or `bundled:<package-relative-path>` for a bundled
+  asset. For verified delivery, ship a regular non-symlink file at that package path and include it
+  in the hash-bound required-material ledger. Record its license when known and the delivered PNG
+  SHA-256 when calculated.
 - `redistributionEvidence.status` is `verified` only after every listed asset license and required
   material is resolved. Keep it `unresolved` for imported or custom media without equivalent
   evidence. Use safe package-relative paths, list every required delivered file, and bind each
@@ -101,6 +107,8 @@ the neutral placeholder instead.
 The built-in neutral placeholder is project-authored at `assets/default-logo.svg`, licensed under
 the MIT text in `assets/default-logo.LICENSE.txt`, and rendered to `assets/default-logo.png` with
 SHA-256 `a8f604f27c3451536301f1a4ca7ac5ae8c479312a225c42c4dc0edda2a20bf76`.
+When selected, the generator delivers the SVG at `<app>/assets/default-logo.svg` and hash-binds it
+alongside the raster and MIT text so an artifact-only reviewer can reproduce the source claim.
 
 ## Public URL Inputs
 
