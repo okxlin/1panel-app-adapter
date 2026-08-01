@@ -61,6 +61,13 @@ only when their values were verified from official source, registry, license, or
 Omit unknown optional keys instead of writing placeholders such as `unknown`, `latest`, or a
 floating image tag.
 
+## License Delivery
+
+Record the exact version's application license in `licenseEvidence`. When the license has material
+use restrictions, also name it, link its official terms, and summarize the deployment-relevant
+restriction in the README, not only `source-evidence.json`. Do not invent an SPDX identifier or add
+an undocumented root-metadata key merely to duplicate that evidence.
+
 ## Public URL Inputs
 
 Treat callback, origin, external base, and other browser-facing public URLs as deployment inputs.
@@ -68,6 +75,18 @@ Never synthesize `localhost` or `127.0.0.1` for these fields: those values point
 client or container and usually break redirects, webhooks, CORS, or generated links. Expose an
 upstream-required public URL as a required 1Panel form field. Leave an optional public URL empty
 or omit it, and document which feature stays unavailable until the operator supplies one.
+
+Use one full public URL and the exact current upstream variable when the selected topology needs an
+external origin, callback, or webhook value. Do not reconstruct the external URL from separate
+host, protocol, or port fields unless version-matched official documentation proves that behavior
+equivalent. Deprecated aliases are not current upstream variables merely because the image still
+accepts them.
+
+Keep the external URL separate from the internal listener. For a reverse proxy, record the
+documented internal scheme and port, TLS termination boundary, forwarded-header requirements, and
+trusted-proxy or hop settings. Do not set the internal listener to HTTPS merely because the public
+URL is HTTPS; application-side HTTPS requires the application's source-backed certificate and key
+configuration.
 
 ## Anti-Guessing Rules
 
@@ -86,6 +105,27 @@ Before accepting an upstream compose topology with a bundled database or cache, 
 When an app is supposed to reuse a 1Panel-managed database service, do not stop at compose syntax or app install success. Verify with real panel evidence that the chosen dependency is actually exposed through `/apps/services/<db-key>` and the corresponding `databases` resource records. A local runtime app package may install cleanly yet still fail to register as a reusable database service for other apps.
 
 If details are unknown, keep defaults minimal and mark follow-up work outside generated artifacts.
+
+## Authoritative Deployment Control Inventory
+
+Before scaffolding or changing Compose, build an authoritative control inventory for the selected
+deployment topology and exact version. Read the official launch command or Compose file together
+with the published image configuration, Dockerfile, and entrypoint when they affect runtime
+behavior. Record all of these controls, including fixed values:
+
+- services, images, commands, entrypoints, and runtime users;
+- environment variables and their source-backed fixed values or required inputs;
+- healthchecks, startup ordering, and dependency conditions;
+- ports, networks, aliases, and isolation boundaries;
+- mount sources, targets, types, modes, propagation, and security options;
+- capabilities, privileged mode, devices, and host PID, IPC, or network namespaces.
+
+After editing, compare the final Compose control by control with the inventory. Preserve every
+source-backed control and justify every omission or change with an exact official source or
+target-platform incompatibility plus an equivalent replacement. Keep official fixed hardening
+values fixed in Compose; do not drop one merely because it does not need an install form field.
+When official examples conflict, identify the selected topology and explain which versioned source
+governs instead of silently combining examples.
 
 ## Registry Access Verification
 
