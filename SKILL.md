@@ -1,11 +1,11 @@
 ---
 name: 1panel-app-adapter
-description: Rule-first skill for generating, migrating, and validating 1Panel app artifacts in Linux and GitHub workflows.
+description: Adapt, generate, migrate, and validate 1Panel App Store (AppStore/appstore) packages from Docker Compose, AppSpec, and aaPanel/Baota sources. Use when users ask for a 1Panel app skill, 1Panel application adaptation, appstore packaging or submission preparation, v1-to-v2 migration, Docker Compose conversion, localized metadata, strict-store validation, or batch app adaptation on Linux and GitHub.
 ---
 
-# 1panel-app-adapter
+# 1Panel AppStore Adapter
 
-This skill is the public, cleaned-up variant of the local research skill. It is designed to generate and validate 1Panel app artifacts with increasingly complete defaults, without bundling evidence packs, replay logs, or third-party repository snapshots.
+Adapt Docker applications into reviewable 1Panel AppStore packages, then validate their structure, metadata, Compose configuration, localization, and upgrade behavior against source-backed rules.
 
 ## Applicability / Non-applicability
 
@@ -331,28 +331,6 @@ Use these checks when an app needs a wrapper command before delegating back to t
 - Treat database initialization assets as runtime-critical. In containerized 1Panel/Docker setups, a relative single-file bind such as `./schema.sql:/docker-entrypoint-initdb.d/schema.sql` can resolve against a path the Docker daemon cannot see and appear inside the container as a directory. Prefer an existing store-proven data-directory staging pattern, an image-contained asset, or another initialization path that does not depend on an unverified daemon-visible source path. Test the actual mounted file type and database tables on a clean data directory.
 - A healthy container and HTTP `200` do not prove a database-backed app is usable. Before delivery, verify an app-specific business-ready path on clean state: required tables/schema exist and a documented login works, or the official first-run setup page/API is reachable and requires no preparation unavailable to a panel user.
 
-## What this skill does
-
-- Scaffold a v2-style 1Panel app directory with richer default fields
-- Migrate an existing app directory into the v2 layout with basic quality backfill
-- Import Baota/aaPanel Docker Store app directories into 1Panel v2 layout
-- Patch root metadata, version metadata, and compose content
-- Generate `.env.sample`
-- Validate the resulting app directory
-
-## Supported commands
-
-- `bash scripts/scaffold-v2.sh --help`
-- `python3 scripts/generate-from-appspec.py --help`
-- `python3 scripts/generate-from-appspec.py --spec <spec.json> --validate`
-- `python3 scripts/generate-from-appspec.py --spec <spec.json> --validate --require-validate`
-- `python3 scripts/import-baota-app.py --help`
-- `python3 scripts/import-baota-app.py --input <baota-app-dir> --validate`
-- `python3 scripts/import-baota-app.py --input <apphub-dir> --batch --validate`
-- `bash scripts/migrate-v1-to-v2.sh --help`
-- `bash scripts/finalize_runtime_scripts.sh --help`
-- `bash scripts/validate-v2.sh --help`
-
 ## Recommended execution flow
 
 Use this skill in one of three paths.
@@ -360,7 +338,7 @@ Use this skill in one of three paths.
 ### Path A: generate a new 1Panel app
 
 1. Run `bash scripts/scaffold-v2.sh ...` to create the v2 app skeleton.
-   - include `--source-repository --source-docker-docs --source-compose-file` when you want the scaffold to write optional provenance evidence.
+   - provide the required `--source-repository`, `--source-docker-docs`, and `--source-compose-file` URLs from authoritative sources.
 2. Review the generated `data.yml`, version `data.yml`, and `docker-compose.yml` (including default tag, TZ, optional healthcheck, and dependency/env fields when applicable).
 3. Review `<app>/source-evidence.json` if it is present; remove it before final appstore delivery when the target repository does not keep process evidence.
 4. If needed, run `bash scripts/finalize_runtime_scripts.sh <app-dir> <version-dir>` to ensure lifecycle scripts exist.
@@ -389,62 +367,6 @@ Baota import rules are grounded in `references/baota-app-format.md` and `referen
 
 The intended finish line for this skill is: generated, migrated, or imported output exists, root/version/compose structure is normalized, and `validate-v2.sh --strict-store` has been executed with its result recorded for follow-up decisions.
 
-## Supported scaffold arguments
-
-- Required: `--app-key --title --image --version --source-repository --source-docker-docs --source-compose-file`
-- Optional: `--out-dir --port --target-port --type --tag --website --document --github --volumes --timezone --with-panel-deps --with-panel-db-redis`
-
-## Common Commands
-
-> Constraint: Any "1Panel-importable application artifact" must be placed under `<out-dir>/<app-key>/...`. Scaffold defaults to `./1panel-apps`.
-
-```bash
-# Generate joplin 3.5.13 (auto-tagged)
-bash scripts/scaffold-v2.sh \
-  --app-key joplin \
-  --title "Joplin Server" \
-  --image linuxserver/joplin \
-  --version 3.5.13 \
-  --out-dir examples \
-  --port 22300 \
-  --target-port 3001 \
-  --source-repository https://github.com/laurent22/joplin \
-  --source-docker-docs https://hub.docker.com/r/linuxserver/joplin \
-  --source-compose-file https://raw.githubusercontent.com/linuxserver/docker-joplin/master/docker-compose.yml
-
-# Override tag manually
-bash scripts/scaffold-v2.sh \
-  --app-key vaultwarden \
-  --title "Vaultwarden" \
-  --image vaultwarden/server \
-  --version 1.33.2 \
-  --out-dir examples \
-  --port 28080 \
-  --target-port 80 \
-  --tag Security \
-  --source-repository https://github.com/dani-garcia/vaultwarden \
-  --source-docker-docs https://hub.docker.com/r/vaultwarden/server \
-  --source-compose-file https://raw.githubusercontent.com/dani-garcia/vaultwarden/main/docker-compose.yml
-
-# Baseline validation
-bash scripts/validate-v2.sh --dir examples/joplin
-
-# Strict store validation
-bash scripts/validate-v2.sh --dir examples/joplin --strict-store
-
-# Validate one release in a multi-version app directory
-bash scripts/validate-v2.sh --dir examples/joplin --version latest --strict-store
-
-# Provenance-gated validation, only for workflows that require source evidence
-bash scripts/validate-v2.sh --dir examples/joplin --source-evidence-mode required
-
-# Generate from spec
-python3 scripts/generate-from-appspec.py --spec assets/sample-appspec.json
-
-# Normalize logo (180x180, transparent background, compress to <=10KB)
-bash scripts/normalize-logo.sh examples/joplin/logo.png
-```
-
 ## i18n Translation Quality Check Switch
 
 To avoid "format compliant but translation lazy", `validate-v2.sh` adds configurable translation quality check:
@@ -471,40 +393,6 @@ Default strategy:
 
 **Placeholder translation policy**: `scaffold-v2.sh` generates 8-language `description` using the app title as placeholder. This is intentional — the scaffold provides a valid structure, and users should replace placeholders with real translations before submission. The i18n check flags these as warnings (not errors) to remind users to complete translations.
 
-## Auto Tag Rules (`scaffold-v2.sh`)
-
-Determination order:
-
-1. If `--tag` passed: directly use (manual override).
-2. Otherwise, by `--type` give default tag:
-   - `tool` -> `Tool`
-   - `website` -> `Website`
-   - `middleware` -> `Middleware`
-3. Then by image name/keywords refine (hit overrides default):
-   - `mysql/postgres/redis/mongo/...` -> `Database`
-   - `nginx/caddy/apache/openresty/...` -> `Server`
-   - `ollama/open-webui/llm/...` -> `AI`
-   - `prometheus/grafana/zabbix/...` -> `DevOps`
-   - `vault/wazuh/fail2ban/...` -> `Security`
-4. Final fallback: `Tool`.
-
-Final tag must pass allowed set validation; not in whitelist will directly fail exit.
-
-## Common Applications → Expected Tags (Examples)
-
-| Application/Image Keywords | Expected Tag |
-|---|---|
-| mysql / mariadb / postgres / redis / mongo | `Database` |
-| nginx / caddy / apache / openresty | `Server` |
-| ollama / open-webui / llm / comfyui | `AI` |
-| prometheus / grafana / zabbix / loki | `DevOps` |
-| vault / wazuh / fail2ban / crowdsec | `Security` |
-| jellyfin / plex / emby / navidrome | `Media` |
-| minio / nextcloud / seafile / alist | `Storage` |
-| Unmatched / generic tool applications | `Tool` |
-
-> Note: If `--tag` passed, always use manual value, but still must pass whitelist validation.
-
 ## Output Contract
 
 Delivery should at least clarify:
@@ -517,7 +405,7 @@ Delivery should at least clarify:
 ## Notes
 
 - Always use `1panel` naming (don't write `onepanel`).
-- Rules come from evidence packages; unverified assumptions should not be elevated to MUST.
+- Rules must be backed by authoritative sources; unverified assumptions should not be elevated to MUST.
 - Submission workflow baseline reference official wiki:
   https://github.com/1Panel-dev/appstore/wiki/%E5%A6%82%E4%BD%95%E6%8F%90%E4%BA%A4%E8%87%AA%E5%B7%B1%E6%83%B3%E8%A6%81%E7%9A%84%E5%BA%94%E7%94%A8
 - `data.yml` tags must come from observed store set (`1Panel-dev/appstore@dev/apps`).
@@ -607,15 +495,3 @@ The scaffold command produces a directory in this shape:
 ```bash
 bash scripts/test-env-sample-closure.sh <v2-app-dir>
 ```
-
-## Public packaging rules
-
-- Target platform is Linux with `bash` and `python3`
-- Python-based scripts require the `PyYAML` package
-- Text files should use LF line endings for GitHub and Linux compatibility
-- `container_name` should use `${CONTAINER_NAME}`
-- `normalize-logo.sh` requires ImageMagick tools (`convert`, `identify`) and a GNU-compatible `stat`
-- Public docs should distinguish hard runtime rules from repository conventions
-- source evidence is optional provenance material; validate it with `--source-evidence-mode required` only when the workflow explicitly requires it
-- compose `${VAR}` usage should close against version formFields envKey declarations, except explicit implicit env key whitelist
-- The skill package should not include evidence packs, replay reports, or embedded repository snapshots

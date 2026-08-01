@@ -1,0 +1,4 @@
+interface:
+  display_name: "1Panel AppStore Adapter"
+  short_description: "Build and validate 1Panel AppStore packages"
+  default_prompt: "Use $1panel-app-adapter to adapt this Docker application into a validated 1Panel AppStore package."
