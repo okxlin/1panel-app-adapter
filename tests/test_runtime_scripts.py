@@ -2018,6 +2018,13 @@ additionalProperties:
                     "digest": "sha256:" + "b" * 64,
                     "platforms": ["linux/amd64"],
                 },
+                "images": [{
+                    "version": "latest",
+                    "service": "demo",
+                    "reference": "ghcr.io/example/demo@sha256:" + "b" * 64,
+                    "digest": "sha256:" + "b" * 64,
+                    "platforms": ["linux/amd64"],
+                }],
                 "licenseEvidence": {
                     "spdx": "MIT",
                     "url": "https://example.com/LICENSE",

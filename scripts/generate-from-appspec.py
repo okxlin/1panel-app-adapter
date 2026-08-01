@@ -119,6 +119,7 @@ def _normalize_appspec(raw_spec: Dict[str, Any]) -> Dict[str, Any]:
         for field in (
             "sourceRevision",
             "imageEvidence",
+            "images",
             "licenseEvidence",
             "logoEvidence",
             "redistributionEvidence",
@@ -455,6 +456,9 @@ class AppSpecGenerator:
             value = self.spec.get(field)
             if isinstance(value, dict) and value:
                 evidence[field] = value
+        images = self.spec.get("images")
+        if isinstance(images, list) and images:
+            evidence["images"] = images
 
         import_source = self.spec.get("importSource")
         if import_source:

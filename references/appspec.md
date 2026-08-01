@@ -28,14 +28,17 @@ Provide a stable `spec -> artifacts` path with explicit source evidence and repr
 - `timezone` string (defaults to `Asia/Shanghai`, wired to `TZ` default in generated version `data.yml`)
 - `outputDir` string
 - `sourceEvidence.sourceRevision` object with optional exact `tag` and full `commit`
-- `sourceEvidence.imageEvidence` object with optional immutable `digest` and verified `platforms`
+- `sourceEvidence.imageEvidence` legacy single-service object with optional immutable `digest` and verified `platforms`
+- `sourceEvidence.images` array with one object per Compose image: exact version-directory
+  `version`, `service`, resolved `reference`, matching registry `digest`, and optional verified
+  `platforms`
 - `sourceEvidence.licenseEvidence` object with optional `spdx` and `url`
 - `sourceEvidence.logoEvidence` object with required `source` when present and optional `license` / `sha256`
 - `sourceEvidence.redistributionEvidence` object with `status`, package-relative `requiredFiles`,
   hash-bound `materials`, and an `assets` ledger containing delivered path, source, license,
   SHA-256, and asset-specific required files
 
-The optional provenance objects are copied into `source-evidence.json` after validation. A selected
+The optional provenance objects and `images` array are copied into `source-evidence.json` after validation. A selected
 built-in fallback replaces only the `logo.png` ledger entry with the fallback's actual source,
 license, delivered hash, and license material; application-level redistribution requirements and
 materials are preserved. These objects do not replace the three mandatory source URLs.
