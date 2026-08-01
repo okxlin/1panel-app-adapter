@@ -116,6 +116,30 @@ class SkillRoutingTests(unittest.TestCase):
             with self.subTest(gate=gate):
                 self.assertIn(gate, router)
 
+    def test_new_app_route_stops_before_scaffolding_unsuitable_topologies(self) -> None:
+        router = self.skill[self.start : self.rule_priority]
+        route = next(line for line in router.splitlines() if line.startswith("1. "))
+        for requirement in (
+            "preflight decision before scaffolding",
+            "platform_stack_terminal",
+            "specialized_conditional",
+        ):
+            with self.subTest(requirement=requirement):
+                self.assertIn(requirement, route)
+
+    def test_completion_gates_front_load_low_model_quality_guards(self) -> None:
+        router = self.skill[self.start : self.rule_priority]
+        for guard in (
+            "minimal install form",
+            "Never `source` or `eval`",
+            "every Compose service",
+            "exact delivered artifact",
+            "license",
+            "English fields",
+        ):
+            with self.subTest(guard=guard):
+                self.assertIn(guard, router)
+
 
 if __name__ == "__main__":
     unittest.main()
