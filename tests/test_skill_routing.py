@@ -304,6 +304,11 @@ class SkillRoutingTests(unittest.TestCase):
         flat_router = " ".join(router.split())
         for guard in (
             "authoritative control inventory",
+            "startup configuration contract",
+            "official install examples",
+            "configuration reference",
+            "startup source",
+            "required value",
             "environment variables",
             "healthchecks",
             "capabilities",
@@ -349,6 +354,30 @@ class SkillRoutingTests(unittest.TestCase):
         ):
             with self.subTest(weakened_rule=weakened_rule):
                 self.assertNotIn(weakened_rule.casefold(), flat_router.casefold())
+
+    def test_completion_gates_require_startup_configuration_closure(self) -> None:
+        router = self.skill[self.start : self.rule_priority]
+        flat_router = " ".join(router.split())
+        for invariant in (
+            "every available exact-version authority",
+            "record unavailable authorities",
+            "source or exact-image/runtime evidence",
+            "required, startup-fatal, stability-bearing, or coupled",
+            "selected or default-dependent optional",
+            "official Compose",
+            "final Compose",
+            "`data.yml`",
+            "`.env.sample`",
+            "source-backed lifecycle logic",
+            "`required: true`",
+            "`paramComplexity`",
+            "application-specific validation contract",
+            "before Compose starts",
+            "successful Compose render",
+            "application startup",
+        ):
+            with self.subTest(invariant=invariant):
+                self.assertIn(invariant, flat_router)
 
 
 if __name__ == "__main__":

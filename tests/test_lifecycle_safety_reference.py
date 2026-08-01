@@ -14,6 +14,10 @@ class LifecycleSafetyReferenceTests(unittest.TestCase):
         cls.skill_text = SKILL.read_text(encoding="utf-8")
         cls.flat_text = " ".join(cls.text.split())
         cls.flat_skill_text = " ".join(cls.skill_text.split())
+        startup_start = cls.text.index("## 1. Build the startup configuration contract first")
+        startup_end = cls.text.index("## 2. Build the path and mount ledger")
+        cls.startup_text = cls.text[startup_start:startup_end]
+        cls.flat_startup_text = " ".join(cls.startup_text.split())
 
     def test_requires_a_mount_and_lifecycle_ledger(self) -> None:
         for field in (
@@ -158,6 +162,48 @@ class LifecycleSafetyReferenceTests(unittest.TestCase):
         ):
             with self.subTest(guard=guard):
                 self.assertIn(guard.casefold(), self.text.casefold())
+
+    def test_required_startup_configuration_has_a_fail_closed_contract(self) -> None:
+        for guard in (
+            "startup configuration contract",
+            "every available exact-version authority",
+            "record unavailable authorities",
+            "source or exact-image/runtime evidence",
+            "official install examples",
+            "configuration reference",
+            "entrypoint",
+            "startup source",
+            "required, startup-fatal, stability-bearing, or coupled",
+            "selected or default-dependent optional",
+            "required or optional",
+            "empty is allowed",
+            "default",
+            "consumer",
+            "validation rule",
+            "stable across restarts and upgrades",
+            "final Compose",
+            "`data.yml`",
+            "`.env.sample`",
+            "lifecycle logic",
+            "`required: true`",
+            "`paramComplexity`",
+            "application-specific validation",
+            "before Compose starts",
+            "blocks delivery",
+        ):
+            with self.subTest(guard=guard):
+                self.assertIn(guard.casefold(), self.flat_startup_text.casefold())
+
+        for invariant in (
+            "one reviewed source of truth",
+            "every required artifact layer",
+            "Do not treat the selected official Compose as exhaustive",
+            "successful Compose render",
+            "application accepts its startup configuration",
+            "unresolved input blocks delivery",
+        ):
+            with self.subTest(invariant=invariant):
+                self.assertIn(invariant, self.flat_startup_text)
 
     def test_custom_path_scripts_preserve_generated_confinement(self) -> None:
         self.assertIn("Do not replace the generated confinement", self.text)
