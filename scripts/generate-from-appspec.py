@@ -46,7 +46,7 @@ from baota_import_lib import (
     evaluate_baota_delivery_readiness,
     run_strict_store_validation,
 )
-from runtime_script_utils import collect_runtime_path_fields, write_init_script
+from runtime_script_utils import UNINSTALL_SCRIPT, collect_runtime_path_fields, write_init_script
 from source_evidence import load_source_evidence, validate_source_evidence
 
 EXIT_SUCCESS = 0
@@ -480,7 +480,7 @@ class AppSpecGenerator:
         scripts_dir.mkdir(parents=True, exist_ok=True)
         scripts = {
             "upgrade.sh": "#!/bin/bash\nset -e\n",
-            "uninstall.sh": "#!/bin/bash\nset -e\ndocker-compose down --volumes\n",
+            "uninstall.sh": UNINSTALL_SCRIPT,
         }
         write_init_script(self.version_dir / "data.yml", scripts_dir / "init.sh")
         for name, content in scripts.items():

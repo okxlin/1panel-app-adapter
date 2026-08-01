@@ -169,8 +169,12 @@ fi
 
 if [[ ! -f "$VER_DIR/scripts/uninstall.sh" ]]; then
   cat > "$VER_DIR/scripts/uninstall.sh" <<'SH'
-#!/bin/bash
-docker-compose down --volumes
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+cd "$ROOT_DIR"
+docker-compose down
 SH
   chmod +x "$VER_DIR/scripts/uninstall.sh"
 fi

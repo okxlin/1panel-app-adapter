@@ -223,10 +223,13 @@ Key points for adaptation:
 >       - zeroclaw-data:/zeroclaw-data
 >     ```
 >   - When upstream explicitly uses a host path, preserve its bind semantics and mount options. Keep an official operator-edited path fixed and package-local; add an `APP_DATA_DIR_*` form only when users actually need a selectable host path.
-> - **Uninstall script**: Adaptation artifact's `<version>/scripts/uninstall.sh` needs to support cleanup volumes; minimal implementation can use:
+> - **Uninstall script**: Anchor Compose to the version directory instead of relying on the caller's working directory. Preserve bind-mounted data and persistent named volumes by default. Use `--volumes` only after the mount ledger proves every affected named volume is package-owned, disposable, and approved for deletion. Minimal safe default:
 >   ```bash
->   #!/bin/bash
->   docker-compose down --volumes
+>   #!/usr/bin/env bash
+>   set -euo pipefail
+>   ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+>   cd "$ROOT_DIR"
+>   docker-compose down
 >   ```
 
 ## Multi-Service Compose Hint Mechanism (Hint Only, No Auto-Modification)

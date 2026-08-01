@@ -13,6 +13,7 @@ SCRIPTS_DIR = ROOT / "scripts"
 FINALIZE = SCRIPTS_DIR / "finalize_runtime_scripts.sh"
 GENERATE = SCRIPTS_DIR / "generate-from-appspec.py"
 RUNTIME_UTILS = SCRIPTS_DIR / "runtime_script_utils.py"
+SCAFFOLD = SCRIPTS_DIR / "scaffold-v2.sh"
 
 
 def load_module(path: pathlib.Path, name: str):
@@ -28,6 +29,42 @@ runtime_utils = load_module(RUNTIME_UTILS, "runtime_script_utils_test")
 
 
 class RuntimeScriptGenerationTest(unittest.TestCase):
+    def assert_uninstall_runs_from_version_dir(
+        self, uninstall_script: pathlib.Path, version_dir: pathlib.Path
+    ) -> None:
+        capture_dir = version_dir.parent / "capture"
+        fake_bin = version_dir.parent / "fake-bin"
+        unrelated_cwd = version_dir.parent / "unrelated"
+        capture_dir.mkdir()
+        fake_bin.mkdir()
+        unrelated_cwd.mkdir()
+        fake_compose = fake_bin / "docker-compose"
+        fake_compose.write_text(
+            "#!/bin/sh\n"
+            "printf '%s\\n' \"$PWD\" > \"$CAPTURE_DIR/pwd\"\n"
+            "printf '%s\\n' \"$*\" > \"$CAPTURE_DIR/args\"\n",
+            encoding="utf-8",
+        )
+        fake_compose.chmod(0o755)
+        env = os.environ.copy()
+        env["CAPTURE_DIR"] = str(capture_dir)
+        env["PATH"] = f"{fake_bin}:{env['PATH']}"
+
+        subprocess.run(
+            ["bash", str(uninstall_script)],
+            check=True,
+            cwd=unrelated_cwd,
+            env=env,
+        )
+
+        self.assertEqual(
+            (capture_dir / "pwd").read_text(encoding="utf-8").strip(),
+            str(version_dir.resolve()),
+        )
+        self.assertEqual(
+            (capture_dir / "args").read_text(encoding="utf-8").strip(), "down"
+        )
+
     def test_collect_runtime_paths_rejects_unsafe_defaults(self):
         for default in (
             "/srv/demo",
@@ -831,6 +868,57 @@ additionalProperties:
             )
 
             self.assertNotIn("exit 7", init_script.read_text(encoding="utf-8"))
+
+    def test_finalize_lifecycle_generates_context_bound_non_destructive_uninstall(self):
+        with tempfile.TemporaryDirectory(prefix="adapter-finalize-uninstall-") as tmp:
+            ver_dir = pathlib.Path(tmp) / "demo" / "latest"
+            scripts_dir = ver_dir / "scripts"
+            scripts_dir.mkdir(parents=True)
+            data_yml = ver_dir / "data.yml"
+            data_yml.write_text(
+                "additionalProperties:\n  formFields: []\n", encoding="utf-8"
+            )
+
+            runtime_utils.finalize_lifecycle_scripts(
+                data_yml, scripts_dir / "init.sh"
+            )
+
+            self.assert_uninstall_runs_from_version_dir(
+                scripts_dir / "uninstall.sh", ver_dir
+            )
+
+    def test_scaffold_generates_context_bound_non_destructive_uninstall(self):
+        with tempfile.TemporaryDirectory(prefix="adapter-scaffold-uninstall-") as tmp:
+            out_dir = pathlib.Path(tmp) / "out"
+            subprocess.run(
+                [
+                    "bash",
+                    str(SCAFFOLD),
+                    "--app-key",
+                    "demo",
+                    "--title",
+                    "Demo",
+                    "--image",
+                    "example/demo:1.0",
+                    "--version",
+                    "1.0",
+                    "--out-dir",
+                    str(out_dir),
+                    "--source-repository",
+                    "https://example.invalid/demo",
+                    "--source-docker-docs",
+                    "https://example.invalid/demo/docker",
+                    "--source-compose-file",
+                    "https://example.invalid/demo/compose.yml",
+                ],
+                check=True,
+                cwd=ROOT,
+            )
+            ver_dir = out_dir / "demo" / "1.0"
+
+            self.assert_uninstall_runs_from_version_dir(
+                ver_dir / "scripts" / "uninstall.sh", ver_dir
+            )
 
     def test_finalize_runtime_scripts_rejects_symlinked_scripts_directory(self):
         with tempfile.TemporaryDirectory() as tmp:

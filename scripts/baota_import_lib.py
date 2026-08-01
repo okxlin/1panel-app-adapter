@@ -26,7 +26,7 @@ except ImportError:
     )
     raise SystemExit(1)
 
-from runtime_script_utils import render_init_script_content
+from runtime_script_utils import UNINSTALL_SCRIPT, render_init_script_content
 
 # ── Error Codes ───────────────────────────────────────────────────────
 E_BAOTA_REQUIRED_FILES = "E_BAOTA_REQUIRED_FILES"
@@ -475,7 +475,7 @@ def _write_default_runtime_files(app_out: pathlib.Path, ver_out: pathlib.Path, v
     scripts = {
         "init.sh": render_init_script_content(version_data or {}),
         "upgrade.sh": "#!/bin/bash\nset -e\n",
-        "uninstall.sh": "#!/bin/bash\nset -e\ndocker-compose down --volumes\n",
+        "uninstall.sh": UNINSTALL_SCRIPT,
     }
     for name, content in scripts.items():
         path = scripts_dir / name

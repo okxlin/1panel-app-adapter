@@ -579,7 +579,13 @@ def _validate_scripts_anchor(version_fd: int, scripts_fd: int) -> None:
 
 
 UPGRADE_SCRIPT = "#!/usr/bin/env bash\nset -euo pipefail\nexit 0\n"
-UNINSTALL_SCRIPT = "#!/bin/bash\ndocker-compose down --volumes\n"
+UNINSTALL_SCRIPT = """#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+cd "$ROOT_DIR"
+docker-compose down
+"""
 
 
 def write_init_script(
