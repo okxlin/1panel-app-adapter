@@ -129,6 +129,52 @@ def parse_directory_permissions(
     return permissions
 
 
+def parse_fixed_directory_permissions(
+    specs: Iterable[str],
+) -> dict[str, dict[str, str]]:
+    permissions: dict[str, dict[str, str]] = {}
+    for spec in specs:
+        source, separator, value = spec.partition("=")
+        parts = value.split(":") if separator else []
+        if len(parts) != 3:
+            raise ValueError(
+                "fixed directory owner must use ./DIRECTORY=UID:GID:MODE, for example "
+                "./config=472:0:0750"
+            )
+        _validate_package_local_default("fixed directory", source)
+        source_path = PurePosixPath(source)
+        if len(source_path.parts) != 1:
+            raise ValueError(
+                "fixed directory owner must reference a direct child of the version root"
+            )
+        normalized_source = f"./{source_path.parts[0]}"
+        if normalized_source in permissions:
+            raise ValueError(
+                f"duplicate fixed directory owner for source: {normalized_source}"
+            )
+
+        uid, gid, mode = parts
+        if not re.fullmatch(r"0|[1-9][0-9]*", uid) or int(uid) > MAX_LINUX_ID:
+            raise ValueError(f"directory owner UID must be a valid Linux ID: {uid!r}")
+        if not re.fullmatch(r"0|[1-9][0-9]*", gid) or int(gid) > MAX_LINUX_ID:
+            raise ValueError(f"directory owner GID must be a valid Linux ID: {gid!r}")
+        if not re.fullmatch(r"0?[0-7]{3}", mode):
+            raise ValueError(
+                f"directory mode must be three or four octal digits: {mode!r}"
+            )
+        normalized_mode = f"{int(mode, 8):04o}"
+        if int(normalized_mode, 8) & 0o700 != 0o700:
+            raise ValueError(
+                f"directory mode must grant its source-backed owner read/write/execute: {mode!r}"
+            )
+        permissions[normalized_source] = {
+            "uid": uid,
+            "gid": gid,
+            "mode": normalized_mode,
+        }
+    return permissions
+
+
 def _shell_double_quote(value: str) -> str:
     return (
         value.replace("\\", "\\\\")
@@ -141,9 +187,11 @@ def _shell_double_quote(value: str) -> str:
 def render_init_script_content(
     version_data: dict[str, Any],
     directory_permissions: dict[str, dict[str, str]] | None = None,
+    fixed_directory_permissions: dict[str, dict[str, str]] | None = None,
 ) -> str:
     path_fields = collect_runtime_path_fields(version_data)
     directory_permissions = directory_permissions or {}
+    fixed_directory_permissions = fixed_directory_permissions or {}
     unknown_permissions = set(directory_permissions) - {
         field["envKey"] for field in path_fields
     }
@@ -152,6 +200,25 @@ def render_init_script_content(
             "directory permissions reference unknown path fields: "
             + ", ".join(sorted(unknown_permissions))
         )
+    ownership_sources: dict[str, str] = {}
+    for field in path_fields:
+        env_key = field["envKey"]
+        if env_key not in directory_permissions:
+            continue
+        source = f"./{PurePosixPath(field['default'])}"
+        if source in ownership_sources:
+            raise ValueError(
+                f"duplicate directory ownership target: {source} "
+                f"({ownership_sources[source]} and {env_key})"
+            )
+        ownership_sources[source] = env_key
+    for source in fixed_directory_permissions:
+        if source in ownership_sources:
+            raise ValueError(
+                f"duplicate directory ownership target: {source} "
+                f"({ownership_sources[source]} and fixed directory)"
+            )
+        ownership_sources[source] = "fixed directory"
     lines = [
         "#!/usr/bin/env bash",
         "set -euo pipefail",
@@ -161,7 +228,7 @@ def render_init_script_content(
         'ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"',
         'ENV_FILE="${ENV_FILE:-$ROOT_DIR/.env}"',
     ]
-    if not path_fields:
+    if not path_fields and not fixed_directory_permissions:
         lines.extend(
             [
                 "",
@@ -274,18 +341,47 @@ def render_init_script_content(
             "",
         ]
     )
-    if directory_permissions:
+    if directory_permissions or fixed_directory_permissions:
         lines.extend(
             [
-                "ensure_owned_dir() {",
+                "declare -A OWNED_PATHS=()",
+                "declare -A OWNED_KEYS_BY_PATH=()",
+                "",
+                "register_owned_dir() {",
+                '  local key="$1"',
+                '  local raw="$2"',
+                "  local path previous_key",
+                '  path="$(resolve_direct_child "$key" "$raw")"',
+                '  if [[ -n "${OWNED_KEYS_BY_PATH[$path]+x}" ]]; then',
+                '    previous_key="${OWNED_KEYS_BY_PATH[$path]}"',
+                '    echo "duplicate directory ownership target: $path ($previous_key and $key)" >&2',
+                "    return 1",
+                "  fi",
+                '  OWNED_KEYS_BY_PATH["$path"]="$key"',
+                '  OWNED_PATHS["$key"]="$path"',
+                "}",
+                "",
+                "register_configured_owned_dir() {",
                 '  local key="$1"',
                 '  local default_value="$2"',
-                '  local uid="$3"',
-                '  local gid="$4"',
-                '  local mode="$5"',
-                "  local raw path actual expected_mode",
+                '  local raw',
                 '  raw="$(configured_value "$key" "$default_value")"',
-                '  path="$(resolve_direct_child "$key" "$raw")"',
+                '  register_owned_dir "$key" "$raw"',
+                "}",
+                "",
+                "register_fixed_owned_dir() {",
+                '  local source="$1"',
+                '  register_owned_dir "fixed directory $source" "$source"',
+                "}",
+                "",
+                "apply_owned_dir() {",
+                '  local key="$1"',
+                '  local uid="$2"',
+                '  local gid="$3"',
+                '  local mode="$4"',
+                "  local path actual expected_mode",
+                '  [[ -n "${OWNED_PATHS[$key]+x}" ]] || { echo "missing directory ownership preflight: $key" >&2; return 1; }',
+                '  path="${OWNED_PATHS[$key]}"',
                 "  verify_trusted_root_chain",
                 '  if [[ -e "$path" || -L "$path" ]]; then',
                 '    [[ -d "$path" && ! -L "$path" ]] || { echo "unsafe ${key} path" >&2; return 1; }',
@@ -300,8 +396,28 @@ def render_init_script_content(
                 '  [[ "$actual" == "$uid:$gid:$expected_mode" ]] || { echo "${key} ownership/mode mismatch: expected ${uid}:${gid}:${expected_mode}, got ${actual}" >&2; return 1; }',
                 "}",
                 "",
+                "ensure_owned_dir() {",
+                '  local key="$1"',
+                '  local default_value="$2"',
+                '  [[ -n "$default_value" ]] || { echo "missing directory ownership default: $key" >&2; return 1; }',
+                '  apply_owned_dir "$key" "$3" "$4" "$5"',
+                "}",
+                "",
+                "ensure_fixed_owned_dir() {",
+                '  local source="$1"',
+                '  apply_owned_dir "fixed directory $source" "$2" "$3" "$4"',
+                "}",
+                "",
             ]
         )
+    for field in path_fields:
+        env_key = _shell_double_quote(field["envKey"])
+        default = _shell_double_quote(field["default"])
+        if field["envKey"] in directory_permissions:
+            lines.append(f'register_configured_owned_dir "{env_key}" "{default}"')
+    for source in fixed_directory_permissions:
+        escaped_source = _shell_double_quote(source)
+        lines.append(f'register_fixed_owned_dir "{escaped_source}"')
     for field in path_fields:
         env_key = _shell_double_quote(field["envKey"])
         default = _shell_double_quote(field["default"])
@@ -313,6 +429,12 @@ def render_init_script_content(
             )
         else:
             lines.append(f'ensure_dir "{env_key}" "{default}"')
+    for source, permission in fixed_directory_permissions.items():
+        escaped_source = _shell_double_quote(source)
+        lines.append(
+            f'ensure_fixed_owned_dir "{escaped_source}" '
+            f'"{permission["uid"]}" "{permission["gid"]}" "{permission["mode"]}"'
+        )
     return "\n".join(lines) + "\n"
 
 
@@ -461,7 +583,10 @@ UNINSTALL_SCRIPT = "#!/bin/bash\ndocker-compose down --volumes\n"
 
 
 def write_init_script(
-    version_data_path: Path, out_path: Path, directory_owner_specs: Iterable[str] = ()
+    version_data_path: Path,
+    out_path: Path,
+    directory_owner_specs: Iterable[str] = (),
+    fixed_directory_owner_specs: Iterable[str] = (),
 ) -> None:
     version_dir = _absolute_lexical_path(version_data_path).parent
     expected_out = version_dir / "scripts" / "init.sh"
@@ -473,8 +598,13 @@ def write_init_script(
         version_data = _load_version_data_at(version_fd)
         path_fields = collect_runtime_path_fields(version_data)
         permissions = parse_directory_permissions(directory_owner_specs, path_fields)
+        fixed_permissions = parse_fixed_directory_permissions(
+            fixed_directory_owner_specs
+        )
         content = render_init_script_content(
-            version_data, directory_permissions=permissions
+            version_data,
+            directory_permissions=permissions,
+            fixed_directory_permissions=fixed_permissions,
         )
         scripts_fd = _open_scripts_directory(version_fd)
         try:
@@ -493,8 +623,10 @@ def finalize_lifecycle_scripts(
     out_path: Path,
     directory_owner_specs: Iterable[str] = (),
     replace_init: bool = False,
+    fixed_directory_owner_specs: Iterable[str] = (),
 ) -> None:
     owner_specs = tuple(directory_owner_specs)
+    fixed_owner_specs = tuple(fixed_directory_owner_specs)
     version_dir = _absolute_lexical_path(version_data_path).parent
     expected_out = version_dir / "scripts" / "init.sh"
     if _absolute_lexical_path(out_path) != expected_out:
@@ -505,13 +637,16 @@ def finalize_lifecycle_scripts(
         version_data = _load_version_data_at(version_fd)
         path_fields = collect_runtime_path_fields(version_data)
         permissions = parse_directory_permissions(owner_specs, path_fields)
+        fixed_permissions = parse_fixed_directory_permissions(fixed_owner_specs)
         content = render_init_script_content(
-            version_data, directory_permissions=permissions
+            version_data,
+            directory_permissions=permissions,
+            fixed_directory_permissions=fixed_permissions,
         )
         scripts_fd = _open_scripts_directory(version_fd)
         try:
             init_exists = _existing_regular_file(scripts_fd, "init.sh")
-            if owner_specs and init_exists and not replace_init:
+            if (owner_specs or fixed_owner_specs) and init_exists and not replace_init:
                 raise ValueError(
                     "init.sh already exists; review it, then add --replace-init to "
                     "regenerate it with the explicit owner plan"
@@ -545,6 +680,13 @@ def main(argv: list[str]) -> int:
         help="apply source-backed ownership and mode to one exact confined directory",
     )
     parser.add_argument(
+        "--fixed-dir-owner",
+        action="append",
+        default=[],
+        metavar="./DIRECTORY=UID:GID:MODE",
+        help="apply ownership and mode to a fixed package-local direct-child bind",
+    )
+    parser.add_argument(
         "--finalize-lifecycle",
         action="store_true",
         help="atomically add all missing lifecycle scripts",
@@ -563,6 +705,7 @@ def main(argv: list[str]) -> int:
                 Path(args.version_data),
                 Path(args.out_init),
                 directory_owner_specs=args.dir_owner,
+                fixed_directory_owner_specs=args.fixed_dir_owner,
                 replace_init=args.replace_init,
             )
         else:
@@ -570,6 +713,7 @@ def main(argv: list[str]) -> int:
                 Path(args.version_data),
                 Path(args.out_init),
                 directory_owner_specs=args.dir_owner,
+                fixed_directory_owner_specs=args.fixed_dir_owner,
             )
     except (OSError, ValueError, yaml.YAMLError) as exc:
         parser.error(str(exc))

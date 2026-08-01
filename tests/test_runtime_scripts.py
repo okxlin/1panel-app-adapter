@@ -296,6 +296,174 @@ class RuntimeScriptGenerationTest(unittest.TestCase):
                 path_fields,
             )
 
+    def test_fixed_directory_ownership_specs_are_package_local_direct_children(self):
+        permissions = runtime_utils.parse_fixed_directory_permissions(
+            [f"./config={os.getuid()}:{os.getgid()}:0750"]
+        )
+
+        self.assertEqual(
+            permissions,
+            {
+                "./config": {
+                    "uid": str(os.getuid()),
+                    "gid": str(os.getgid()),
+                    "mode": "0750",
+                }
+            },
+        )
+
+        for value in (
+            "/config=472:0:0750",
+            "../config=472:0:0750",
+            "./config/nested=472:0:0750",
+            "./config=unknown:0:0750",
+            "./config=472:0:0550",
+        ):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                runtime_utils.parse_fixed_directory_permissions([value])
+
+    def test_rendered_init_applies_fixed_bind_owner_without_form_field(self):
+        fixed_permissions = runtime_utils.parse_fixed_directory_permissions(
+            [f"./config={os.getuid()}:{os.getgid()}:0750"]
+        )
+
+        content = runtime_utils.render_init_script_content(
+            {"additionalProperties": {"formFields": []}},
+            fixed_directory_permissions=fixed_permissions,
+        )
+
+        self.assertIn(
+            f'ensure_fixed_owned_dir "./config" "{os.getuid()}" "{os.getgid()}" "0750"',
+            content,
+        )
+        self.assertNotIn('configured_value "./config"', content)
+
+        if os.geteuid() != 0:
+            self.skipTest("ownership mutation requires root")
+
+        with tempfile.TemporaryDirectory(prefix="adapter-fixed-owned-", dir="/opt") as tmp:
+            root = pathlib.Path(tmp) / "app" / "latest"
+            scripts_dir = root / "scripts"
+            scripts_dir.mkdir(parents=True)
+            init_script = scripts_dir / "init.sh"
+            init_script.write_text(content, encoding="utf-8")
+            init_script.chmod(0o755)
+
+            subprocess.run(["bash", str(init_script)], check=True, cwd=tmp)
+
+            config_dir = root / "config"
+            info = config_dir.stat()
+            self.assertEqual(info.st_uid, os.getuid())
+            self.assertEqual(info.st_gid, os.getgid())
+            self.assertEqual(info.st_mode & 0o777, 0o750)
+
+    def test_fixed_and_form_backed_owner_plans_cannot_target_same_directory(self):
+        version_data = {
+            "additionalProperties": {
+                "formFields": [
+                    {"envKey": "APP_CONFIG_DIR", "default": "./config"},
+                ]
+            }
+        }
+        path_fields = runtime_utils.collect_runtime_path_fields(version_data)
+        directory_permissions = runtime_utils.parse_directory_permissions(
+            ["APP_CONFIG_DIR=472:0:0750"], path_fields
+        )
+        fixed_directory_permissions = runtime_utils.parse_fixed_directory_permissions(
+            ["./config=977:977:0700"]
+        )
+
+        with self.assertRaisesRegex(ValueError, "duplicate directory ownership target"):
+            runtime_utils.render_init_script_content(
+                version_data,
+                directory_permissions=directory_permissions,
+                fixed_directory_permissions=fixed_directory_permissions,
+            )
+
+    def test_runtime_form_and_fixed_owner_targets_cannot_converge(self):
+        version_data = {
+            "additionalProperties": {
+                "formFields": [
+                    {"envKey": "APP_DATA_DIR", "default": "./data"},
+                ]
+            }
+        }
+        path_fields = runtime_utils.collect_runtime_path_fields(version_data)
+        directory_permissions = runtime_utils.parse_directory_permissions(
+            ["APP_DATA_DIR=472:0:0750"], path_fields
+        )
+        fixed_directory_permissions = runtime_utils.parse_fixed_directory_permissions(
+            ["./config=977:977:0700"]
+        )
+        content = runtime_utils.render_init_script_content(
+            version_data,
+            directory_permissions=directory_permissions,
+            fixed_directory_permissions=fixed_directory_permissions,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp) / "app" / "latest"
+            scripts_dir = root / "scripts"
+            scripts_dir.mkdir(parents=True)
+            (root / ".env").write_text("APP_DATA_DIR=./config\n", encoding="utf-8")
+            init_script = scripts_dir / "init.sh"
+            init_script.write_text(content, encoding="utf-8")
+            init_script.chmod(0o755)
+
+            proc = subprocess.run(
+                ["bash", str(init_script)],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                cwd=tmp,
+            )
+
+            self.assertNotEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+            self.assertIn("duplicate directory ownership target", proc.stderr)
+            self.assertFalse((root / "config").exists())
+
+    def test_runtime_form_owner_targets_cannot_converge(self):
+        version_data = {
+            "additionalProperties": {
+                "formFields": [
+                    {"envKey": "APP_DATA_DIR", "default": "./data"},
+                    {"envKey": "APP_CACHE_DIR", "default": "./cache"},
+                ]
+            }
+        }
+        path_fields = runtime_utils.collect_runtime_path_fields(version_data)
+        directory_permissions = runtime_utils.parse_directory_permissions(
+            ["APP_DATA_DIR=472:0:0750", "APP_CACHE_DIR=977:977:0700"],
+            path_fields,
+        )
+        content = runtime_utils.render_init_script_content(
+            version_data,
+            directory_permissions=directory_permissions,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp) / "app" / "latest"
+            scripts_dir = root / "scripts"
+            scripts_dir.mkdir(parents=True)
+            (root / ".env").write_text(
+                "APP_DATA_DIR=./shared\nAPP_CACHE_DIR=./shared\n", encoding="utf-8"
+            )
+            init_script = scripts_dir / "init.sh"
+            init_script.write_text(content, encoding="utf-8")
+            init_script.chmod(0o755)
+
+            proc = subprocess.run(
+                ["bash", str(init_script)],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                cwd=tmp,
+            )
+
+            self.assertNotEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+            self.assertIn("duplicate directory ownership target", proc.stderr)
+            self.assertFalse((root / "shared").exists())
+
     def test_owned_directory_rejects_symlink_before_permission_change(self):
         version_data = {
             "additionalProperties": {
@@ -615,6 +783,54 @@ additionalProperties:
                 f'ensure_owned_dir "APP_DATA_DIR" "./data" "{os.getuid()}" "{os.getgid()}" "0750"',
                 init_text,
             )
+
+    def test_finalize_runtime_scripts_supports_fixed_bind_owner_without_form_field(self):
+        with tempfile.TemporaryDirectory(prefix="adapter-fixed-cli-") as tmp:
+            app_dir = pathlib.Path(tmp) / "demo"
+            ver_dir = app_dir / "latest"
+            ver_dir.mkdir(parents=True)
+            (ver_dir / "data.yml").write_text(
+                "additionalProperties:\n  formFields: []\n", encoding="utf-8"
+            )
+
+            subprocess.run(
+                [
+                    "bash",
+                    str(FINALIZE),
+                    str(app_dir),
+                    str(ver_dir),
+                    "--fixed-dir-owner",
+                    f"./config={os.getuid()}:{os.getgid()}:0750",
+                ],
+                check=True,
+                cwd=ROOT,
+            )
+
+            init_text = (ver_dir / "scripts" / "init.sh").read_text(
+                encoding="utf-8"
+            )
+            self.assertIn(
+                f'ensure_fixed_owned_dir "./config" "{os.getuid()}" "{os.getgid()}" "0750"',
+                init_text,
+            )
+
+    def test_finalize_lifecycle_preserves_positional_replace_init_argument(self):
+        with tempfile.TemporaryDirectory(prefix="adapter-positional-finalize-") as tmp:
+            ver_dir = pathlib.Path(tmp) / "latest"
+            scripts_dir = ver_dir / "scripts"
+            scripts_dir.mkdir(parents=True)
+            data_yml = ver_dir / "data.yml"
+            data_yml.write_text(
+                "additionalProperties:\n  formFields: []\n", encoding="utf-8"
+            )
+            init_script = scripts_dir / "init.sh"
+            init_script.write_text("#!/bin/sh\nexit 7\n", encoding="utf-8")
+
+            runtime_utils.finalize_lifecycle_scripts(
+                data_yml, init_script, (), True
+            )
+
+            self.assertNotIn("exit 7", init_script.read_text(encoding="utf-8"))
 
     def test_finalize_runtime_scripts_rejects_symlinked_scripts_directory(self):
         with tempfile.TemporaryDirectory() as tmp:

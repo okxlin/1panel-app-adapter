@@ -5,10 +5,11 @@ APP_DIR="${1:-}"
 VER_DIR="${2:-}"
 REPLACE_INIT=0
 DIR_OWNER_ARGS=()
+FIXED_DIR_OWNER_ARGS=()
 SCRIPTS_DIR="$VER_DIR/scripts"
 
 usage() {
-  echo "usage: finalize_runtime_scripts.sh <app-dir> <version-dir> [--dir-owner ENV_KEY=UID:GID:MODE] [--replace-init]"
+  echo "usage: finalize_runtime_scripts.sh <app-dir> <version-dir> [--dir-owner ENV_KEY=UID:GID:MODE] [--fixed-dir-owner ./DIRECTORY=UID:GID:MODE] [--replace-init]"
 }
 
 if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
@@ -27,6 +28,11 @@ while [[ $# -gt 0 ]]; do
     --dir-owner)
       [[ $# -ge 2 ]] || { echo "FAIL: --dir-owner requires ENV_KEY=UID:GID:MODE" >&2; exit 2; }
       DIR_OWNER_ARGS+=("--dir-owner" "$2")
+      shift 2
+      ;;
+    --fixed-dir-owner)
+      [[ $# -ge 2 ]] || { echo "FAIL: --fixed-dir-owner requires ./DIRECTORY=UID:GID:MODE" >&2; exit 2; }
+      FIXED_DIR_OWNER_ARGS+=("--fixed-dir-owner" "$2")
       shift 2
       ;;
     --replace-init)
@@ -70,6 +76,7 @@ python_args=(
   "$SCRIPTS_DIR/init.sh"
   --finalize-lifecycle
   "${DIR_OWNER_ARGS[@]}"
+  "${FIXED_DIR_OWNER_ARGS[@]}"
 )
 if [[ "$REPLACE_INIT" -eq 1 ]]; then
   python_args+=(--replace-init)
