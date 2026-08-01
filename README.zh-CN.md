@@ -109,9 +109,13 @@ bash scripts/migrate-v1-to-v2.sh \
 
 ```bash
 bash scripts/finalize_runtime_scripts.sh <app-dir> <version-dir>
+
+# 从精确镜像证明非 root 可写挂载的数字身份后：
+bash scripts/finalize_runtime_scripts.sh <app-dir> <version-dir> \
+  --dir-owner APP_DATA_DIR=<uid>:<gid>:0750 --replace-init
 ```
 
-该命令会补齐缺失的 `init.sh`、`upgrade.sh` 和 `uninstall.sh`，并使用基于应用根目录的路径处理方式。
+该命令会补齐缺失的 `init.sh`、`upgrade.sh` 和 `uninstall.sh`，并使用基于应用根目录的路径处理方式。`--dir-owner` 只有在显式给出 `--replace-init` 后才会重新生成 `init.sh`，并仅对可信版本目录的直接子目录做非递归权限设置；执行时必须是 root。不要根据应用名称猜测 UID/GID，也不要把某个镜像的示例值复用于其他镜像。
 
 ### 校验应用包
 
