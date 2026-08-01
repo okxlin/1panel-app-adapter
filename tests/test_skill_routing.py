@@ -226,6 +226,8 @@ class SkillRoutingTests(unittest.TestCase):
         for guard in (
             "companion deployment repository",
             "exact commit",
+            "deployment-shape census",
+            "sibling official shape",
             "actual include",
             "alternative template",
             "moving default branch",

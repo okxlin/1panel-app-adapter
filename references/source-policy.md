@@ -44,6 +44,11 @@ at a moving default branch, and record how the companion revision relates to the
 release. A same-organization repository or current `main` checkout is official provenance, but it
 is not automatically version-compatible evidence.
 
+Build the deployment-shape census from the companion repository's pinned README, install guides,
+and referenced sample roots before choosing a profile. A sibling official shape is not an
+unselected implementation detail: trace it far enough to record its service graph, lifecycle, and
+reason for selection or rejection.
+
 Trace the selected root Compose, launcher, or sample through its actual include and template chain.
 Base service, image, dependency, or database-version claims on the files the selected root really
 loads. Treat an alternative template that merely exists in the repository as an unselected

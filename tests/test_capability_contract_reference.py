@@ -101,6 +101,31 @@ class CapabilityContractReferenceTests(unittest.TestCase):
                 self.assertIn(guard.casefold(), self.flat_topology)
                 self.assertIn(guard.casefold(), self.flat_skill)
 
+    def test_preflight_census_covers_every_official_deployment_root(self) -> None:
+        for guard in (
+            "deployment-shape census",
+            "official install guides",
+            "every referenced sample or compose root",
+            "selected or rejected",
+            "include/template chain",
+            "before assigning any route",
+        ):
+            with self.subTest(guard=guard):
+                self.assertIn(guard.casefold(), self.flat_topology)
+                self.assertIn(guard.casefold(), self.flat_skill)
+
+    def test_terminal_route_does_not_skip_published_image_inspection(self) -> None:
+        for guard in (
+            "terminal route does not waive",
+            "oci manifest",
+            "oci config",
+            "base, bootstrap, or runtime images",
+            "record the unavailable registry fact",
+        ):
+            with self.subTest(guard=guard):
+                self.assertIn(guard.casefold(), self.flat_topology)
+                self.assertIn(guard.casefold(), self.flat_skill)
+
 
 if __name__ == "__main__":
     unittest.main()
