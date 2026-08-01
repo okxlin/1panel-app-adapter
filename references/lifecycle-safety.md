@@ -4,17 +4,62 @@ Apply this contract to every generated, migrated, imported, updated, or reviewed
 
 ## Contents
 
-1. Build the path and mount ledger first
-2. Prove the runtime identity
-3. Confine every host path
-4. Bound ownership and permission changes
-5. Distinguish file binds from directory binds
-6. Generate and preserve secrets correctly
-7. Preserve lifecycle behavior
-8. Keep topology gates terminal
-9. Complete the delivery checklist
+1. Build the startup configuration contract first
+2. Build the path and mount ledger
+3. Prove the runtime identity
+4. Confine every host path
+5. Bound ownership and permission changes
+6. Distinguish file binds from directory binds
+7. Generate and preserve secrets correctly
+8. Preserve lifecycle behavior
+9. Keep topology gates terminal
+10. Complete the delivery checklist
 
-## 1. Build the path and mount ledger first
+## 1. Build the startup configuration contract first
+
+Do not treat the selected official Compose as exhaustive. At the exact target version, inspect
+every available exact-version authority among the official install examples, configuration
+reference, image environment/defaults, entrypoint, and startup source before scaffolding or
+approving an existing artifact. Record unavailable authorities; no single source type is mandatory
+when it does not exist or is not published. Search the available authorities for required settings
+and startup failure paths, including values absent from the example Compose. Prove the consumer and
+startup behavior from source or exact-image/runtime evidence. Missing consumer or startup proof,
+or an unresolved conflict between available authorities, blocks delivery.
+
+Record one row for every required, startup-fatal, stability-bearing, or coupled input for the
+selected topology. Include a selected or default-dependent optional input only when the selected
+topology uses it or its effective default changes startup or usability:
+
+| Required field | Record |
+| --- | --- |
+| key or input | The exact environment variable, flag, file, or generated value consumed by the application. |
+| evidence | The exact-version official install, configuration, image, entrypoint, or startup source location. |
+| requirement | Whether it is required or optional, when empty is allowed, and which default applies at which layer. |
+| consumer | The service and startup stage that reads the value. |
+| validation rule | Every length, alphabet, encoding, path, enum, coupling, or fatal startup check. |
+| secret handling | Whether it is secret, who generates it, and how its real value stays out of samples and reports. |
+| stability | Whether it must remain stable across restarts and upgrades, and which state preserves it. |
+| delivery mapping | Its final Compose, `data.yml`, `.env.sample`, packaged file, or lifecycle logic location. |
+
+For each required value, establish one reviewed source of truth and project it through every
+required artifact layer. A required value absent from an upstream sample Compose is still required.
+If 1Panel or a lifecycle step generates it, prove the generated value satisfies the application
+validation rule and is persisted when stability is required. Use an explicit non-secret placeholder
+in `.env.sample` that satisfies static format checks without presenting it as a production secret.
+
+`required: true` or a generic `paramComplexity` rule does not prove application-specific validation.
+For user-provided values, use a source-backed panel rule only when it enforces the complete upstream
+contract; otherwise add reviewed generation or validation that rejects invalid input before Compose
+starts. If the target package cannot enforce a required format before application startup, the
+unresolved input blocks delivery.
+
+Trace each delivered value to its actual consumer and startup validation. When official examples
+and startup enforcement disagree, follow the exact-version startup enforcement and record the
+conflict. A successful Compose render proves interpolation and structure, not that the application
+accepts its startup configuration. A missing, guessed, invalid, or silently rotating required
+value blocks delivery even when schema, environment-closure, and Compose checks pass.
+
+## 2. Build the path and mount ledger
 
 Record one row for every bind mount and named volume before writing lifecycle scripts:
 
@@ -48,7 +93,7 @@ authoritative bind to a named volume merely because direct host access appears u
 lifecycle seems equivalent. Apply the same target-platform incompatibility and equivalent-replacement
 gate before changing the mount mechanism.
 
-## 2. Prove the runtime identity
+## 3. Prove the runtime identity
 
 - Record startup identity separately from steady-state identity. Determine the startup identity from the exact published image's OCI `Config.User` and any explicit Compose `user`; then inspect the verified entrypoint/process behavior for any privilege drop before claiming the steady-state UID/GID. Inspect the fresh image by immutable digest when possible and record the command/result without leaking registry credentials.
 - Treat an empty OCI `Config.User` with no Compose override as root startup identity. An official entrypoint may later initialize ownership and drop privileges, but prove that from the exact entrypoint and runtime process. Do not claim a non-root steady-state identity merely because a Dockerfile creates a user, changes ownership, or describes an intended UID/GID.
@@ -91,7 +136,7 @@ proven UID/GID directly to `mkdir -p`.
    unresolved writable mount blocks delivery. Do not claim that a mode or owner was applied when
    the exact delivered script does not apply and verify it.
 
-## 3. Confine every host path
+## 4. Confine every host path
 
 - Prefer fixed package-local defaults such as `./data`, `./config`, and `./certs/app.p12`. Expose a custom host path only when the upstream contract or user requirement needs it.
 - Treat `.env` and form values as untrusted. Parse only exact known keys; never `source` or `eval` the file.
@@ -133,7 +178,7 @@ This lexical/canonical boundary check does not by itself authorize ownership cha
 
 Test custom path logic with a normal direct-child path, a nested path, an absolute path, parent traversal, an inside-root symbolic link, and an outside-root symbolic link. Ordinary directory creation may accept a confined nested path; ownership changes must reject it. Require rejection for both symlink cases; resolving a symlink back inside the version root does not make it an approved package path.
 
-## 4. Bound ownership and permission changes
+## 5. Bound ownership and permission changes
 
 - Avoid recursive `chown`. For a direct child under a trusted parent chain, create and change only that exact directory and use a non-dereferencing ownership operation. Use a descriptor-relative initializer when a mutable or nested parent cannot be excluded.
 - If recursion is unavoidable, first prove the target is package-local, reject symbolic links, re-resolve the boundary, stay on one filesystem when practical, and use `--no-dereference` (plus `--preserve-root` where supported). Record why every descendant belongs to the application.
@@ -141,7 +186,7 @@ Test custom path logic with a normal direct-child path, a nested path, an absolu
 - Do not use `chmod 777` as an ownership substitute. Preserve the narrowest mode that the application and its backup/upgrade flow require.
 - Run lifecycle tests with the same effective runtime UID/GID as the delivered Compose, not merely as root.
 
-## 5. Distinguish file binds from directory binds
+## 6. Distinguish file binds from directory binds
 
 - For every file bind, create or validate the exact source file before Compose starts. Creating only its parent directory is insufficient; Docker can create a missing bind source as a directory and the container then receives the wrong type.
 - For a packaged static file, ship the file at the exact relative path. For a generated file, write to a same-directory temporary file, validate its format and permissions, then atomically rename it into place.
@@ -149,7 +194,7 @@ Test custom path logic with a normal direct-child path, a nested path, an absolu
 - Validate application-specific material, not only the extension. Examples include a parseable PKCS#12 certificate with the matching stable passphrase, a PEM key with the required type, and a non-empty SQL initialization file.
 - On clean install, inspect the mounted object inside the container and exercise the feature that consumes it.
 
-## 6. Generate and preserve secrets correctly
+## 7. Generate and preserve secrets correctly
 
 - Derive every secret contract from official documentation or source: byte length, encoded length, alphabet/encoding, prefix, checksum, and whether empty is allowed. A generic random form flag does not prove the application's exact format.
 - Use a cryptographically secure generator and validate the result before writing it. For example, distinguish 32 random bytes encoded as Base64 from a 32-character string; they are not equivalent.
@@ -158,7 +203,7 @@ Test custom path logic with a normal direct-child path, a nested path, an absolu
 - Treat every connection string as a grammar, not plain text. Prefer separate upstream variables. If a credential must appear inside a connection URL, URL-encode each username/password component with a standard encoder before assembling the URL. For a keyword/value DSN, quote and escape each credential with the official parser's rules or restrict generation to a source-backed safe alphabet and validate it. Do not interpolate arbitrary random credentials raw into any connection string.
 - Validate coupled values together: a PKCS#12 path and passphrase, an encryption key and its format, or database credentials and the resulting connection URL.
 
-## 7. Preserve lifecycle behavior
+## 8. Preserve lifecycle behavior
 
 - Make initialization idempotent. Do not overwrite user state, rotate stable secrets, or replace user-modified configuration on restart or upgrade.
 - Define clean-install, restart, direct-upgrade, backup/restore, and uninstall behavior for every ledger row. Treat unknown database major-version transitions and irreversible migrations as blockers until tested.
@@ -167,23 +212,24 @@ Test custom path logic with a normal direct-child path, a nested path, an absolu
 - Test the exact delivered files in a real 1Panel development/test instance. Verify the file/directory types, ownership and modes on the host and in the container before and after restart and upgrade.
 - Report an observed owner or mode as an observation tied to the invoking UID/GID and umask. Claim a portable guarantee only when the delivered lifecycle script explicitly enforces that owner or mode and the exact-artifact test verifies it. A host observation alone does not prove behavior under another panel user, filesystem, or umask.
 
-## 8. Keep topology gates terminal
+## 9. Keep topology gates terminal
 
 Selecting an AIO image does not satisfy a `specialized_conditional` route. Keep the route stopped until every recorded process-supervision, proxy/TLS, stateful dependency, migration, upgrade, backup/restore, and uninstall prerequisite has direct evidence. If the application is a platform stack whose lifecycle cannot be represented safely by an ordinary AppStore package, retain `platform_stack_terminal` and report the evidence instead of scaffolding.
 
-## 9. Delivery checklist
+## 10. Delivery checklist
 
 Before a pass claim, answer all items with evidence:
 
-1. Do `init.sh`, `upgrade.sh`, and `uninstall.sh` exist and retain executable mode in the delivered tree?
-2. Does every mount have a complete path and mount ledger row?
-3. Are startup and steady-state runtime UID/GID separately proven from OCI/Compose and verified entrypoint/process behavior?
-4. Are all mutable host paths package-local, confined, non-symlink, and rechecked before mutation?
-5. Is each ownership change minimal, source-backed, and protected against traversal and dereference?
-6. Does every file bind have the exact source file before Compose starts?
-7. Does every generated secret match the application's exact format and remain stable across upgrades?
-8. Are credentials URL-encoded or otherwise escaped with the exact connection-string grammar?
-9. Do clean install, readiness, restart, upgrade, uninstall, and cleanup evidence cover the actual application behavior?
-10. Does every Compose lifecycle command target the intended version directory without relying on the caller's working directory, and does uninstall preserve persistent volumes unless their deletion is explicitly proven safe?
+1. Does every required startup value have a complete startup configuration contract row and a verified final-artifact mapping?
+2. Do `init.sh`, `upgrade.sh`, and `uninstall.sh` exist and retain executable mode in the delivered tree?
+3. Does every mount have a complete path and mount ledger row?
+4. Are startup and steady-state runtime UID/GID separately proven from OCI/Compose and verified entrypoint/process behavior?
+5. Are all mutable host paths package-local, confined, non-symlink, and rechecked before mutation?
+6. Is each ownership change minimal, source-backed, and protected against traversal and dereference?
+7. Does every file bind have the exact source file before Compose starts?
+8. Does every generated secret match the application's exact format and remain stable across upgrades?
+9. Are credentials URL-encoded or otherwise escaped with the exact connection-string grammar?
+10. Do clean install, readiness, restart, upgrade, uninstall, and cleanup evidence cover the actual application behavior?
+11. Does every Compose lifecycle command target the intended version directory without relying on the caller's working directory, and does uninstall preserve persistent volumes unless their deletion is explicitly proven safe?
 
 Any unresolved item blocks a runtime-ready or delivery-ready claim even when structural, strict-store, i18n, environment-closure, and Compose-render checks pass.
