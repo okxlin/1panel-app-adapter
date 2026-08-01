@@ -52,21 +52,47 @@ OUT="${OUT:-./1panel-apps}"
 APP_KEY=$(awk -F': ' '/^  key:/{print $2; exit}' "$SRC/data.yml" | tr -d '"\r' || true)
 [[ -n "$APP_KEY" ]] || APP_KEY="$(basename "$SRC")"
 APP_TYPE=$(awk -F': ' '/^  type:/{print $2; exit}' "$SRC/data.yml" | tr -d '"\r' || true)
+[[ "$APP_KEY" =~ ^[a-z0-9][a-z0-9_-]{0,127}$ ]] || {
+  echo "FAIL: source app key must be one safe lowercase path component" >&2
+  exit 1
+}
 
 if [[ -z "$VERSION" ]]; then
-  mapfile -t vers < <(find "$SRC" -mindepth 1 -maxdepth 1 -type d ! -name '.*' -printf '%f\n' | sort)
+  mapfile -t vers < <(
+    find "$SRC" -mindepth 1 -maxdepth 1 -type d ! -name '.*' \
+      -exec test -s '{}/docker-compose.yml' \; -printf '%f\n' | sort
+  )
   [[ ${#vers[@]} -eq 1 ]] || { echo "FAIL: multiple version directories, use --version" >&2; exit 1; }
   VERSION="${vers[0]}"
 fi
+[[ "$VERSION" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || {
+  echo "FAIL: source version must be one safe path component" >&2
+  exit 1
+}
 
 SRC_VER_DIR="$SRC/$VERSION"
 [[ -d "$SRC_VER_DIR" ]] || { echo "FAIL: version dir not found: $SRC_VER_DIR" >&2; exit 1; }
 [[ -s "$SRC_VER_DIR/docker-compose.yml" ]] || { echo "FAIL: version missing docker-compose.yml" >&2; exit 1; }
 
 TARGET_VERSION="${TARGET_VERSION:-$VERSION}"
+[[ "$TARGET_VERSION" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || {
+  echo "FAIL: target version must be one safe path component" >&2
+  exit 1
+}
 
 APP_DIR="$OUT/$APP_KEY"
 VER_DIR="$APP_DIR/$TARGET_VERSION"
+if [[ -L "$APP_DIR" ]]; then
+  echo "FAIL: target app directory must not be a symlink: $APP_DIR" >&2
+  exit 1
+fi
+if [[ -e "$APP_DIR" ]]; then
+  existing_symlink="$(find "$APP_DIR" -type l -print -quit 2>/dev/null || true)"
+  if [[ -n "$existing_symlink" ]]; then
+    echo "FAIL: target app directory contains a symlink: $existing_symlink" >&2
+    exit 1
+  fi
+fi
 mkdir -p "$VER_DIR" "$VER_DIR/data" "$VER_DIR/scripts"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -78,7 +104,12 @@ fi
 
 cp -f "$SRC/data.yml" "$APP_DIR/data.yml"
 [[ -f "$SRC/README.md" ]] && cp -f "$SRC/README.md" "$APP_DIR/README.md" || true
-[[ -f "$SRC/logo.png" ]] && cp -f "$SRC/logo.png" "$APP_DIR/logo.png" || true
+SOURCE_LOGO_COPIED=0
+DEFAULT_LOGO_COPIED=0
+if [[ -f "$SRC/logo.png" ]]; then
+  cp -f "$SRC/logo.png" "$APP_DIR/logo.png"
+  SOURCE_LOGO_COPIED=1
+fi
 
 if [[ ! -f "$APP_DIR/README.md" ]]; then
   cat > "$APP_DIR/README.md" <<MD
@@ -110,8 +141,16 @@ fi
 
 if [[ ! -f "$APP_DIR/logo.png" ]]; then
   DEFAULT_LOGO="$SCRIPT_DIR/../assets/default-logo.png"
-  if [[ -f "$DEFAULT_LOGO" ]]; then
+  DEFAULT_LOGO_LICENSE="$SCRIPT_DIR/../assets/default-logo.LICENSE.txt"
+  if [[ -f "$DEFAULT_LOGO" && -f "$DEFAULT_LOGO_LICENSE" ]]; then
+    if [[ -L "$APP_DIR/ASSET-LICENSES" ]]; then
+      echo "FAIL: asset license directory must not be a symlink: $APP_DIR/ASSET-LICENSES" >&2
+      exit 1
+    fi
     cp "$DEFAULT_LOGO" "$APP_DIR/logo.png"
+    mkdir -p "$APP_DIR/ASSET-LICENSES"
+    cp "$DEFAULT_LOGO_LICENSE" "$APP_DIR/ASSET-LICENSES/default-logo.txt"
+    DEFAULT_LOGO_COPIED=1
   fi
 fi
 
@@ -135,6 +174,182 @@ else
   echo "FAIL: source evidence missing. Provide --source-repository --source-docker-docs --source-compose-file or include source-evidence.json in source app" >&2
   exit 1
 fi
+
+"$PYTHON_BIN" - "$SCRIPT_DIR" "$SRC" "$APP_DIR" "$APP_DIR/source-evidence.json" "$DEFAULT_LOGO_COPIED" <<'PY'
+import json
+import shutil
+import sys
+from pathlib import Path
+
+sys.path.insert(0, sys.argv[1])
+from source_evidence import _artifact_file, _sha256_file, validate_source_evidence
+
+source_root = Path(sys.argv[2])
+target_root = Path(sys.argv[3])
+evidence_path = Path(sys.argv[4])
+default_logo_copied = sys.argv[5] == "1"
+evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+errors = validate_source_evidence(evidence, require_urls=False)
+if errors:
+    raise ValueError("invalid source redistribution evidence: " + "; ".join(errors))
+
+redistribution = evidence.get("redistributionEvidence")
+if not isinstance(redistribution, dict):
+    raise SystemExit(0)
+
+required = list(redistribution.get("requiredFiles", []))
+for asset in redistribution.get("assets", []):
+    if isinstance(asset, dict):
+        required.extend(asset.get("requiredFiles", []))
+materials = [
+    material
+    for material in redistribution.get("materials", [])
+    if isinstance(material, dict)
+]
+
+for material in materials:
+    relative_path = material["path"]
+    if default_logo_copied and relative_path == "ASSET-LICENSES/default-logo.txt":
+        continue
+    source_file, error = _artifact_file(source_root, relative_path)
+    if source_file is None:
+        raise ValueError(f"cannot verify redistribution material: {error}")
+    if _sha256_file(source_file) != material["sha256"].lower():
+        raise ValueError(
+            f"redistribution material hash does not match source file: {relative_path}"
+        )
+
+required.extend(material["path"] for material in materials)
+
+for relative_path in dict.fromkeys(required):
+    if default_logo_copied and relative_path == "ASSET-LICENSES/default-logo.txt":
+        continue
+    source_file, error = _artifact_file(source_root, relative_path)
+    if source_file is None:
+        raise ValueError(f"cannot deliver required redistribution material: {error}")
+    target_file = target_root / relative_path
+    target_file.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source_file, target_file)
+PY
+
+"$PYTHON_BIN" - "$APP_DIR/source-evidence.json" "$APP_DIR/logo.png" "$APP_DIR/ASSET-LICENSES/default-logo.txt" "$SOURCE_LOGO_COPIED" "$DEFAULT_LOGO_COPIED" <<'PY'
+import hashlib
+import json
+import sys
+from pathlib import Path
+
+evidence_path = Path(sys.argv[1])
+logo_path = Path(sys.argv[2])
+notice_path = Path(sys.argv[3])
+source_logo_copied = sys.argv[4] == "1"
+default_logo_copied = sys.argv[5] == "1"
+evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+if not isinstance(evidence, dict):
+    raise ValueError("source-evidence.json must contain an object")
+
+if default_logo_copied:
+    logo_hash = hashlib.sha256(logo_path.read_bytes()).hexdigest()
+    notice_hash = hashlib.sha256(notice_path.read_bytes()).hexdigest()
+    default_notice = "ASSET-LICENSES/default-logo.txt"
+    existing = evidence.get("redistributionEvidence")
+    if isinstance(existing, dict):
+        redistribution_status = existing.get("status", "unresolved")
+        required_files = list(existing.get("requiredFiles", []))
+        materials = [
+            item for item in existing.get("materials", [])
+            if isinstance(item, dict) and item.get("path") != default_notice
+        ]
+        assets = [
+            item for item in existing.get("assets", [])
+            if isinstance(item, dict) and item.get("path") != "logo.png"
+        ]
+    else:
+        redistribution_status = "verified"
+        required_files = []
+        materials = []
+        assets = []
+    if default_notice not in required_files:
+        required_files.append(default_notice)
+    materials.append({
+        "path": default_notice,
+        "sha256": notice_hash,
+        "purpose": "default logo license",
+    })
+    assets.append({
+        "path": "logo.png",
+        "source": "bundled:assets/default-logo.svg",
+        "license": "MIT",
+        "sha256": logo_hash,
+        "requiredFiles": [default_notice],
+    })
+    evidence["logoEvidence"] = {
+        "source": "bundled:assets/default-logo.svg",
+        "license": "MIT",
+        "sha256": logo_hash,
+    }
+    evidence["redistributionEvidence"] = {
+        "status": redistribution_status,
+        "requiredFiles": required_files,
+        "materials": materials,
+        "assets": assets,
+    }
+elif source_logo_copied:
+    evidence.pop("logoEvidence", None)
+    existing = evidence.get("redistributionEvidence")
+    if isinstance(existing, dict):
+        required_files = list(existing.get("requiredFiles", []))
+        materials = [
+            item for item in existing.get("materials", [])
+            if isinstance(item, dict)
+        ]
+        assets = [
+            item for item in existing.get("assets", [])
+            if isinstance(item, dict) and item.get("path") != "logo.png"
+        ]
+    else:
+        required_files = []
+        materials = []
+        assets = []
+    assets.append({
+        "path": "logo.png",
+        "source": "unverified:migrated-logo.png",
+        "sha256": hashlib.sha256(logo_path.read_bytes()).hexdigest(),
+        "requiredFiles": [],
+    })
+    evidence["redistributionEvidence"] = {
+        "status": "unresolved",
+        "requiredFiles": required_files,
+        "materials": materials,
+        "assets": assets,
+    }
+else:
+    evidence.pop("logoEvidence", None)
+    existing = evidence.get("redistributionEvidence")
+    if isinstance(existing, dict):
+        required_files = list(existing.get("requiredFiles", []))
+        materials = [
+            item for item in existing.get("materials", [])
+            if isinstance(item, dict)
+        ]
+        assets = [
+            item for item in existing.get("assets", [])
+            if isinstance(item, dict) and item.get("path") != "logo.png"
+        ]
+    else:
+        required_files = []
+        materials = []
+        assets = []
+    evidence["redistributionEvidence"] = {
+        "status": "unresolved",
+        "requiredFiles": required_files,
+        "materials": materials,
+        "assets": assets,
+    }
+evidence_path.write_text(
+    json.dumps(evidence, ensure_ascii=False, indent=2) + "\n",
+    encoding="utf-8",
+)
+PY
 
 cp -f "$SRC_VER_DIR/docker-compose.yml" "$VER_DIR/docker-compose.yml"
 if [[ -f "$SRC_VER_DIR/data.yml" ]]; then
@@ -180,4 +395,23 @@ SH
 fi
 
 bash "$SCRIPT_DIR/hint-panel-deps.sh" "$VER_DIR/docker-compose.yml" || true
+"$PYTHON_BIN" - "$SCRIPT_DIR" "$APP_DIR/source-evidence.json" "$APP_DIR" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+sys.path.insert(0, sys.argv[1])
+from source_evidence import validate_source_evidence
+
+evidence_path = Path(sys.argv[2])
+artifact_root = Path(sys.argv[3])
+evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+errors = validate_source_evidence(
+    evidence,
+    require_urls=False,
+    artifact_root=artifact_root,
+)
+if errors:
+    raise ValueError("migrated source evidence does not match artifact: " + "; ".join(errors))
+PY
 echo "OK: migrated -> $APP_DIR"

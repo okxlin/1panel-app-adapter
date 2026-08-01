@@ -175,7 +175,13 @@ class SkillRoutingTests(unittest.TestCase):
     def test_source_policy_documents_backward_compatible_optional_evidence(self) -> None:
         policy = (REPO_ROOT / "references" / "source-policy.md").read_text(encoding="utf-8")
         appspec = (REPO_ROOT / "references" / "appspec.md").read_text(encoding="utf-8")
-        for field in ("sourceRevision", "imageEvidence", "licenseEvidence", "logoEvidence"):
+        for field in (
+            "sourceRevision",
+            "imageEvidence",
+            "licenseEvidence",
+            "logoEvidence",
+            "redistributionEvidence",
+        ):
             with self.subTest(field=field):
                 self.assertIn(field, policy)
                 self.assertIn(field, appspec)
@@ -262,13 +268,13 @@ class SkillRoutingTests(unittest.TestCase):
                 self.assertNotIn(weakened_rule, flat_policy.casefold())
 
     def test_output_contract_distinguishes_delivered_files_from_run_only_evidence(self) -> None:
-        flat_skill = " ".join(self.skill.split())
+        output_contract = self.skill[
+            self.skill.index("## Output Contract") : self.skill.index("## Notes")
+        ]
+        flat_skill = " ".join(output_contract.split())
         self.assertIn(
-            "Distinguish files in the delivered AppStore package from run-only evidence caches.",
-            flat_skill,
-        )
-        self.assertIn(
-            "Do not claim that a run-only cache path is present in the delivered package.",
+            "Which cited files are delivered in the AppStore package and which evidence caches "
+            "remain run-only",
             flat_skill,
         )
 

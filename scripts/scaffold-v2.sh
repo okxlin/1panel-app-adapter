@@ -151,6 +151,14 @@ done
   echo "FAIL: source evidence is required. Provide --source-repository --source-docker-docs --source-compose-file" >&2
   exit 2
 }
+[[ "$APP_KEY" =~ ^[a-z0-9][a-z0-9_-]{0,127}$ ]] || {
+  echo "FAIL: --app-key must be one safe lowercase path component" >&2
+  exit 2
+}
+[[ "$VERSION" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || {
+  echo "FAIL: --version must be one safe path component" >&2
+  exit 2
+}
 
 OUT_DIR="${OUT_DIR:-./1panel-apps}"
 PORT="${PORT:-8080}"
@@ -159,7 +167,16 @@ TIMEZONE="${TIMEZONE:-Asia/Shanghai}"
 
 APP_DIR="$OUT_DIR/$APP_KEY"
 VER_DIR="$APP_DIR/$VERSION"
+if [[ -L "$APP_DIR" ]]; then
+  echo "FAIL: target app directory must not be a symlink: $APP_DIR" >&2
+  exit 2
+fi
 if [[ -e "$APP_DIR" ]]; then
+  existing_symlink="$(find "$APP_DIR" -type l -print -quit 2>/dev/null || true)"
+  if [[ -n "$existing_symlink" ]]; then
+    echo "FAIL: target app directory contains a symlink: $existing_symlink" >&2
+    exit 2
+  fi
   shopt -s nullglob dotglob
   existing_entries=("$APP_DIR"/*)
   shopt -u nullglob dotglob
@@ -255,28 +272,85 @@ ${TITLE} is a generated 1Panel app template produced by 1panel-app-adapter.
 - version: select the required version from the app store version list
 MD
 
-"$PYTHON_BIN" - "$APP_DIR/source-evidence.json" "$SOURCE_REPOSITORY" "$SOURCE_DOCKER_DOCS" "$SOURCE_COMPOSE_FILE" <<'PY'
+DEFAULT_LOGO_COPIED=0
+if [[ ! -f "$APP_DIR/logo.png" ]]; then
+  ASSET_DIR="$(cd "$(dirname "$0")" && pwd)/../assets"
+  DEFAULT_LOGO="$ASSET_DIR/default-logo.png"
+  DEFAULT_LOGO_LICENSE="$ASSET_DIR/default-logo.LICENSE.txt"
+  if [[ -f "$DEFAULT_LOGO" && -f "$DEFAULT_LOGO_LICENSE" ]]; then
+    if [[ -L "$APP_DIR/ASSET-LICENSES" ]]; then
+      echo "FAIL: asset license directory must not be a symlink: $APP_DIR/ASSET-LICENSES" >&2
+      exit 2
+    fi
+    cp "$DEFAULT_LOGO" "$APP_DIR/logo.png"
+    mkdir -p "$APP_DIR/ASSET-LICENSES"
+    cp "$DEFAULT_LOGO_LICENSE" "$APP_DIR/ASSET-LICENSES/default-logo.txt"
+    DEFAULT_LOGO_COPIED=1
+  else
+    echo "[WARN] logo.png not provided or licensed default asset incomplete; add a verified PNG before publishing" >&2
+  fi
+fi
+
+"$PYTHON_BIN" - "$APP_DIR/source-evidence.json" "$SOURCE_REPOSITORY" "$SOURCE_DOCKER_DOCS" "$SOURCE_COMPOSE_FILE" "$DEFAULT_LOGO_COPIED" <<'PY'
+import hashlib
 import json
 import sys
 from pathlib import Path
 
 out = Path(sys.argv[1])
+app_dir = out.parent
+logo = app_dir / "logo.png"
+used_default = sys.argv[5] == "1"
 payload = {
     "repository": sys.argv[2],
     "dockerDocs": sys.argv[3],
     "composeFile": sys.argv[4],
 }
+if logo.is_file():
+    logo_hash = hashlib.sha256(logo.read_bytes()).hexdigest()
+    if used_default:
+        required_files = ["ASSET-LICENSES/default-logo.txt"]
+        notice = app_dir / required_files[0]
+        payload["logoEvidence"] = {
+            "source": "bundled:assets/default-logo.svg",
+            "license": "MIT",
+            "sha256": logo_hash,
+        }
+        payload["redistributionEvidence"] = {
+            "status": "verified",
+            "requiredFiles": required_files,
+            "materials": [{
+                "path": required_files[0],
+                "sha256": hashlib.sha256(notice.read_bytes()).hexdigest(),
+                "purpose": "default logo license",
+            }],
+            "assets": [{
+                "path": "logo.png",
+                "source": "bundled:assets/default-logo.svg",
+                "license": "MIT",
+                "sha256": logo_hash,
+                "requiredFiles": required_files,
+            }],
+        }
+    else:
+        payload["redistributionEvidence"] = {
+            "status": "unresolved",
+            "requiredFiles": [],
+            "assets": [{
+                "path": "logo.png",
+                "source": "unverified:pre-existing-logo.png",
+                "sha256": logo_hash,
+                "requiredFiles": [],
+            }],
+        }
+else:
+    payload["redistributionEvidence"] = {
+        "status": "unresolved",
+        "requiredFiles": [],
+        "assets": [],
+    }
 out.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 PY
-
-if [[ ! -f "$APP_DIR/logo.png" ]]; then
-  DEFAULT_LOGO="$(cd "$(dirname "$0")" && pwd)/../assets/default-logo.png"
-  if [[ -f "$DEFAULT_LOGO" ]]; then
-    cp "$DEFAULT_LOGO" "$APP_DIR/logo.png"
-  else
-    echo "[WARN] logo.png not provided and default logo missing; add a valid PNG before publishing" >&2
-  fi
-fi
 
 FORM_FIELDS=""
 FORM_FIELDS+="    - default: ${PORT}\\n"

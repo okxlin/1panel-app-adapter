@@ -14,6 +14,7 @@ Backward-compatible: old AppSpec format (without these fields) still works.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import pathlib
@@ -115,7 +116,13 @@ def _normalize_appspec(raw_spec: Dict[str, Any]) -> Dict[str, Any]:
         spec.setdefault("evidenceStatus", source_evidence.get("evidenceStatus", "official_partial"))
         spec.setdefault("architectures", source_evidence.get("architectures", ["amd64"]))
         spec.setdefault("architectureEvidence", source_evidence.get("architectureEvidence", "unverified_default"))
-        for field in ("sourceRevision", "imageEvidence", "licenseEvidence", "logoEvidence"):
+        for field in (
+            "sourceRevision",
+            "imageEvidence",
+            "licenseEvidence",
+            "logoEvidence",
+            "redistributionEvidence",
+        ):
             if field in source_evidence:
                 spec.setdefault(field, source_evidence[field])
 
@@ -199,9 +206,9 @@ class AppSpecGenerator:
         self._write_version_data_yml()
         self._write_compose()
         self._write_env_sample()
+        self._write_logo()
         self._write_source_evidence()
         self._write_readme()
-        self._write_logo()
         self._write_runtime_files()
         return str(self.app_dir)
 
@@ -434,7 +441,13 @@ class AppSpecGenerator:
             "architectureEvidence": self.spec.get("architectureEvidence", "unverified_default"),
         }
 
-        for field in ("sourceRevision", "imageEvidence", "licenseEvidence", "logoEvidence"):
+        for field in (
+            "sourceRevision",
+            "imageEvidence",
+            "licenseEvidence",
+            "logoEvidence",
+            "redistributionEvidence",
+        ):
             value = self.spec.get(field)
             if isinstance(value, dict) and value:
                 evidence[field] = value
@@ -465,15 +478,89 @@ class AppSpecGenerator:
         source_path = self.spec.get("importSource", {}).get("sourcePath", "")
         source_icon = pathlib.Path(source_path) / "icon.png" if source_path else None
         default_logo = pathlib.Path(__file__).resolve().parent.parent / "assets" / "default-logo.png"
+        default_license = default_logo.with_name("default-logo.LICENSE.txt")
         target = self.app_dir / "logo.png"
+        used_default = False
         if explicit_logo_path and explicit_logo_path.is_file():
             shutil.copy2(str(explicit_logo_path), str(target))
         elif source_icon and source_icon.is_file():
             shutil.copy2(str(source_icon), str(target))
-        elif default_logo.is_file():
+        elif default_logo.is_file() and default_license.is_file():
             shutil.copy2(str(default_logo), str(target))
+            used_default = True
         elif not target.exists():
             target.write_bytes(b"")
+
+        delivered_hash = hashlib.sha256(target.read_bytes()).hexdigest()
+        if used_default:
+            notice = self.app_dir / "ASSET-LICENSES" / "default-logo.txt"
+            _assert_safe_output_targets(self.out_dir, [notice.parent, notice])
+            notice.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(str(default_license), str(notice))
+            notice_hash = hashlib.sha256(notice.read_bytes()).hexdigest()
+            self.spec["logoEvidence"] = {
+                "source": "bundled:assets/default-logo.svg",
+                "license": "MIT",
+                "sha256": delivered_hash,
+            }
+            existing_redistribution = self.spec.get("redistributionEvidence")
+            if isinstance(existing_redistribution, dict):
+                redistribution_status = existing_redistribution.get(
+                    "status", "unresolved"
+                )
+                required_files = list(existing_redistribution.get("requiredFiles", []))
+                materials = [
+                    item
+                    for item in existing_redistribution.get("materials", [])
+                    if isinstance(item, dict)
+                    and item.get("path") != "ASSET-LICENSES/default-logo.txt"
+                ]
+                assets = [
+                    item
+                    for item in existing_redistribution.get("assets", [])
+                    if isinstance(item, dict) and item.get("path") != "logo.png"
+                ]
+            else:
+                redistribution_status = "verified"
+                required_files = []
+                materials = []
+                assets = []
+            if "ASSET-LICENSES/default-logo.txt" not in required_files:
+                required_files.append("ASSET-LICENSES/default-logo.txt")
+            materials.append({
+                "path": "ASSET-LICENSES/default-logo.txt",
+                "sha256": notice_hash,
+                "purpose": "default logo license",
+            })
+            assets.append({
+                "path": "logo.png",
+                "source": "bundled:assets/default-logo.svg",
+                "license": "MIT",
+                "sha256": delivered_hash,
+                "requiredFiles": ["ASSET-LICENSES/default-logo.txt"],
+            })
+            self.spec["redistributionEvidence"] = {
+                "status": redistribution_status,
+                "requiredFiles": required_files,
+                "materials": materials,
+                "assets": assets,
+            }
+        elif not isinstance(self.spec.get("redistributionEvidence"), dict):
+            logo_evidence = self.spec.get("logoEvidence", {})
+            logo_evidence = logo_evidence if isinstance(logo_evidence, dict) else {}
+            asset = {
+                "path": "logo.png",
+                "source": logo_evidence.get("source", "unverified:logo.png"),
+                "sha256": delivered_hash,
+                "requiredFiles": [],
+            }
+            if logo_evidence.get("license"):
+                asset["license"] = logo_evidence["license"]
+            self.spec["redistributionEvidence"] = {
+                "status": "unresolved",
+                "requiredFiles": [],
+                "assets": [asset],
+            }
 
     def _write_runtime_files(self) -> None:
         scripts_dir = self.version_dir / "scripts"
@@ -546,13 +633,21 @@ def validate_output(app_dir: str) -> Dict[str, Any]:
     if evidence_path.is_file():
         try:
             evidence = load_source_evidence(evidence_path)
-            for error in validate_source_evidence(evidence, require_urls=False):
+            for error in validate_source_evidence(
+                evidence,
+                require_urls=False,
+                artifact_root=app_path,
+            ):
                 errors.append(f"Invalid: source-evidence.json {error}")
         except (OSError, json.JSONDecodeError) as exc:
             errors.append(f"Invalid: source-evidence.json invalid JSON: {exc}")
 
     # Check version dir
-    subdirs = [d for d in app_path.iterdir() if d.is_dir()]
+    subdirs = [
+        d
+        for d in app_path.iterdir()
+        if d.is_dir() and (d / "data.yml").is_file()
+    ]
     for sd in subdirs:
         ver_checks = {
             f"{sd.name}/data.yml": sd / "data.yml",
@@ -659,7 +754,11 @@ def main() -> int:
 
     print(f"Generated: {output_path}")
     report["appDir"] = output_path
-    report["delivery"] = evaluate_baota_delivery_readiness(generator.spec)
+    report["delivery"] = evaluate_baota_delivery_readiness(
+        generator.spec,
+        app_dir=pathlib.Path(output_path),
+        require_strict_validation=True,
+    )
 
     # Validate
     if args.validate:
@@ -691,15 +790,21 @@ def main() -> int:
             "errors": strict_validation.get("errors", []),
             "returncode": strict_validation.get("returncode"),
         }
+        report["delivery"] = evaluate_baota_delivery_readiness(
+            generator.spec,
+            app_dir=pathlib.Path(output_path),
+            strict_validation=strict_validation,
+            require_strict_validation=True,
+        )
         if strict_validation["failed"]:
             report["error"] = "strict-store validation failed"
             return finish(EXIT_FAILURE)
         if not report["delivery"]["ready"]:
-            report["error"] = "Baota delivery gates are not satisfied"
+            report["error"] = "delivery gates are not satisfied"
             print(f"Error: {report['error']}", file=sys.stderr)
             return finish(EXIT_FAILURE)
 
-    report["status"] = "ok"
+    report["status"] = "ok" if report["delivery"]["ready"] else "generated_candidate"
     report["step"] = "done"
     return finish(EXIT_SUCCESS)
 

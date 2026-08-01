@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import pathlib
+import hashlib
 import json
 import subprocess
 import tempfile
@@ -341,6 +342,136 @@ class ValidateV2Tests(unittest.TestCase):
 
         self.assertNotEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         self.assertIn("imageEvidence.digest", proc.stdout)
+
+    def test_source_evidence_required_mode_verifies_delivered_asset_hash(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            app = self._write_sample_app(pathlib.Path(tmp))
+            logo = app / "logo.png"
+            logo.write_bytes(b"actual-logo")
+            notice = app / "ASSET-LICENSES" / "logo.txt"
+            notice.parent.mkdir()
+            notice.write_text("license notice\n", encoding="utf-8")
+            evidence_path = app / "source-evidence.json"
+            evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+            evidence.update({
+                "licenseEvidence": {"spdx": "MIT"},
+                    "redistributionEvidence": {
+                        "status": "verified",
+                        "requiredFiles": ["ASSET-LICENSES/logo.txt"],
+                        "materials": [{
+                            "path": "ASSET-LICENSES/logo.txt",
+                            "sha256": hashlib.sha256(notice.read_bytes()).hexdigest(),
+                        }],
+                    "assets": [{
+                        "path": "logo.png",
+                        "source": "https://example.com/logo.png",
+                        "license": "MIT",
+                        "sha256": hashlib.sha256(b"different-logo").hexdigest(),
+                        "requiredFiles": ["ASSET-LICENSES/logo.txt"],
+                    }],
+                },
+            })
+            evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
+
+            proc = subprocess.run(
+                [
+                    "bash",
+                    str(VALIDATE),
+                    "--dir",
+                    str(app),
+                    "--source-evidence-mode",
+                    "required",
+                ],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+
+        self.assertNotEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("sha256 does not match delivered logo.png", proc.stdout)
+
+    def test_source_evidence_required_mode_keeps_legacy_provenance_semantics(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            app = self._write_sample_app(pathlib.Path(tmp))
+            proc = subprocess.run(
+                [
+                    "bash",
+                    str(VALIDATE),
+                    "--dir",
+                    str(app),
+                    "--source-evidence-mode",
+                    "required",
+                ],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+
+    def test_delivery_evidence_mode_requires_license_and_redistribution(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            app = self._write_sample_app(pathlib.Path(tmp))
+            proc = subprocess.run(
+                [
+                    "bash",
+                    str(VALIDATE),
+                    "--dir",
+                    str(app),
+                    "--source-evidence-mode",
+                    "required",
+                    "--require-delivery-evidence",
+                ],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+
+        self.assertNotEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("missing key: licenseEvidence", proc.stdout)
+        self.assertIn("missing key: redistributionEvidence", proc.stdout)
+
+    def test_delivery_evidence_flag_alone_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            app = self._write_sample_app(pathlib.Path(tmp))
+            proc = subprocess.run(
+                [
+                    "bash",
+                    str(VALIDATE),
+                    "--dir",
+                    str(app),
+                    "--require-delivery-evidence",
+                ],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+
+        self.assertNotEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("missing key: licenseEvidence", proc.stdout)
+        self.assertIn("missing key: redistributionEvidence", proc.stdout)
+
+    def test_delivery_evidence_flag_cannot_be_disabled_by_source_mode_off(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            app = self._write_sample_app(pathlib.Path(tmp))
+            proc = subprocess.run(
+                [
+                    "bash",
+                    str(VALIDATE),
+                    "--dir",
+                    str(app),
+                    "--source-evidence-mode",
+                    "off",
+                    "--require-delivery-evidence",
+                ],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+
+        self.assertNotEqual(proc.returncode, 0, proc.stdout + proc.stderr)
 
     def test_version_option_validates_selected_version_in_multi_version_app(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

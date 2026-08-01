@@ -9,6 +9,7 @@ Provides: BaotaPrecheck, BaotaParser, BaotaToAppSpecMapper,
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import os
 import pathlib
@@ -27,6 +28,7 @@ except ImportError:
     raise SystemExit(1)
 
 from runtime_script_utils import UNINSTALL_SCRIPT, render_init_script_content
+from source_evidence import inspect_redistribution_delivery, validate_source_evidence
 
 # ── Error Codes ───────────────────────────────────────────────────────
 E_BAOTA_REQUIRED_FILES = "E_BAOTA_REQUIRED_FILES"
@@ -152,6 +154,8 @@ def _generated_output_targets(
         app_dir / "README.md",
         app_dir / "logo.png",
         app_dir / "source-evidence.json",
+        app_dir / "ASSET-LICENSES",
+        app_dir / "ASSET-LICENSES" / "default-logo.txt",
         version_dir / "data.yml",
         version_dir / "docker-compose.yml",
         version_dir / ".env.sample",
@@ -221,10 +225,18 @@ def run_strict_store_validation(
             "returncode": 127,
         }
 
-    command = ["bash", str(validate_script), "--dir", app_dir]
+    command = [
+        "bash",
+        str(validate_script),
+        "--dir",
+        app_dir,
+        "--strict-store",
+        "--source-evidence-mode",
+        "required",
+        "--require-delivery-evidence",
+    ]
     if version:
         command.extend(["--version", version])
-    command.append("--strict-store")
     proc = subprocess.run(command, text=True, capture_output=True)
     if emit_output and proc.stdout:
         print(proc.stdout, end="")
@@ -248,43 +260,124 @@ def run_strict_store_validation(
 def evaluate_baota_delivery_readiness(
     appspec: Dict[str, Any],
     compose_data: Optional[Dict[str, Any]] = None,
+    app_dir: Optional[pathlib.Path] = None,
+    strict_validation: Optional[Dict[str, Any]] = None,
+    require_strict_validation: bool = False,
 ) -> Dict[str, Any]:
     import_source = appspec.get("importSource", {})
-    if not isinstance(import_source, dict) or import_source.get("type") != "baota":
-        return {"applicable": False, "ready": True, "status": "not_applicable", "blockers": []}
-
+    baota_applicable = (
+        isinstance(import_source, dict) and import_source.get("type") == "baota"
+    )
     blockers: List[Dict[str, str]] = []
-    if appspec.get("evidenceStatus") != "official_complete":
+
+    def add_blocker(code: str, message: str) -> None:
+        if any(blocker["code"] == code for blocker in blockers):
+            return
+        blockers.append({"code": code, "message": message})
+
+    if baota_applicable and appspec.get("evidenceStatus") != "official_complete":
         blockers.append({
             "code": "unverified-source",
             "message": "Baota metadata does not prove official upstream deployment evidence.",
         })
-    if appspec.get("architectureEvidence") != "registry_manifest_verified":
+    if baota_applicable and appspec.get("architectureEvidence") != "registry_manifest_verified":
         blockers.append({
             "code": "unverified-architectures",
             "message": "Packaged architectures have not been verified from registry manifests.",
         })
+
+    source_evidence = appspec.get("sourceEvidence", {})
+    evidence: Dict[str, Any] = dict(source_evidence) if isinstance(source_evidence, dict) else {}
+    for field in ("licenseEvidence", "logoEvidence", "redistributionEvidence"):
+        if field in appspec:
+            evidence[field] = appspec[field]
+
+    license_evidence = evidence.get("licenseEvidence")
+    license_errors = validate_source_evidence(
+        {"licenseEvidence": license_evidence} if license_evidence is not None else {},
+        require_urls=False,
+        require_delivery=True,
+    )
+    if any("licenseEvidence" in error for error in license_errors):
+        add_blocker(
+            "unverified-application-license",
+            "The exact application license has not been verified.",
+        )
+
+    redistribution = evidence.get("redistributionEvidence")
+    redistribution_payload = (
+        {"redistributionEvidence": redistribution}
+        if redistribution is not None
+        else {}
+    )
+    if isinstance(evidence.get("logoEvidence"), dict):
+        redistribution_payload["logoEvidence"] = evidence["logoEvidence"]
+    redistribution_errors = validate_source_evidence(
+        redistribution_payload,
+        require_urls=False,
+    )
+    license_review = inspect_redistribution_delivery(
+        redistribution_payload,
+        artifact_root=app_dir,
+    )
+    license_review["applicationEvidence"] = (
+        license_evidence if isinstance(license_evidence, dict) else None
+    )
+
+    if not isinstance(redistribution, dict) or redistribution.get("status") != "verified":
+        add_blocker(
+            "unverified-redistribution",
+            "Asset redistribution terms and required material delivery are unresolved.",
+        )
+    elif app_dir is None:
+        add_blocker(
+            "unverified-redistribution",
+            "Redistribution evidence has not been checked against the delivered artifact.",
+        )
+    if redistribution_errors:
+        add_blocker(
+            "invalid-redistribution-evidence",
+            "; ".join(redistribution_errors),
+        )
+    for issue in license_review["issues"]:
+        add_blocker(issue["code"], issue["message"])
 
     manual_reasons = appspec.get("manualReviewReasons", []) or []
     if compose_data and isinstance(compose_data, dict):
         transform = compose_data.get("_transform", {})
         if isinstance(transform, dict):
             manual_reasons = [*manual_reasons, *(transform.get("manualReviewReasons", []) or [])]
-    seen_codes = {blocker["code"] for blocker in blockers}
     for reason in manual_reasons:
         code = reason.get("code", "compose-manual-review")
-        if code in seen_codes:
-            continue
-        seen_codes.add(code)
-        blockers.append({
-            "code": code,
-            "message": reason.get("message", "Compose semantics require manual review."),
-        })
+        add_blocker(
+            code,
+            reason.get("message", "Compose semantics require manual review."),
+        )
+    evidence_ready = not blockers
+    if require_strict_validation and evidence_ready:
+        if strict_validation is None:
+            add_blocker(
+                "validation-not-run",
+                "Strict-store validation has not been run against the delivered artifact.",
+            )
+        elif strict_validation.get("mode") != "strict-store":
+            add_blocker(
+                "validation-not-strict",
+                "Delivery readiness requires strict-store validation.",
+            )
+        elif strict_validation.get("failed") or not strict_validation.get("valid"):
+            add_blocker(
+                "validation-failed",
+                "Strict-store validation did not pass for the delivered artifact.",
+            )
     return {
         "applicable": True,
+        "baotaApplicable": baota_applicable,
+        "evidenceReady": evidence_ready,
         "ready": not blockers,
         "status": "ready" if not blockers else "manual_review_required",
         "blockers": blockers,
+        "licenseReview": license_review,
     }
 
 
@@ -1605,7 +1698,12 @@ class ImportRunner:
         result["success"] = True
         result["stage"] = "converted_candidate"
 
-        delivery = evaluate_baota_delivery_readiness(appspec, compose_data)
+        delivery = evaluate_baota_delivery_readiness(
+            appspec,
+            compose_data,
+            app_dir=pathlib.Path(output_path),
+            require_strict_validation=True,
+        )
         result["delivery"] = delivery
         result["deliveryReady"] = delivery["ready"]
         result["candidateStatus"] = "delivery_ready" if delivery["ready"] else "manual_review_required"
@@ -1614,6 +1712,18 @@ class ImportRunner:
             result["stage"] = "strict_store_validate"
             validation = run_strict_store_validation(output_path, selected_version)
             result["validation"] = validation
+            delivery = evaluate_baota_delivery_readiness(
+                appspec,
+                compose_data,
+                app_dir=pathlib.Path(output_path),
+                strict_validation=validation,
+                require_strict_validation=True,
+            )
+            result["delivery"] = delivery
+            result["deliveryReady"] = delivery["ready"]
+            result["candidateStatus"] = (
+                "delivery_ready" if delivery["ready"] else "manual_review_required"
+            )
             if validation.get("failed"):
                 result["errors"].append({
                     "code": "E_1PANEL_STRICT_VALIDATE_FAILED",
@@ -1731,17 +1841,30 @@ class ImportRunner:
 
         _write_default_readme(app_out, appspec, version)
 
-        # source-evidence.json
-        evidence = self._build_source_evidence(appspec)
-        evidence = _merge_baota_source_evidence(existing_evidence, evidence, version)
-        with open(evidence_path, "w", encoding="utf-8") as fh:
-            json.dump(evidence, fh, ensure_ascii=False, indent=2)
-
         # Copy icon → logo.png
         src_icon = pathlib.Path(input_dir) / "icon.png"
         if src_icon.is_file():
             import shutil
             shutil.copy2(str(src_icon), str(app_out / "logo.png"))
+            if not isinstance(appspec.get("redistributionEvidence"), dict):
+                appspec["redistributionEvidence"] = {
+                    "status": "unresolved",
+                    "requiredFiles": [],
+                    "assets": [{
+                        "path": "logo.png",
+                        "source": "unverified:baota-icon.png",
+                        "sha256": hashlib.sha256(
+                            (app_out / "logo.png").read_bytes()
+                        ).hexdigest(),
+                        "requiredFiles": [],
+                    }],
+                }
+
+        # source-evidence.json must describe the file that was actually copied.
+        evidence = self._build_source_evidence(appspec)
+        evidence = _merge_baota_source_evidence(existing_evidence, evidence, version)
+        with open(evidence_path, "w", encoding="utf-8") as fh:
+            json.dump(evidence, fh, ensure_ascii=False, indent=2)
 
         return str(app_out)
 
@@ -1764,7 +1887,11 @@ class ImportRunner:
                 errors.append("Invalid: root additionalProperties.description i18n")
         except (OSError, yaml.YAMLError) as exc:
             errors.append(f"Invalid: root data.yml: {exc}")
-        for version_dir in sorted(p for p in app_path.iterdir() if p.is_dir()):
+        for version_dir in sorted(
+            p
+            for p in app_path.iterdir()
+            if p.is_dir() and (p / "data.yml").is_file()
+        ):
             required_version = [
                 "data.yml",
                 "docker-compose.yml",
@@ -1885,6 +2012,10 @@ class ImportRunner:
         notes = appspec.get("migrationNotes", [])
         if notes:
             evidence["migrationNotes"] = notes
+        for field in ("licenseEvidence", "logoEvidence", "redistributionEvidence"):
+            value = appspec.get(field)
+            if isinstance(value, dict) and value:
+                evidence[field] = value
         return evidence
 
     # ── .env.sample ───────────────────────────────────────────────────

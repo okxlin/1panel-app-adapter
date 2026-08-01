@@ -135,13 +135,19 @@ This adds missing `init.sh`, `upgrade.sh`, and `uninstall.sh` files with app-roo
 bash scripts/validate-v2.sh --dir <app-dir>
 
 # AppStore delivery checks
-bash scripts/validate-v2.sh --dir <app-dir> --strict-store
+bash scripts/validate-v2.sh --dir <app-dir> --strict-store \
+  --source-evidence-mode required --require-delivery-evidence
 
 # One release in a multi-version package
-bash scripts/validate-v2.sh --dir <app-dir> --version <version> --strict-store
+bash scripts/validate-v2.sh --dir <app-dir> --version <version> --strict-store \
+  --source-evidence-mode required --require-delivery-evidence
 
 # Require optional provenance evidence for a gated workflow
 bash scripts/validate-v2.sh --dir <app-dir> --source-evidence-mode required
+
+# Require verified license and hash-bound redistribution delivery evidence
+bash scripts/validate-v2.sh --dir <app-dir> --source-evidence-mode required \
+  --require-delivery-evidence
 ```
 
 Validation covers:
@@ -152,7 +158,7 @@ Validation covers:
 - localized descriptions and form labels for `en`, `zh`, `zh-Hant`, `ja`, `ko`, `ru`, `ms`, and `pt-br`;
 - optional source provenance and strict-store delivery rules.
 
-Full Compose rendering requires the `docker compose` CLI. Source evidence defaults to warning mode and becomes mandatory only with `--source-evidence-mode required`.
+Full Compose rendering requires the `docker compose` CLI. Source evidence defaults to warning mode and becomes mandatory only with `--source-evidence-mode required`. That historical mode validates provenance; add `--require-delivery-evidence` when license and redistribution delivery must be release-gating.
 
 ## Requirements
 

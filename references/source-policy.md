@@ -45,6 +45,22 @@ only when their values were verified from official source, registry, license, or
     "source": "https://example.com/project/logo.png",
     "license": "MIT",
     "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  },
+  "redistributionEvidence": {
+    "status": "verified",
+    "requiredFiles": ["ASSET-LICENSES/logo.txt"],
+    "materials": [{
+      "path": "ASSET-LICENSES/logo.txt",
+      "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "purpose": "logo license"
+    }],
+    "assets": [{
+      "path": "logo.png",
+      "source": "https://example.com/project/logo.png",
+      "license": "MIT",
+      "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "requiredFiles": ["ASSET-LICENSES/logo.txt"]
+    }]
   }
 }
 ```
@@ -57,6 +73,12 @@ only when their values were verified from official source, registry, license, or
   exact upstream license evidence.
 - `logoEvidence.source` is an HTTPS source URL or `bundled:<repo-relative-path>` for a repository
   asset. Record its license when known and the delivered PNG SHA-256 when calculated.
+- `redistributionEvidence.status` is `verified` only after every listed asset license and required
+  material is resolved. Keep it `unresolved` for imported or custom media without equivalent
+  evidence. Use safe package-relative paths, list every required delivered file, and bind each
+  asset and required-material entry to the SHA-256 of the actual packaged file. Every required
+  path must have one `materials` entry. Absolute paths, traversal, symlinks, missing materials,
+  untracked `logo.png`, and hash mismatches block delivery readiness.
 
 Omit unknown optional keys instead of writing placeholders such as `unknown`, `latest`, or a
 floating image tag.
@@ -75,6 +97,10 @@ text verbatim and use the filename or README placement allowed by those exact te
 terms separately; do not assume the application code license covers a logo, icon, font, trademark,
 or other bundled media. If asset redistribution or trademark permission remains unresolved, ship
 the neutral placeholder instead.
+
+The built-in neutral placeholder is project-authored at `assets/default-logo.svg`, licensed under
+the MIT text in `assets/default-logo.LICENSE.txt`, and rendered to `assets/default-logo.png` with
+SHA-256 `a8f604f27c3451536301f1a4ca7ac5ae8c479312a225c42c4dc0edda2a20bf76`.
 
 ## Public URL Inputs
 

@@ -9,6 +9,7 @@ I18N_MODE="warn"
 I18N_SCOPE="all"
 I18N_ALLOW_EN_LABELS="API,URL,ID,OAuth,JWT,CPU,GPU,RAM,HTTP,HTTPS,TCP,UDP,SSH,DNS"
 SOURCE_EVIDENCE_MODE="warn"
+REQUIRE_DELIVERY_EVIDENCE=0
 FAILURES=0
 WARNINGS=0
 INFOS=0
@@ -27,12 +28,14 @@ fi
 
 usage() {
   cat <<'USAGE'
-usage: validate-v2.sh --dir <app-dir> [--version <version-dir>] [--strict-c] [--strict-store] [--source-evidence-mode warn|required|off] [--i18n-mode off|warn|strict] [--i18n-scope description|labels|all] [--i18n-allow-english-labels CSV]
+usage: validate-v2.sh --dir <app-dir> [--version <version-dir>] [--strict-c] [--strict-store] [--source-evidence-mode warn|required|off] [--require-delivery-evidence] [--i18n-mode off|warn|strict] [--i18n-scope description|labels|all] [--i18n-allow-english-labels CSV]
 
 behavior notes:
   - multi-version app directories require --version <version-dir> so validation targets one release explicitly
   - --strict-store is intended for delivery-ready artifacts, not raw scaffold placeholders
-  - source-evidence.json is optional by default; use --source-evidence-mode required only for provenance-gated delivery workflows
+  - --source-evidence-mode required preserves its historical provenance-schema meaning
+  - --require-delivery-evidence additionally requires verified application-license and hash-bound redistribution evidence
+  - --strict-store with --source-evidence-mode required implies --require-delivery-evidence for backward compatibility
   - when docker compose is available, validator runs a real `docker compose config` render check
   - when docker compose is unavailable, that render check is skipped and reported as a warning
 USAGE
@@ -60,6 +63,7 @@ while [[ $# -gt 0 ]]; do
     --strict-c) STRICT_C=1; shift ;;
     --strict-store) STRICT_STORE=1; shift ;;
     --source-evidence-mode) SOURCE_EVIDENCE_MODE="$2"; shift 2 ;;
+    --require-delivery-evidence) REQUIRE_DELIVERY_EVIDENCE=1; shift ;;
     --i18n-mode) I18N_MODE="$2"; shift 2 ;;
     --i18n-scope) I18N_SCOPE="$2"; shift 2 ;;
     --i18n-allow-english-labels) I18N_ALLOW_EN_LABELS="$2"; shift 2 ;;
@@ -73,6 +77,9 @@ done
 case "$I18N_MODE" in off|warn|strict) ;; *) echo "invalid --i18n-mode: $I18N_MODE"; exit 2 ;; esac
 case "$I18N_SCOPE" in description|labels|all) ;; *) echo "invalid --i18n-scope: $I18N_SCOPE"; exit 2 ;; esac
 case "$SOURCE_EVIDENCE_MODE" in required|warn|off) ;; *) echo "invalid --source-evidence-mode: $SOURCE_EVIDENCE_MODE"; exit 2 ;; esac
+if [[ "$REQUIRE_DELIVERY_EVIDENCE" -eq 1 ]]; then
+  SOURCE_EVIDENCE_MODE="required"
+fi
 
 ROOT="$DIR/data.yml"
 SOURCE_EVIDENCE="$DIR/source-evidence.json"
@@ -87,7 +94,10 @@ if [[ -s "$NESTED_APP_ROOT/data.yml" && -s "$NESTED_APP_ROOT/source-evidence.jso
     exit 1
   fi
 fi
-mapfile -t version_dirs < <(find "$DIR" -mindepth 1 -maxdepth 1 -type d ! -name '.*')
+mapfile -t version_dirs < <(
+  find "$DIR" -mindepth 1 -maxdepth 1 -type d ! -name '.*' \
+    -exec test -f '{}/data.yml' \; -print
+)
 if [[ ${#version_dirs[@]} -eq 0 ]]; then
   echo "[A][FAIL] missing version directory"
   exit 1
@@ -223,8 +233,12 @@ if [[ $FAILURES -gt 0 ]]; then
 fi
 
 if [[ -s "$SOURCE_EVIDENCE" && "$SOURCE_EVIDENCE_MODE" != "off" ]]; then
+  source_ev_args=("$SOURCE_EVIDENCE" --artifact-root "$DIR")
+  if [[ "$REQUIRE_DELIVERY_EVIDENCE" -eq 1 || ("$STRICT_STORE" -eq 1 && "$SOURCE_EVIDENCE_MODE" == "required") ]]; then
+    source_ev_args+=(--require-delivery)
+  fi
   set +e
-  source_ev_output=$("$PYTHON_BIN" "$SCRIPT_DIR/source_evidence.py" "$SOURCE_EVIDENCE")
+  source_ev_output=$("$PYTHON_BIN" "$SCRIPT_DIR/source_evidence.py" "${source_ev_args[@]}")
   source_ev_status=$?
   set -e
   if [[ -n "$source_ev_output" ]]; then

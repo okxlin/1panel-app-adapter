@@ -39,7 +39,7 @@ Use scripts for their named job instead of manually recreating their behavior. R
 | Apply a proven non-root directory owner | `bash scripts/finalize_runtime_scripts.sh <app-dir> <app-dir>/<version> --dir-owner APP_DATA_DIR=<uid>:<gid>:0750 --replace-init` |
 | Normalize logo | `bash scripts/normalize-logo.sh <app-dir>/logo.png` |
 | Baseline validation | `bash scripts/validate-v2.sh --dir <app-dir> [--version <version>]` |
-| Delivery validation | `bash scripts/validate-v2.sh --dir <app-dir> [--version <version>] --strict-store --i18n-mode strict` |
+| Delivery validation | `bash scripts/validate-v2.sh --dir <app-dir> [--version <version>] --strict-store --i18n-mode strict --source-evidence-mode required --require-delivery-evidence` |
 
 ### Completion Gates
 
@@ -52,7 +52,7 @@ Use scripts for their named job instead of manually recreating their behavior. R
 - Complete the `references/lifecycle-safety.md` path and mount ledger, including each source-backed mount mechanism, mount options, and operator-access contract. Treat source, target, read/write mode, propagation, and security options in authoritative Compose as required delivery defaults; preserve them exactly unless target-platform evidence proves incompatibility and a reviewed replacement preserves the same contract. A named volume is not a drop-in replacement for a configuration bind used by official host-side editing, backup, restore, or support procedures; preserve that fixed package-local bind and do not add an `APP_DATA_DIR` form unless a selectable host path is actually required. Derive startup and steady-state runtime UID/GID separately from the published OCI configuration, Compose `user`, and verified entrypoint/process behavior; keep mutable host paths package-local and confined before creation, permission changes, or cleanup. When the selected authoritative deployment uses a named volume for a non-root writable path, preserve that volume. When it uses a bind, use the explicit `--dir-owner`/`--fixed-dir-owner` helper with a source-backed identity on a direct child of the trusted version root, then verify the exact owner, mode, and a write probe as that identity. Change the mechanism only through the same target-platform incompatibility and equivalent-replacement gate. A plain root-created `0755` bind directory blocks delivery. Do not recursively change ownership on an unconfined or symlinked path.
 - Create or validate the exact source file for every file bind before Compose starts. Prove each generated secret format against the application contract, keep stable secrets across upgrade, URL-encode URL credentials, and apply the official escaping rules to every other connection-string grammar.
 - Replace placeholders with real product metadata and meaningful translations in all required locales. English fields must contain English. Record the application and asset licenses; when exact redistribution terms require attribution, copyright or license text, source disclosure, or NOTICE delivery, include that required material in the package instead of relying on a link. When a license has material use restrictions, name and link it in the README instead of keeping it only in machine-readable evidence. Verify an asset's redistribution basis separately from the application code license; for an unresolved asset license or trademark permission, use the neutral placeholder immediately rather than shipping the asset with a future-confirmation note.
-- Render and validate the exact delivered artifact without creating then removing a file it needs. Ensure `init.sh`, `upgrade.sh`, and `uninstall.sh` exist and retain executable mode in the delivered tree. Run baseline validation first, then `bash scripts/validate-v2.sh --dir <app-dir> [--version <version>] --strict-store --i18n-mode strict`; unresolved failures block a pass claim.
+- Render and validate the exact delivered artifact without creating then removing a file it needs. Ensure `init.sh`, `upgrade.sh`, and `uninstall.sh` exist and retain executable mode in the delivered tree. Run baseline validation first, then `bash scripts/validate-v2.sh --dir <app-dir> [--version <version>] --strict-store --i18n-mode strict --source-evidence-mode required --require-delivery-evidence`; unresolved failures block a pass claim.
 - Test in a real 1Panel development/test instance: clean install, application-specific readiness, restart, upgrade when applicable, uninstall, and task-owned cleanup. Report artifact paths, evidence, checks, risk-bearing permissions, assumptions, warnings, and every unexecuted runtime gate; static validation or HTTP 200 alone is insufficient. Distinguish files in the delivered AppStore package from run-only evidence caches. Do not claim that a run-only cache path is present in the delivered package.
 
 ## Rule Priority
@@ -375,7 +375,7 @@ To avoid "format compliant but translation lazy", `validate-v2.sh` adds configur
 
 - `--source-evidence-mode warn|required|off`
   - `warn`: warn but continue when `source-evidence.json` is missing or invalid (default)
-  - `required`: require `source-evidence.json` and validate its URLs for provenance-gated workflows
+  - `required`: require `source-evidence.json`; with `--strict-store`, also require application-license evidence plus hash-bound asset and redistribution-material delivery evidence
   - `off`: skip source evidence checks
 - `--i18n-mode off|warn|strict`
   - `off`: disable translation quality check (only structure validation)
@@ -418,8 +418,9 @@ Delivery should at least clarify:
 - `scaffold-v2.sh` supports auto-tagging (and supports `--tag` override).
 - Default fallback tag is `Tool` (no longer use `Docker`).
 - Default logo:
-  - This skill built-in placeholder: `assets/default-logo.png` (content source: https://raw.githubusercontent.com/okxlin/appstore/localApps/apps/1panel-apps/logo.png )
-  - `scaffold-v2.sh` when generating root directory, if `logo.png` not provided, will copy placeholder to `<app>/logo.png` (won't create empty file).
+  - This repository's project-authored source is `assets/default-logo.svg`; its terms are in `assets/default-logo.LICENSE.txt` (MIT, copyright 2026 okxlin).
+  - The deterministically rendered `assets/default-logo.png` is 180x180 and has SHA-256 `a8f604f27c3451536301f1a4ca7ac5ae8c479312a225c42c4dc0edda2a20bf76`.
+  - `scaffold-v2.sh` and `generate-from-appspec.py` copy the PNG, its required license text, and hash-bound redistribution evidence only when they actually select this fallback. They never label a pre-existing or imported logo as the default asset.
 - **Logo normalization suggestion**: Before delivery, prioritize unifying `<app>/logo.png` to **180x180 PNG**; processing should **maintain original logo ratio, don't stretch, don't compress, don't deform**. If original exceeds `180x180`, only do **proportional shrink**; if original is smaller, don't force enlarge. Finally **center overlay logo onto `180x180` transparent canvas**. If want to balance repository size and store loading efficiency, recommend compressing to **no more than 10KB**. Can directly use: `bash scripts/normalize-logo.sh <logo.png>`.
 - **Compose top-level `version` handling**: Delivered to 1Panel `docker-compose.yml` should **remove top-level `version:` field** (e.g., `version: '3.8'`), avoid deprecated/ignored warnings in 1Panel / Docker Compose logs. Adaptation should directly start from `services:` organizing compose content, unless encountering special scenarios requiring old parser.
 - **Service-level `createdBy` label convention**: Delivered to 1Panel compose, **each application's each service should by default carry**:
