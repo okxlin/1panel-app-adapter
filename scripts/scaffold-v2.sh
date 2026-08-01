@@ -94,7 +94,7 @@ required:
   --version
 
 options:
-  --out-dir <dir>         default: ./1panel-apps
+  --out-dir <parent>      output app root is <parent>/<app-key> (default parent: ./1panel-apps)
   --port <host-port>      default: 8080
   --target-port <port>    default: 80
   --type <type>           default: tool
@@ -112,6 +112,8 @@ options:
   --timezone <tz>             default TZ value for version data.yml (default: Asia/Shanghai)
 
 behavior notes:
+  - --out-dir is always a parent directory; do not pass a path already ending in <app-key>
+  - the app root directly contains data.yml, source-evidence.json, and the selected version directory
   - raw scaffold output contains placeholder README / metadata text by design
   - replace placeholder content before expecting --strict-store to pass
   - --force allows writing into an existing non-empty app directory; it does not clean residual files for you
@@ -572,6 +574,17 @@ cat > "$VER_DIR/scripts/uninstall.sh" <<'SH'
 docker-compose down --volumes
 SH
 chmod +x "$VER_DIR/scripts/uninstall.sh"
+
+for required_path in "$APP_DIR/data.yml" "$APP_DIR/source-evidence.json" "$VER_DIR"; do
+  if [[ ! -e "$required_path" ]]; then
+    echo "FAIL: scaffold postcondition missing direct app-root artifact: $required_path" >&2
+    exit 1
+  fi
+done
+if [[ -s "$APP_DIR/$APP_KEY/data.yml" && -s "$APP_DIR/$APP_KEY/source-evidence.json" ]]; then
+  echo "FAIL: duplicate nested app root detected: $APP_DIR/$APP_KEY" >&2
+  exit 1
+fi
 
 bash "$(dirname "$0")/hint-panel-deps.sh" "$VER_DIR/docker-compose.yml" || true
 echo "OK: scaffolded -> $APP_DIR"

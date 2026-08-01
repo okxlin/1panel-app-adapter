@@ -414,6 +414,96 @@ additionalProperties:
             self.assertIn("exact file lifecycle", proc.stderr)
             self.assertFalse((out_dir / "demo").exists())
 
+    def test_generate_from_appspec_preserves_optional_source_evidence(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = pathlib.Path(tmp)
+            spec_path = tmp_path / "spec.json"
+            out_dir = tmp_path / "out"
+            optional_evidence = {
+                "sourceRevision": {"tag": "v1.2.3", "commit": "a" * 40},
+                "imageEvidence": {"digest": "sha256:" + "b" * 64, "platforms": ["linux/amd64"]},
+                "licenseEvidence": {"spdx": "MIT", "url": "https://example.com/LICENSE"},
+                "logoEvidence": {
+                    "source": "https://example.com/logo.png",
+                    "license": "MIT",
+                    "sha256": "c" * 64,
+                },
+            }
+            spec_path.write_text(
+                json.dumps(
+                    {
+                        "appKey": "demo",
+                        "title": "Demo",
+                        "version": "latest",
+                        "image": "ghcr.io/example/demo:latest",
+                        "sourceEvidence": {
+                            "repository": "https://github.com/example/demo",
+                            "dockerDocs": "https://example.com/docker",
+                            "composeFile": "https://example.com/compose.yml",
+                            **optional_evidence,
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            subprocess.run(
+                ["python3", str(GENERATE), "--spec", str(spec_path), "--out-dir", str(out_dir)],
+                check=True,
+                cwd=ROOT,
+            )
+            evidence = json.loads((out_dir / "demo" / "source-evidence.json").read_text(encoding="utf-8"))
+
+        for field, value in optional_evidence.items():
+            with self.subTest(field=field):
+                self.assertEqual(evidence[field], value)
+
+    def test_generate_from_appspec_validation_rejects_invalid_optional_evidence(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = pathlib.Path(tmp)
+            spec_path = tmp_path / "spec.json"
+            out_dir = tmp_path / "out"
+            spec_path.write_text(
+                json.dumps(
+                    {
+                        "appKey": "demo",
+                        "title": "Demo",
+                        "version": "latest",
+                        "image": "ghcr.io/example/demo:latest",
+                        "sourceEvidence": {
+                            "repository": "https://github.com/example/demo",
+                            "dockerDocs": "https://example.com/docker",
+                            "composeFile": "https://example.com/compose.yml",
+                            "imageEvidence": {
+                                "digest": "sha256:not-a-digest",
+                                "platforms": ["linux/amd64"],
+                            },
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            proc = subprocess.run(
+                [
+                    "python3",
+                    str(GENERATE),
+                    "--spec",
+                    str(spec_path),
+                    "--out-dir",
+                    str(out_dir),
+                    "--validate",
+                    "--require-validate",
+                ],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                cwd=ROOT,
+            )
+
+        self.assertNotEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("imageEvidence.digest", proc.stdout + proc.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

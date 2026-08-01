@@ -27,8 +27,19 @@ Provide a stable `spec -> artifacts` path with explicit source evidence and repr
 - `volumes` array of `host:container` strings
 - `timezone` string (defaults to `Asia/Shanghai`, wired to `TZ` default in generated version `data.yml`)
 - `outputDir` string
+- `sourceEvidence.sourceRevision` object with optional exact `tag` and full `commit`
+- `sourceEvidence.imageEvidence` object with optional immutable `digest` and verified `platforms`
+- `sourceEvidence.licenseEvidence` object with optional `spdx` and `url`
+- `sourceEvidence.logoEvidence` object with required `source` when present and optional `license` / `sha256`
+
+The optional provenance objects are copied unchanged into `source-evidence.json` after validation.
+They do not replace the three mandatory source URLs and may be omitted for older AppSpec inputs.
 
 ## Mapping to Generated Artifacts
+
+`--out-dir <parent>` is a parent directory. For `appKey: demo`, generation writes
+`<parent>/demo/`; do not pass `<parent>/demo` as `--out-dir`, which would request
+`<parent>/demo/demo/`.
 
 - root metadata: `<app>/data.yml`
 - app readme: `<app>/README.md`
@@ -37,6 +48,9 @@ Provide a stable `spec -> artifacts` path with explicit source evidence and repr
 - compose: `<app>/<version>/docker-compose.yml`
 - env sample: `<app>/<version>/.env.sample`
 - lifecycle scripts: `<app>/<version>/scripts/*.sh`
+
+The requested app root must directly contain `data.yml`, `source-evidence.json`,
+and the selected version directory. A duplicate `<app-key>/<app-key>/` root is invalid.
 
 ## Validation Expectations
 

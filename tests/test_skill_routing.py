@@ -155,6 +155,31 @@ class SkillRoutingTests(unittest.TestCase):
             with self.subTest(requirement=requirement):
                 self.assertIn(requirement, route)
 
+    def test_new_app_route_defines_parent_output_and_public_url_contracts(self) -> None:
+        router = self.skill[self.start : self.rule_priority]
+        route = next(line for line in router.splitlines() if line.startswith("1. "))
+        for requirement in (
+            '--out-dir "$RUN_ROOT/artifact"',
+            '"$RUN_ROOT/artifact/<app-key>"',
+            "data.yml",
+            "source-evidence.json",
+            "<app-key>/<app-key>",
+            "localhost",
+            "127.0.0.1",
+            "required form field",
+            "optional",
+        ):
+            with self.subTest(requirement=requirement):
+                self.assertIn(requirement, route)
+
+    def test_source_policy_documents_backward_compatible_optional_evidence(self) -> None:
+        policy = (REPO_ROOT / "references" / "source-policy.md").read_text(encoding="utf-8")
+        appspec = (REPO_ROOT / "references" / "appspec.md").read_text(encoding="utf-8")
+        for field in ("sourceRevision", "imageEvidence", "licenseEvidence", "logoEvidence"):
+            with self.subTest(field=field):
+                self.assertIn(field, policy)
+                self.assertIn(field, appspec)
+
     def test_completion_gates_front_load_low_model_quality_guards(self) -> None:
         router = self.skill[self.start : self.rule_priority]
         for guard in (
