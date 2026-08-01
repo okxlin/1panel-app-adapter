@@ -27,6 +27,25 @@ runtime_utils = load_module(RUNTIME_UTILS, "runtime_script_utils_test")
 
 
 class RuntimeScriptGenerationTest(unittest.TestCase):
+    def test_collect_runtime_paths_rejects_unsafe_defaults(self):
+        for default in ("/srv/demo", "../outside", "./data/../../outside"):
+            with self.subTest(default=default):
+                version_data = {
+                    "additionalProperties": {
+                        "formFields": [
+                            {
+                                "envKey": "APP_DATA_DIR",
+                                "type": "text",
+                                "required": True,
+                                "default": default,
+                            }
+                        ]
+                    }
+                }
+
+                with self.assertRaisesRegex(ValueError, "package-local relative path"):
+                    runtime_utils.collect_runtime_path_fields(version_data)
+
     def test_render_init_script_uses_path_fields_and_file_parents(self):
         version_data = {
             "additionalProperties": {
@@ -81,6 +100,75 @@ class RuntimeScriptGenerationTest(unittest.TestCase):
             self.assertTrue((root / "custom-data").is_dir())
             self.assertTrue((root / "config").is_dir())
             self.assertFalse((pathlib.Path(tmp) / "custom-data").exists())
+
+    def test_rendered_init_rejects_absolute_and_parent_traversal_values(self):
+        version_data = {
+            "additionalProperties": {
+                "formFields": [{"envKey": "APP_DATA_DIR", "default": "./data"}]
+            }
+        }
+
+        for configured in ("/tmp/adapter-escape", "../adapter-escape"):
+            with self.subTest(configured=configured), tempfile.TemporaryDirectory() as tmp:
+                root = pathlib.Path(tmp) / "app" / "latest"
+                scripts_dir = root / "scripts"
+                scripts_dir.mkdir(parents=True)
+                init_script = scripts_dir / "init.sh"
+                init_script.write_text(
+                    runtime_utils.render_init_script_content(version_data),
+                    encoding="utf-8",
+                )
+                init_script.chmod(0o755)
+                (root / ".env").write_text(
+                    f"APP_DATA_DIR={configured}\n",
+                    encoding="utf-8",
+                )
+
+                proc = subprocess.run(
+                    ["bash", str(init_script)],
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    cwd=tmp,
+                )
+
+                self.assertNotEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+                self.assertIn("unsafe APP_DATA_DIR path", proc.stderr)
+
+    def test_rendered_init_rejects_symlink_escape(self):
+        version_data = {
+            "additionalProperties": {
+                "formFields": [{"envKey": "APP_DATA_DIR", "default": "./data"}]
+            }
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = pathlib.Path(tmp)
+            root = tmp_path / "app" / "latest"
+            scripts_dir = root / "scripts"
+            outside = tmp_path / "outside"
+            scripts_dir.mkdir(parents=True)
+            outside.mkdir()
+            (root / "data").symlink_to(outside, target_is_directory=True)
+            init_script = scripts_dir / "init.sh"
+            init_script.write_text(
+                runtime_utils.render_init_script_content(version_data),
+                encoding="utf-8",
+            )
+            init_script.chmod(0o755)
+            (root / ".env").write_text("APP_DATA_DIR=./data/nested\n", encoding="utf-8")
+
+            proc = subprocess.run(
+                ["bash", str(init_script)],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                cwd=tmp,
+            )
+
+            self.assertNotEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+            self.assertIn("unsafe APP_DATA_DIR path", proc.stderr)
+            self.assertFalse((outside / "nested").exists())
 
     def test_finalize_runtime_scripts_uses_version_data_defaults(self):
         with tempfile.TemporaryDirectory() as tmp:
