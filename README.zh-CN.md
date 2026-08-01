@@ -152,6 +152,7 @@ bash scripts/validate-v2.sh --dir <app-dir> --source-evidence-mode required
 
 - [来源策略](./references/source-policy.md)
 - [拓扑预检](./references/topology-preflight.md)
+- [生命周期安全](./references/lifecycle-safety.md)
 - [1Panel schema 事实表](./references/schema.md)
 - [应用 README 风格](./references/readme-style.md)
 - [隐式环境变量](./references/implicit-envkeys.md)

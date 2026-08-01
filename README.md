@@ -163,6 +163,7 @@ Text and shell files are expected to use LF line endings.
 
 - [Source policy](./references/source-policy.md)
 - [Topology preflight](./references/topology-preflight.md)
+- [Lifecycle safety](./references/lifecycle-safety.md)
 - [1Panel schema facts](./references/schema.md)
 - [App README style](./references/readme-style.md)
 - [Implicit environment keys](./references/implicit-envkeys.md)

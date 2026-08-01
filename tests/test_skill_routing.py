@@ -56,6 +56,7 @@ class SkillRoutingTests(unittest.TestCase):
         for reference in (
             "references/source-policy.md",
             "references/topology-preflight.md",
+            "references/lifecycle-safety.md",
             "references/appspec.md",
             "references/baota-app-format.md",
             "references/baota-migration-workflow.md",
@@ -69,18 +70,45 @@ class SkillRoutingTests(unittest.TestCase):
     def test_each_route_binds_its_command_references_and_review_step(self) -> None:
         router = self.skill[self.start : self.rule_priority]
         expected = {
-            1: ("scripts/scaffold-v2.sh", "references/source-policy.md", "references/topology-preflight.md"),
-            2: ("scripts/generate-from-appspec.py", "references/appspec.md", "references/source-policy.md"),
-            3: ("scripts/migrate-v1-to-v2.sh", "references/upgrade-maintenance.md"),
+            1: (
+                "scripts/scaffold-v2.sh",
+                "references/source-policy.md",
+                "references/topology-preflight.md",
+                "references/lifecycle-safety.md",
+            ),
+            2: (
+                "scripts/generate-from-appspec.py",
+                "references/appspec.md",
+                "references/source-policy.md",
+                "references/lifecycle-safety.md",
+            ),
+            3: (
+                "scripts/migrate-v1-to-v2.sh",
+                "references/upgrade-maintenance.md",
+                "references/lifecycle-safety.md",
+            ),
             4: (
                 "scripts/import-baota-app.py",
                 "references/baota-app-format.md",
                 "references/baota-migration-workflow.md",
                 "references/baota-to-1panel-mapping.md",
+                "references/lifecycle-safety.md",
             ),
-            5: ("helper commands", "references/upgrade-maintenance.md"),
-            6: ("scripts/validate-v2.sh", "references/source-policy.md"),
-            7: ("helper commands", "references/php-runtime.md"),
+            5: (
+                "helper commands",
+                "references/upgrade-maintenance.md",
+                "references/lifecycle-safety.md",
+            ),
+            6: (
+                "scripts/validate-v2.sh",
+                "references/source-policy.md",
+                "references/lifecycle-safety.md",
+            ),
+            7: (
+                "helper commands",
+                "references/php-runtime.md",
+                "references/lifecycle-safety.md",
+            ),
         }
 
         for number, required in expected.items():
@@ -136,6 +164,11 @@ class SkillRoutingTests(unittest.TestCase):
             "exact delivered artifact",
             "license",
             "English fields",
+            "runtime UID/GID",
+            "confined",
+            "exact source file",
+            "secret format",
+            "URL-encode",
         ):
             with self.subTest(guard=guard):
                 self.assertIn(guard, router)
