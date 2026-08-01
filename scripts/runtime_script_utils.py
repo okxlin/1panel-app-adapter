@@ -3,11 +3,15 @@
 
 from __future__ import annotations
 
+import re
 import sys
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Iterable
 
 import yaml
+
+
+ENV_KEY_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 def _iter_form_fields(fields: Iterable[Any]):
@@ -30,14 +34,25 @@ def _is_path_default(value: Any) -> bool:
     return value.startswith(("./", "../", "/"))
 
 
-def _looks_like_file(env_key: str, default: str) -> bool:
+def _validate_package_local_default(env_key: str, value: str) -> None:
+    path = PurePosixPath(value)
+    if (
+        not value.startswith("./")
+        or value in (".", "./")
+        or path.is_absolute()
+        or ".." in path.parts
+        or any(ord(char) < 32 or ord(char) == 127 for char in value)
+    ):
+        raise ValueError(
+            f"{env_key} path default must be a package-local relative path beginning with ./"
+        )
+
+
+def _is_explicit_directory(env_key: str, default: str) -> bool:
     env_upper = str(env_key or "").upper()
     if "FILE" in env_upper:
-        return True
-    basename = Path(default).name
-    if not basename or default.endswith("/"):
         return False
-    return "." in basename
+    return bool(re.search(r"(^|_)DIR($|_)", env_upper)) or default.endswith("/")
 
 
 def collect_runtime_path_fields(version_data: dict[str, Any]) -> list[dict[str, str]]:
@@ -50,12 +65,19 @@ def collect_runtime_path_fields(version_data: dict[str, Any]) -> list[dict[str, 
         if not env_key or env_key in seen or not _is_path_default(default):
             continue
         default_str = str(default)
+        if not ENV_KEY_PATTERN.fullmatch(env_key):
+            raise ValueError(f"{env_key!r} is not a valid environment variable name")
+        _validate_package_local_default(env_key, default_str)
+        if not _is_explicit_directory(env_key, default_str):
+            raise ValueError(
+                f"{env_key} is not an explicit directory field; define an application-specific "
+                "exact file lifecycle or rename a proven directory field with a DIR segment"
+            )
         seen.add(env_key)
         path_fields.append(
             {
                 "envKey": env_key,
                 "default": default_str,
-                "kind": "file" if _looks_like_file(env_key, default_str) else "dir",
             }
         )
     return path_fields
@@ -71,11 +93,19 @@ def render_init_script_content(version_data: dict[str, Any]) -> str:
         "#!/usr/bin/env bash",
         "set -euo pipefail",
         "",
-        'ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"',
+        'ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"',
         'ENV_FILE="${ENV_FILE:-$ROOT_DIR/.env}"',
     ]
     if not path_fields:
-        lines.extend(["", 'mkdir -p "$ROOT_DIR/data"'])
+        lines.extend(
+            [
+                "",
+                'DATA_DIR="$ROOT_DIR/data"',
+                '[[ ! -L "$DATA_DIR" ]] || { echo "unsafe PACKAGE_DATA_DIR path" >&2; exit 1; }',
+                'mkdir -p -- "$DATA_DIR"',
+                '[[ ! -L "$DATA_DIR" ]] || { echo "unsafe PACKAGE_DATA_DIR path" >&2; exit 1; }',
+            ]
+        )
         return "\n".join(lines) + "\n"
 
     lines.extend(
@@ -105,26 +135,47 @@ def render_init_script_content(version_data: dict[str, Any]) -> str:
             "}",
             "",
             "resolve_app_path() {",
-            '  local raw="$1"',
-            '  if [[ "$raw" = /* ]]; then',
-            "    printf '%s\\n' \"$raw\"",
-            "  else",
-            "    printf '%s\\n' \"$ROOT_DIR/${raw#./}\"",
+            '  local key="$1"',
+            '  local raw="$2"',
+            "  local clean candidate resolved current part",
+            "  local -a parts=()",
+            '  case "$raw" in',
+            '    ""|/*|.|..|../*|*/../*|*/..) echo "unsafe ${key} path" >&2; return 1 ;;',
+            "  esac",
+            '  if [[ "$raw" =~ [[:cntrl:]] ]]; then',
+            '    echo "unsafe ${key} path" >&2',
+            "    return 1",
             "  fi",
+            '  clean="${raw#./}"',
+            '  [[ -n "$clean" ]] || { echo "unsafe ${key} path" >&2; return 1; }',
+            '  command -v realpath >/dev/null 2>&1 || { echo "realpath is required" >&2; return 1; }',
+            '  candidate="$ROOT_DIR/$clean"',
+            '  resolved="$(realpath -m -- "$candidate")" || { echo "unsafe ${key} path" >&2; return 1; }',
+            '  case "$resolved" in',
+            '    "$ROOT_DIR"/*) ;;',
+            '    *) echo "unsafe ${key} path" >&2; return 1 ;;',
+            "  esac",
+            '  current="$ROOT_DIR"',
+            "  IFS='/' read -r -a parts <<< \"$clean\"",
+            '  for part in "${parts[@]}"; do',
+            '    [[ -z "$part" || "$part" == "." ]] && continue',
+            '    current="$current/$part"',
+            '    if [[ -L "$current" ]]; then',
+            '      echo "unsafe ${key} path" >&2',
+            "      return 1",
+            "    fi",
+            "  done",
+            "  printf '%s\\n' \"$resolved\"",
             "}",
             "",
             "ensure_dir() {",
+            '  local key="$1"',
+            "  local raw",
             "  local path",
-            '  path="$(resolve_app_path "$(configured_value "$1" "$2")")"',
-            '  mkdir -p "$path"',
-            "}",
-            "",
-            "ensure_file_parent() {",
-            "  local path",
-            "  local parent",
-            '  path="$(resolve_app_path "$(configured_value "$1" "$2")")"',
-            '  parent="$(dirname "$path")"',
-            '  mkdir -p "$parent"',
+            '  raw="$(configured_value "$key" "$2")"',
+            '  path="$(resolve_app_path "$key" "$raw")"',
+            '  mkdir -p -- "$path"',
+            '  [[ "$(resolve_app_path "$key" "$raw")" == "$path" ]] || { echo "unsafe ${key} path" >&2; return 1; }',
             "}",
             "",
         ]
@@ -132,10 +183,7 @@ def render_init_script_content(version_data: dict[str, Any]) -> str:
     for field in path_fields:
         env_key = _shell_double_quote(field["envKey"])
         default = _shell_double_quote(field["default"])
-        if field["kind"] == "file":
-            lines.append(f'ensure_file_parent "{env_key}" "{default}"')
-        else:
-            lines.append(f'ensure_dir "{env_key}" "{default}"')
+        lines.append(f'ensure_dir "{env_key}" "{default}"')
     return "\n".join(lines) + "\n"
 
 

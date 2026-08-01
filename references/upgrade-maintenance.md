@@ -28,7 +28,6 @@ When adding or renaming environment variables:
 - if selector support adds a new driving field such as `PANEL_DB_TYPE` or renames an existing host envKey, backfill it in `upgrade.sh` instead of assuming old installs will recreate `.env` from scratch
 - preserve an existing selector value such as `localmysql` even when new installs no longer offer it; removing an option from `data.yml` must not rewrite a working old `.env` or database host
 - source any required runtime administrator password from the selected installed runtime during validation; do not replace an old application's stored database password with a form default or a newly generated value
-- for public domain / public URL / public IP fields, prefer an empty required field plus README guidance over a test-only placeholder such as `127.0.0.1` or `localhost`
 - keep `.env.sample`, `data.yml` formFields, and compose `${VAR}` references closed and consistent
 
 If a new version directory is a GPU or CUDA variant with narrower platform coverage than the default version:

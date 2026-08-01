@@ -27,7 +27,62 @@ runtime_utils = load_module(RUNTIME_UTILS, "runtime_script_utils_test")
 
 
 class RuntimeScriptGenerationTest(unittest.TestCase):
-    def test_render_init_script_uses_path_fields_and_file_parents(self):
+    def test_collect_runtime_paths_rejects_unsafe_defaults(self):
+        for default in ("/srv/demo", "../outside", "./data/../../outside", "./data\tbad"):
+            with self.subTest(default=default):
+                version_data = {
+                    "additionalProperties": {
+                        "formFields": [
+                            {
+                                "envKey": "APP_DATA_DIR",
+                                "type": "text",
+                                "required": True,
+                                "default": default,
+                            }
+                        ]
+                    }
+                }
+
+                with self.assertRaisesRegex(ValueError, "package-local relative path"):
+                    runtime_utils.collect_runtime_path_fields(version_data)
+
+    def test_collect_runtime_paths_rejects_invalid_environment_keys(self):
+        for env_key in ("APP.DATA_DIR", "APP-DATA-DIR", "APP_DATA_DIR[$(id)]"):
+            with self.subTest(env_key=env_key):
+                version_data = {
+                    "additionalProperties": {
+                        "formFields": [
+                            {
+                                "envKey": env_key,
+                                "type": "text",
+                                "required": True,
+                                "default": "./data",
+                            }
+                        ]
+                    }
+                }
+
+                with self.assertRaisesRegex(ValueError, "environment variable name"):
+                    runtime_utils.collect_runtime_path_fields(version_data)
+
+    def test_collect_runtime_paths_rejects_ambiguous_file_like_fields(self):
+        for env_key, default in (
+            ("APP_CONFIG", "./config/app.toml"),
+            ("APP_CONFIG", "./config/Caddyfile"),
+            ("APP_DATA_PATH", "./data"),
+            ("APP_CONFIG_FILE", "./config"),
+        ):
+            with self.subTest(env_key=env_key, default=default):
+                version_data = {
+                    "additionalProperties": {
+                        "formFields": [{"envKey": env_key, "default": default}]
+                    }
+                }
+
+                with self.assertRaisesRegex(ValueError, "exact file lifecycle"):
+                    runtime_utils.collect_runtime_path_fields(version_data)
+
+    def test_render_init_script_uses_directory_path_fields(self):
         version_data = {
             "additionalProperties": {
                 "formFields": [
@@ -38,10 +93,10 @@ class RuntimeScriptGenerationTest(unittest.TestCase):
                         "default": "./data",
                     },
                     {
-                        "envKey": "CUSTOM_ENV_FILE",
+                        "envKey": "CUSTOM_CACHE_DIR",
                         "type": "text",
                         "required": False,
-                        "default": "./data/custom.env",
+                        "default": "./cache",
                     },
                 ]
             }
@@ -50,7 +105,8 @@ class RuntimeScriptGenerationTest(unittest.TestCase):
         content = runtime_utils.render_init_script_content(version_data)
 
         self.assertIn('ensure_dir "APP_DATA_DIR" "./data"', content)
-        self.assertIn('ensure_file_parent "CUSTOM_ENV_FILE" "./data/custom.env"', content)
+        self.assertIn('ensure_dir "CUSTOM_CACHE_DIR" "./cache"', content)
+        self.assertNotIn("ensure_file_parent", content)
         self.assertIn('ENV_FILE="${ENV_FILE:-$ROOT_DIR/.env}"', content)
         self.assertNotIn("mkdir -p ./data\n", content)
 
@@ -59,7 +115,7 @@ class RuntimeScriptGenerationTest(unittest.TestCase):
             "additionalProperties": {
                 "formFields": [
                     {"envKey": "APP_DATA_DIR", "default": "./data"},
-                    {"envKey": "CUSTOM_ENV_FILE", "default": "./data/custom.env"},
+                    {"envKey": "CUSTOM_CACHE_DIR", "default": "./cache"},
                 ]
             }
         }
@@ -72,15 +128,145 @@ class RuntimeScriptGenerationTest(unittest.TestCase):
             init_script.write_text(runtime_utils.render_init_script_content(version_data), encoding="utf-8")
             init_script.chmod(0o755)
             (root / ".env").write_text(
-                "APP_DATA_DIR='./custom-data'\nCUSTOM_ENV_FILE=\"./config/runtime.env\"\n",
+                "APP_DATA_DIR='./custom-data'\nCUSTOM_CACHE_DIR=\"./custom-cache\"\n",
                 encoding="utf-8",
             )
 
             subprocess.run(["bash", str(init_script)], check=True, cwd=tmp)
 
             self.assertTrue((root / "custom-data").is_dir())
-            self.assertTrue((root / "config").is_dir())
+            self.assertTrue((root / "custom-cache").is_dir())
             self.assertFalse((pathlib.Path(tmp) / "custom-data").exists())
+
+    def test_rendered_init_rejects_absolute_and_parent_traversal_values(self):
+        version_data = {
+            "additionalProperties": {
+                "formFields": [{"envKey": "APP_DATA_DIR", "default": "./data"}]
+            }
+        }
+
+        for configured in ("/tmp/adapter-escape", "../adapter-escape", "./data\tbad"):
+            with self.subTest(configured=configured), tempfile.TemporaryDirectory() as tmp:
+                root = pathlib.Path(tmp) / "app" / "latest"
+                scripts_dir = root / "scripts"
+                scripts_dir.mkdir(parents=True)
+                init_script = scripts_dir / "init.sh"
+                init_script.write_text(
+                    runtime_utils.render_init_script_content(version_data),
+                    encoding="utf-8",
+                )
+                init_script.chmod(0o755)
+                (root / ".env").write_text(
+                    f"APP_DATA_DIR={configured}\n",
+                    encoding="utf-8",
+                )
+
+                proc = subprocess.run(
+                    ["bash", str(init_script)],
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    cwd=tmp,
+                )
+
+                self.assertNotEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+                self.assertIn("unsafe APP_DATA_DIR path", proc.stderr)
+
+    def test_rendered_init_rejects_symlink_escape(self):
+        version_data = {
+            "additionalProperties": {
+                "formFields": [{"envKey": "APP_DATA_DIR", "default": "./data"}]
+            }
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = pathlib.Path(tmp)
+            root = tmp_path / "app" / "latest"
+            scripts_dir = root / "scripts"
+            outside = tmp_path / "outside"
+            scripts_dir.mkdir(parents=True)
+            outside.mkdir()
+            (root / "data").symlink_to(outside, target_is_directory=True)
+            init_script = scripts_dir / "init.sh"
+            init_script.write_text(
+                runtime_utils.render_init_script_content(version_data),
+                encoding="utf-8",
+            )
+            init_script.chmod(0o755)
+            (root / ".env").write_text("APP_DATA_DIR=./data/nested\n", encoding="utf-8")
+
+            proc = subprocess.run(
+                ["bash", str(init_script)],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                cwd=tmp,
+            )
+
+            self.assertNotEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+            self.assertIn("unsafe APP_DATA_DIR path", proc.stderr)
+            self.assertFalse((outside / "nested").exists())
+
+    def test_rendered_init_rejects_inside_root_symlink(self):
+        version_data = {
+            "additionalProperties": {
+                "formFields": [{"envKey": "APP_DATA_DIR", "default": "./data"}]
+            }
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp) / "app" / "latest"
+            scripts_dir = root / "scripts"
+            real_data = root / "real-data"
+            scripts_dir.mkdir(parents=True)
+            real_data.mkdir()
+            (root / "data").symlink_to(real_data, target_is_directory=True)
+            init_script = scripts_dir / "init.sh"
+            init_script.write_text(
+                runtime_utils.render_init_script_content(version_data),
+                encoding="utf-8",
+            )
+            init_script.chmod(0o755)
+            (root / ".env").write_text("APP_DATA_DIR=./data/nested\n", encoding="utf-8")
+
+            proc = subprocess.run(
+                ["bash", str(init_script)],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                cwd=tmp,
+            )
+
+            self.assertNotEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+            self.assertIn("unsafe APP_DATA_DIR path", proc.stderr)
+            self.assertFalse((real_data / "nested").exists())
+
+    def test_rendered_default_data_directory_rejects_symlink(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = pathlib.Path(tmp)
+            root = tmp_path / "app" / "latest"
+            scripts_dir = root / "scripts"
+            outside = tmp_path / "outside"
+            scripts_dir.mkdir(parents=True)
+            outside.mkdir()
+            (root / "data").symlink_to(outside, target_is_directory=True)
+            init_script = scripts_dir / "init.sh"
+            init_script.write_text(
+                runtime_utils.render_init_script_content({}),
+                encoding="utf-8",
+            )
+            init_script.chmod(0o755)
+
+            proc = subprocess.run(
+                ["bash", str(init_script)],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                cwd=tmp,
+            )
+
+            self.assertNotEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+            self.assertIn("unsafe PACKAGE_DATA_DIR path", proc.stderr)
 
     def test_finalize_runtime_scripts_uses_version_data_defaults(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -91,14 +277,10 @@ class RuntimeScriptGenerationTest(unittest.TestCase):
                 """
 additionalProperties:
   formFields:
-    - envKey: CONFIG_PATH
+    - envKey: CONFIG_DIR
       type: text
       required: true
       default: ./data/config
-    - envKey: CUSTOM_ENV_FILE
-      type: text
-      required: false
-      default: ./data/custom.env
 """.strip()
                 + "\n",
                 encoding="utf-8",
@@ -108,9 +290,39 @@ additionalProperties:
 
             init_text = (ver_dir / "scripts" / "init.sh").read_text(encoding="utf-8")
 
-            self.assertIn('ensure_dir "CONFIG_PATH" "./data/config"', init_text)
-            self.assertIn('ensure_file_parent "CUSTOM_ENV_FILE" "./data/custom.env"', init_text)
+            self.assertIn('ensure_dir "CONFIG_DIR" "./data/config"', init_text)
+            self.assertNotIn("ensure_file_parent", init_text)
             self.assertNotIn("mkdir -p ./data\n", init_text)
+
+    def test_finalize_runtime_scripts_fails_closed_for_file_like_path(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            app_dir = pathlib.Path(tmp) / "demo"
+            ver_dir = app_dir / "latest"
+            ver_dir.mkdir(parents=True)
+            (ver_dir / "data.yml").write_text(
+                """
+additionalProperties:
+  formFields:
+    - envKey: APP_CONFIG
+      type: text
+      required: true
+      default: ./config/app.toml
+""".strip()
+                + "\n",
+                encoding="utf-8",
+            )
+
+            proc = subprocess.run(
+                ["bash", str(FINALIZE), str(app_dir), str(ver_dir)],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                cwd=ROOT,
+            )
+
+            self.assertNotEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+            self.assertIn("exact file lifecycle", proc.stderr)
+            self.assertFalse((ver_dir / "scripts" / "init.sh").exists())
 
     def test_generate_from_appspec_runtime_files_follow_volume_defaults(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -140,12 +352,12 @@ additionalProperties:
                         "volumes": ["./data:/app/data"],
                         "formFields": [
                             {
-                                "envKey": "CUSTOM_ENV_FILE",
+                                "envKey": "CUSTOM_CACHE_DIR",
                                 "type": "text",
                                 "required": False,
-                                "default": "./data/custom.env",
-                                "labelZh": "自定义环境文件",
-                                "labelEn": "Custom env file",
+                                "default": "./cache",
+                                "labelZh": "自定义缓存目录",
+                                "labelEn": "Custom cache directory",
                             }
                         ],
                     },
@@ -163,7 +375,134 @@ additionalProperties:
             init_text = (out_dir / "demo" / "latest" / "scripts" / "init.sh").read_text(encoding="utf-8")
 
             self.assertIn('ensure_dir "APP_DATA_DIR" "./data"', init_text)
-            self.assertIn('ensure_file_parent "CUSTOM_ENV_FILE" "./data/custom.env"', init_text)
+            self.assertIn('ensure_dir "CUSTOM_CACHE_DIR" "./cache"', init_text)
+
+    def test_generate_from_appspec_fails_before_output_for_file_like_path(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = pathlib.Path(tmp)
+            spec_path = tmp_path / "spec.json"
+            out_dir = tmp_path / "out"
+            spec_path.write_text(
+                json.dumps(
+                    {
+                        "appKey": "demo",
+                        "title": "Demo",
+                        "version": "latest",
+                        "image": "ghcr.io/example/demo:latest",
+                        "formFields": [
+                            {
+                                "envKey": "APP_CONFIG",
+                                "type": "text",
+                                "required": True,
+                                "default": "./config/app.toml",
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            proc = subprocess.run(
+                ["python3", str(GENERATE), "--spec", str(spec_path), "--out-dir", str(out_dir)],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                cwd=ROOT,
+            )
+
+            self.assertNotEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+            self.assertIn("exact file lifecycle", proc.stderr)
+            self.assertFalse((out_dir / "demo").exists())
+
+    def test_generate_from_appspec_preserves_optional_source_evidence(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = pathlib.Path(tmp)
+            spec_path = tmp_path / "spec.json"
+            out_dir = tmp_path / "out"
+            optional_evidence = {
+                "sourceRevision": {"tag": "v1.2.3", "commit": "a" * 40},
+                "imageEvidence": {"digest": "sha256:" + "b" * 64, "platforms": ["linux/amd64"]},
+                "licenseEvidence": {"spdx": "MIT", "url": "https://example.com/LICENSE"},
+                "logoEvidence": {
+                    "source": "https://example.com/logo.png",
+                    "license": "MIT",
+                    "sha256": "c" * 64,
+                },
+            }
+            spec_path.write_text(
+                json.dumps(
+                    {
+                        "appKey": "demo",
+                        "title": "Demo",
+                        "version": "latest",
+                        "image": "ghcr.io/example/demo:latest",
+                        "sourceEvidence": {
+                            "repository": "https://github.com/example/demo",
+                            "dockerDocs": "https://example.com/docker",
+                            "composeFile": "https://example.com/compose.yml",
+                            **optional_evidence,
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            subprocess.run(
+                ["python3", str(GENERATE), "--spec", str(spec_path), "--out-dir", str(out_dir)],
+                check=True,
+                cwd=ROOT,
+            )
+            evidence = json.loads((out_dir / "demo" / "source-evidence.json").read_text(encoding="utf-8"))
+
+        for field, value in optional_evidence.items():
+            with self.subTest(field=field):
+                self.assertEqual(evidence[field], value)
+
+    def test_generate_from_appspec_validation_rejects_invalid_optional_evidence(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = pathlib.Path(tmp)
+            spec_path = tmp_path / "spec.json"
+            out_dir = tmp_path / "out"
+            spec_path.write_text(
+                json.dumps(
+                    {
+                        "appKey": "demo",
+                        "title": "Demo",
+                        "version": "latest",
+                        "image": "ghcr.io/example/demo:latest",
+                        "sourceEvidence": {
+                            "repository": "https://github.com/example/demo",
+                            "dockerDocs": "https://example.com/docker",
+                            "composeFile": "https://example.com/compose.yml",
+                            "imageEvidence": {
+                                "digest": "sha256:not-a-digest",
+                                "platforms": ["linux/amd64"],
+                            },
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            proc = subprocess.run(
+                [
+                    "python3",
+                    str(GENERATE),
+                    "--spec",
+                    str(spec_path),
+                    "--out-dir",
+                    str(out_dir),
+                    "--validate",
+                    "--require-validate",
+                ],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                cwd=ROOT,
+            )
+
+        self.assertNotEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("imageEvidence.digest", proc.stdout + proc.stderr)
 
 
 if __name__ == "__main__":

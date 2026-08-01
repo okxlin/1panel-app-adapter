@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import pathlib
+import json
 import subprocess
 import tempfile
 import textwrap
@@ -188,6 +189,62 @@ class ValidateV2Tests(unittest.TestCase):
         self.assertNotEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         self.assertIn("[A][FAIL] missing source-evidence.json", proc.stdout)
 
+    def test_source_evidence_accepts_documented_optional_provenance(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            app = self._write_sample_app(pathlib.Path(tmp))
+            evidence_path = app / "source-evidence.json"
+            evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+            evidence.update(
+                {
+                    "sourceRevision": {
+                        "tag": "v1.2.3",
+                        "commit": "0123456789abcdef0123456789abcdef01234567",
+                    },
+                    "imageEvidence": {
+                        "digest": "sha256:" + "a" * 64,
+                        "platforms": ["linux/amd64", "linux/arm64"],
+                    },
+                    "licenseEvidence": {
+                        "spdx": "MIT",
+                        "url": "https://example.com/sample/LICENSE",
+                    },
+                    "logoEvidence": {
+                        "source": "https://example.com/sample/logo.png",
+                        "license": "MIT",
+                        "sha256": "b" * 64,
+                    },
+                }
+            )
+            evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
+            proc = subprocess.run(
+                ["bash", str(VALIDATE), "--dir", str(app), "--source-evidence-mode", "required"],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+
+    def test_source_evidence_rejects_invalid_optional_image_digest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            app = self._write_sample_app(pathlib.Path(tmp))
+            evidence_path = app / "source-evidence.json"
+            evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+            evidence["imageEvidence"] = {
+                "digest": "sha256:not-a-digest",
+                "platforms": ["linux/amd64"],
+            }
+            evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
+            proc = subprocess.run(
+                ["bash", str(VALIDATE), "--dir", str(app), "--source-evidence-mode", "required"],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+
+        self.assertNotEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("imageEvidence.digest", proc.stdout)
+
     def test_version_option_validates_selected_version_in_multi_version_app(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = self._write_sample_app(pathlib.Path(tmp))
@@ -223,6 +280,126 @@ class ValidateV2Tests(unittest.TestCase):
 
         self.assertNotEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         self.assertIn("multiple version directories found", proc.stdout)
+
+    def test_duplicate_nested_app_root_is_rejected_explicitly(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            app = self._write_sample_app(pathlib.Path(tmp))
+            nested = app / app.name
+            nested.mkdir()
+            for name in ("data.yml", "source-evidence.json", "latest"):
+                (app / name).rename(nested / name)
+            proc = subprocess.run(
+                ["bash", str(VALIDATE), "--dir", str(app)],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+
+        self.assertNotEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("duplicate nested app root", proc.stdout)
+
+    def test_lifecycle_path_from_form_cannot_reach_mutating_command_unconfined(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            app = self._write_sample_app(pathlib.Path(tmp))
+            version = app / "latest"
+            with (version / "data.yml").open("a", encoding="utf-8") as handle:
+                handle.write(
+                    "  - default: ./data\n"
+                    "    edit: true\n"
+                    "    envKey: APP_DATA_DIR\n"
+                    "    labelEn: Data directory\n"
+                    "    labelZh: 数据目录\n"
+                    "    required: true\n"
+                    "    type: text\n"
+                )
+            scripts = version / "scripts"
+            scripts.mkdir()
+            (scripts / "init.sh").write_text(
+                '#!/usr/bin/env bash\nDATA_DIR="${APP_DATA_DIR:-./data}"\nmkdir -p -- "$DATA_DIR"\n',
+                encoding="utf-8",
+            )
+            proc = subprocess.run(
+                ["bash", str(VALIDATE), "--dir", str(app)],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+
+        self.assertNotEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("unconfined form path reaches mutating command", proc.stdout)
+
+    def test_random_form_credential_raw_in_connection_url_is_flagged(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            app = self._write_sample_app(pathlib.Path(tmp))
+            version = app / "latest"
+            with (version / "data.yml").open("a", encoding="utf-8") as handle:
+                handle.write(
+                    "  - default: ''\n"
+                    "    edit: true\n"
+                    "    envKey: APP_DB_PASSWORD\n"
+                    "    labelEn: Database password\n"
+                    "    labelZh: 数据库密码\n"
+                    "    random: true\n"
+                    "    required: true\n"
+                    "    type: password\n"
+                )
+            with (version / ".env.sample").open("a", encoding="utf-8") as handle:
+                handle.write("APP_DB_PASSWORD=test-password\n")
+            compose_path = version / "docker-compose.yml"
+            compose_text = compose_path.read_text(encoding="utf-8")
+            compose_path.write_text(
+                compose_text.replace(
+                    "      - DB_TYPE=${PANEL_DB_TYPE}\n",
+                    "      - DB_TYPE=${PANEL_DB_TYPE}\n"
+                    "      - DATABASE_URL=postgresql://sample:${APP_DB_PASSWORD}@db/sample\n",
+                ),
+                encoding="utf-8",
+            )
+            proc = subprocess.run(
+                ["bash", str(VALIDATE), "--dir", str(app)],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("random credential is interpolated raw into a connection URL", proc.stdout)
+
+    def test_nested_compose_fallback_must_be_declared_in_form_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            app = self._write_sample_app(pathlib.Path(tmp))
+            version = app / "latest"
+            with (version / "data.yml").open("a", encoding="utf-8") as handle:
+                handle.write(
+                    "  - default: primary\n"
+                    "    edit: true\n"
+                    "    envKey: PRIMARY\n"
+                    "    labelEn: Primary value\n"
+                    "    labelZh: 主值\n"
+                    "    required: false\n"
+                    "    type: text\n"
+                )
+            with (version / ".env.sample").open("a", encoding="utf-8") as handle:
+                handle.write("PRIMARY=primary\n")
+            compose_path = version / "docker-compose.yml"
+            compose_text = compose_path.read_text(encoding="utf-8")
+            compose_path.write_text(
+                compose_text.replace(
+                    "      - DB_TYPE=${PANEL_DB_TYPE}\n",
+                    "      - DB_TYPE=${PANEL_DB_TYPE}\n"
+                    "      - NESTED=${PRIMARY:-${FALLBACK}}\n",
+                ),
+                encoding="utf-8",
+            )
+            proc = subprocess.run(
+                ["bash", str(VALIDATE), "--dir", str(app)],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+
+        self.assertNotEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("compose variable not declared in formFields envKey: FALLBACK", proc.stdout)
 
     def test_patch_compose_does_not_inject_default_healthcheck(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

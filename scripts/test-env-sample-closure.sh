@@ -5,6 +5,18 @@ set -euo pipefail
 # Usage: test-env-sample-closure.sh <v2-app-dir>
 
 APP_DIR="${1:?usage: test-env-sample-closure.sh <v2-app-dir>}"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PYTHON_BIN=""
+for candidate in python3 python; do
+  if command -v "$candidate" >/dev/null 2>&1 && "$candidate" -c "import sys" >/dev/null 2>&1; then
+    PYTHON_BIN="$candidate"
+    break
+  fi
+done
+if [[ -z "$PYTHON_BIN" ]]; then
+  echo "FAIL: python interpreter not available" >&2
+  exit 2
+fi
 
 # Find latest version directory
 VER_DIR=$(find "$APP_DIR" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)
@@ -26,23 +38,36 @@ if [[ ! -f "$ENV_SAMPLE" ]]; then
   exit 1
 fi
 
-# Extract variables from compose
-vars_in_compose=$(grep -oE '\$\{[^}]+\}' "$COMPOSE" | sed 's/\${//;s/}//' | sort -u)
+set +e
+compose_vars_output=$("$PYTHON_BIN" "$SCRIPT_DIR/compose_env_vars.py" "$COMPOSE" 2>&1)
+compose_vars_status=$?
+set -e
+if [[ $compose_vars_status -ne 0 ]]; then
+  echo "FAIL: cannot extract Compose variables" >&2
+  [[ -z "$compose_vars_output" ]] || echo "$compose_vars_output" >&2
+  exit 1
+fi
+vars_in_compose=()
+if [[ -n "$compose_vars_output" ]]; then
+  mapfile -t vars_in_compose <<< "$compose_vars_output"
+fi
+mapfile -t vars_in_sample < <(sed -nE 's/^([A-Za-z_][A-Za-z0-9_]*)=.*/\1/p' "$ENV_SAMPLE" | sort -u)
 
-# Extract variables from .env.sample
-vars_in_sample=$(grep -E '^[A-Za-z_][A-Za-z0-9_]*=' "$ENV_SAMPLE" | cut -d= -f1 | sort -u)
+declare -A sample_lookup=()
+for var in "${vars_in_sample[@]}"; do
+  sample_lookup["$var"]=1
+done
 
-# Check for missing variables
-missing=""
-for var in $vars_in_compose; do
-  if ! echo "$vars_in_sample" | grep -q "^${var}$"; then
-    missing="$missing $var"
+missing=()
+for var in "${vars_in_compose[@]}"; do
+  if [[ ! -v "sample_lookup[$var]" ]]; then
+    missing+=("$var")
   fi
 done
 
-if [[ -n "$missing" ]]; then
-  echo "FAIL: compose variables missing from .env.sample:$missing"
+if [[ ${#missing[@]} -gt 0 ]]; then
+  echo "FAIL: compose variables missing from .env.sample: ${missing[*]}"
   exit 1
 fi
 
-echo "PASS: .env.sample closure ok (compose_vars=$(echo "$vars_in_compose" | wc -l), sample_vars=$(echo "$vars_in_sample" | wc -l))"
+echo "PASS: .env.sample closure ok (compose_vars=${#vars_in_compose[@]}, sample_vars=${#vars_in_sample[@]})"

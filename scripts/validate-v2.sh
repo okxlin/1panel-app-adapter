@@ -78,6 +78,15 @@ ROOT="$DIR/data.yml"
 SOURCE_EVIDENCE="$DIR/source-evidence.json"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 IMPLICIT_ENVKEYS_FILE="$SCRIPT_DIR/../references/implicit-envkeys.md"
+APP_KEY="$(basename "${DIR%/}")"
+NESTED_APP_ROOT="$DIR/$APP_KEY"
+if [[ -s "$NESTED_APP_ROOT/data.yml" && -s "$NESTED_APP_ROOT/source-evidence.json" ]]; then
+  mapfile -t nested_versions < <(find "$NESTED_APP_ROOT" -mindepth 1 -maxdepth 1 -type d ! -name '.*')
+  if [[ ${#nested_versions[@]} -gt 0 ]]; then
+    echo "[A][FAIL] duplicate nested app root detected: $NESTED_APP_ROOT (pass the parent output directory to the generator, then validate $DIR only after data.yml and source-evidence.json exist directly there)"
+    exit 1
+  fi
+fi
 mapfile -t version_dirs < <(find "$DIR" -mindepth 1 -maxdepth 1 -type d ! -name '.*')
 if [[ ${#version_dirs[@]} -eq 0 ]]; then
   echo "[A][FAIL] missing version directory"
@@ -186,37 +195,36 @@ if [[ $FAILURES -gt 0 ]]; then
   exit 1
 fi
 
+set +e
+adaptation_safety_output=$("$PYTHON_BIN" "$SCRIPT_DIR/validate_adaptation_safety.py" \
+  --version-data "$VER" \
+  --compose "$COMPOSE" \
+  --scripts-dir "$VER_DIR/scripts")
+adaptation_safety_status=$?
+set -e
+if [[ -n "$adaptation_safety_output" ]]; then
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    echo "$line"
+    if [[ "$line" == "[A][FAIL]"* ]]; then
+      FAILURES=$((FAILURES + 1))
+    elif [[ "$line" == "[B][WARN]"* ]]; then
+      WARNINGS=$((WARNINGS + 1))
+    fi
+  done <<< "$adaptation_safety_output"
+fi
+if [[ $adaptation_safety_status -ne 0 && $FAILURES -eq 0 ]]; then
+  fail "adaptation safety analysis failed without a finding"
+fi
+
+if [[ $FAILURES -gt 0 ]]; then
+  echo "SUMMARY: fail=$FAILURES warn=$WARNINGS info=$INFOS"
+  exit 1
+fi
+
 if [[ -s "$SOURCE_EVIDENCE" && "$SOURCE_EVIDENCE_MODE" != "off" ]]; then
   set +e
-  source_ev_output=$("$PYTHON_BIN" - <<'PY' "$SOURCE_EVIDENCE"
-import json
-import re
-import sys
-from pathlib import Path
-
-path = Path(sys.argv[1])
-required = ["repository", "dockerDocs", "composeFile"]
-try:
-    payload = json.loads(path.read_text(encoding="utf-8"))
-except Exception as exc:
-    print(f"[A][FAIL] source-evidence.json invalid JSON: {exc}")
-    raise SystemExit(1)
-
-failures = 0
-for key in required:
-    value = payload.get(key)
-    if not isinstance(value, str) or not value.strip():
-        print(f"[A][FAIL] source-evidence.json missing key: {key}")
-        failures += 1
-        continue
-    if not re.match(r'^https://[^\s]+$', value.strip()):
-        print(f"[A][FAIL] source-evidence.json key must be https URL: {key}")
-        failures += 1
-
-if failures:
-    raise SystemExit(1)
-PY
-)
+  source_ev_output=$("$PYTHON_BIN" "$SCRIPT_DIR/source_evidence.py" "$SOURCE_EVIDENCE")
   source_ev_status=$?
   set -e
   if [[ -n "$source_ev_output" ]]; then
@@ -577,10 +585,13 @@ if [[ $network_status -ne 0 && $FAILURES -eq 0 ]]; then
 fi
 
 set +e
-env_closure_output=$("$PYTHON_BIN" - <<'PY' "$VER" "$COMPOSE" "$IMPLICIT_ENVKEYS_FILE"
+env_closure_output=$("$PYTHON_BIN" - <<'PY' "$VER" "$COMPOSE" "$IMPLICIT_ENVKEYS_FILE" "$SCRIPT_DIR"
 import re
 import sys
 from pathlib import Path
+
+sys.path.insert(0, sys.argv[4])
+from compose_env_vars import extract_compose_variable_names
 
 ver_path = Path(sys.argv[1])
 compose_path = Path(sys.argv[2])
@@ -597,12 +608,7 @@ if implicit_path.is_file():
             implicit.add(m.group(1))
 
 compose_text = compose_path.read_text(encoding='utf-8', errors='ignore')
-vars_found = set()
-for raw in re.findall(r'\$\{([^}]+)\}', compose_text):
-    key = raw.strip()
-    key = re.split(r'[:?+\-]', key, maxsplit=1)[0].strip()
-    if re.match(r'^[A-Za-z_][A-Za-z0-9_]*$', key):
-        vars_found.add(key)
+vars_found = extract_compose_variable_names(compose_text)
 
 missing = sorted(v for v in vars_found if v not in declared and v not in implicit)
 if missing:
@@ -634,9 +640,12 @@ fi
 
 # .env.sample consistency check
 set +e
-env_sample_output=$("$PYTHON_BIN" - <<'PY' "$COMPOSE" "$VER_DIR/.env.sample"
+env_sample_output=$("$PYTHON_BIN" - <<'PY' "$COMPOSE" "$VER_DIR/.env.sample" "$SCRIPT_DIR"
 import re, sys
 from pathlib import Path
+
+sys.path.insert(0, sys.argv[3])
+from compose_env_vars import extract_compose_variable_names
 
 compose_path = Path(sys.argv[1])
 env_sample_path = Path(sys.argv[2])
@@ -646,12 +655,7 @@ if not env_sample_path.is_file():
     raise SystemExit(1)
 
 compose_text = compose_path.read_text(encoding='utf-8', errors='ignore')
-vars_in_compose = set()
-for raw in re.findall(r'\$\{([^}]+)\}', compose_text):
-    key = raw.strip()
-    key = re.split(r'[:?+\-]', key, maxsplit=1)[0].strip()
-    if re.match(r'^[A-Za-z_][A-Za-z0-9_]*$', key):
-        vars_in_compose.add(key)
+vars_in_compose = extract_compose_variable_names(compose_text)
 
 env_sample_text = env_sample_path.read_text(encoding='utf-8', errors='ignore')
 vars_in_sample = set()

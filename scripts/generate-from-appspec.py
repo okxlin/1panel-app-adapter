@@ -46,7 +46,8 @@ from baota_import_lib import (
     evaluate_baota_delivery_readiness,
     run_strict_store_validation,
 )
-from runtime_script_utils import write_init_script
+from runtime_script_utils import collect_runtime_path_fields, write_init_script
+from source_evidence import load_source_evidence, validate_source_evidence
 
 EXIT_SUCCESS = 0
 EXIT_FAILURE = 1
@@ -114,6 +115,13 @@ def _normalize_appspec(raw_spec: Dict[str, Any]) -> Dict[str, Any]:
         spec.setdefault("evidenceStatus", source_evidence.get("evidenceStatus", "official_partial"))
         spec.setdefault("architectures", source_evidence.get("architectures", ["amd64"]))
         spec.setdefault("architectureEvidence", source_evidence.get("architectureEvidence", "unverified_default"))
+        for field in ("sourceRevision", "imageEvidence", "licenseEvidence", "logoEvidence"):
+            if field in source_evidence:
+                spec.setdefault(field, source_evidence[field])
+
+    evidence_errors = validate_source_evidence(spec, require_urls=False)
+    if evidence_errors:
+        raise ValueError("invalid source evidence: " + "; ".join(evidence_errors))
 
     spec["type"] = _canonical_type(spec.get("type", "Tool"))
     spec["tag"] = _canonical_type(spec.get("tag") or spec.get("type") or "Tool")
@@ -185,6 +193,7 @@ class AppSpecGenerator:
 
     def generate(self) -> str:
         """Generate the complete 1Panel v2 app directory. Returns output path."""
+        collect_runtime_path_fields(self._build_version_data())
         self._ensure_dirs()
         self._write_root_data_yml()
         self._write_version_data_yml()
@@ -231,13 +240,16 @@ class AppSpecGenerator:
     # ── Version data.yml ──────────────────────────────────────────────
 
     def _write_version_data_yml(self) -> None:
+        self._write_yaml(self.version_dir / "data.yml", self._build_version_data())
+
+    def _build_version_data(self) -> Dict[str, Any]:
         form_fields = self._build_form_fields()
         ver_data: Dict[str, Any] = {
             "additionalProperties": {},
         }
         if form_fields:
             ver_data["additionalProperties"]["formFields"] = form_fields
-        self._write_yaml(self.version_dir / "data.yml", ver_data)
+        return ver_data
 
     def _build_form_fields(self) -> List[Dict[str, Any]]:
         """Build formFields from spec formFields[] + ports[]."""
@@ -422,6 +434,11 @@ class AppSpecGenerator:
             "architectureEvidence": self.spec.get("architectureEvidence", "unverified_default"),
         }
 
+        for field in ("sourceRevision", "imageEvidence", "licenseEvidence", "logoEvidence"):
+            value = self.spec.get(field)
+            if isinstance(value, dict) and value:
+                evidence[field] = value
+
         import_source = self.spec.get("importSource")
         if import_source:
             evidence["importSource"] = import_source
@@ -505,6 +522,13 @@ def validate_output(app_dir: str) -> Dict[str, Any]:
     """Basic validation: check required files exist."""
     app_path = pathlib.Path(app_dir)
     errors = []
+    nested_app = app_path / app_path.name
+    if (
+        (nested_app / "data.yml").is_file()
+        and (nested_app / "source-evidence.json").is_file()
+        and any(path.is_dir() for path in nested_app.iterdir())
+    ):
+        errors.append(f"Invalid: duplicate nested app root: {nested_app}")
     checks = {
         "data.yml": app_path / "data.yml",
         "README.md": app_path / "README.md",
@@ -517,6 +541,15 @@ def validate_output(app_dir: str) -> Dict[str, Any]:
     logo = app_path / "logo.png"
     if logo.is_file() and logo.stat().st_size == 0:
         errors.append("Invalid: logo.png is empty")
+
+    evidence_path = app_path / "source-evidence.json"
+    if evidence_path.is_file():
+        try:
+            evidence = load_source_evidence(evidence_path)
+            for error in validate_source_evidence(evidence, require_urls=False):
+                errors.append(f"Invalid: source-evidence.json {error}")
+        except (OSError, json.JSONDecodeError) as exc:
+            errors.append(f"Invalid: source-evidence.json invalid JSON: {exc}")
 
     # Check version dir
     subdirs = [d for d in app_path.iterdir() if d.is_dir()]

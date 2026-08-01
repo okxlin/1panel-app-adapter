@@ -22,6 +22,53 @@ Every generated app must provide source evidence containing at least:
 These values are written to `<app>/source-evidence.json` and validated by `scripts/validate-v2.sh`.
 Each evidence value must use `https://` URL format.
 
+## Optional Evidence
+
+The three mandatory URL fields above remain the backward-compatible minimum. Add these objects
+only when their values were verified from official source, registry, license, or asset evidence:
+
+```json
+{
+  "sourceRevision": {
+    "tag": "v1.2.3",
+    "commit": "0123456789abcdef0123456789abcdef01234567"
+  },
+  "imageEvidence": {
+    "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "platforms": ["linux/amd64", "linux/arm64"]
+  },
+  "licenseEvidence": {
+    "spdx": "MIT",
+    "url": "https://example.com/project/LICENSE"
+  },
+  "logoEvidence": {
+    "source": "https://example.com/project/logo.png",
+    "license": "MIT",
+    "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  }
+}
+```
+
+- `sourceRevision.tag` is the exact release tag; `sourceRevision.commit` is the full 40- or
+  64-hex commit identifier resolved for that tag.
+- `imageEvidence.digest` is an immutable `sha256:` image digest. `imageEvidence.platforms`
+  records verified OCI platform strings and must not be inferred from the host running the test.
+- `licenseEvidence.spdx` records an SPDX expression when known; `licenseEvidence.url` links the
+  exact upstream license evidence.
+- `logoEvidence.source` is an HTTPS source URL or `bundled:<repo-relative-path>` for a repository
+  asset. Record its license when known and the delivered PNG SHA-256 when calculated.
+
+Omit unknown optional keys instead of writing placeholders such as `unknown`, `latest`, or a
+floating image tag.
+
+## Public URL Inputs
+
+Treat callback, origin, external base, and other browser-facing public URLs as deployment inputs.
+Never synthesize `localhost` or `127.0.0.1` for these fields: those values point back to the
+client or container and usually break redirects, webhooks, CORS, or generated links. Expose an
+upstream-required public URL as a required 1Panel form field. Leave an optional public URL empty
+or omit it, and document which feature stays unavailable until the operator supplies one.
+
 ## Anti-Guessing Rules
 
 Do not guess or invent Docker deployment details when not explicitly backed by official sources.
