@@ -13,6 +13,7 @@ import json
 import os
 import pathlib
 import re
+import subprocess
 import sys
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -40,6 +41,7 @@ E_BAOTA_VERSION_INVALID = "E_BAOTA_VERSION_INVALID"
 E_BAOTA_VERSION_DIR_MISSING = "E_BAOTA_VERSION_DIR_MISSING"
 E_BAOTA_VERSION_MISSING = "E_BAOTA_VERSION_MISSING"
 E_BAOTA_DISABLED = "E_BAOTA_DISABLED"
+E_1PANEL_VALIDATION_MODE_REQUIRED = "E_1PANEL_VALIDATION_MODE_REQUIRED"
 
 APP_KEY_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,127}$")
 VERSION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
@@ -76,31 +78,7 @@ BAOTA_FIELD_TYPE_TO_FORM: Dict[str, str] = {
     "password": "password",
 }
 
-# ── Official source patterns ──────────────────────────────────────────
-KNOWN_OFFICIAL_DOMAINS = [
-    "github.com",
-    "hub.docker.com",
-    "docs.docker.com",
-]
-KNOWN_OFFICIAL_PATTERNS = [
-    re.compile(r) for r in [
-        r"^https?://github\.com/[^/]+/[^/]+",
-        r"^https?://hub\.docker\.com/r/[^/]+/[^/]+",
-        r"^https?://[^/]+\.readthedocs\.io",
-        r"^https?://[^/]+\.github\.io",
-    ]
-]
-
 # ── Helpers ───────────────────────────────────────────────────────────
-
-def _is_official_url(url: str) -> bool:
-    """Determine if a URL matches a known official source pattern."""
-    if not url or not isinstance(url, str):
-        return False
-    url_lower = url.lower()
-    if any(domain in url_lower for domain in KNOWN_OFFICIAL_DOMAINS):
-        return True
-    return any(pat.search(url) for pat in KNOWN_OFFICIAL_PATTERNS)
 
 
 def _is_https_url(url: Any) -> bool:
@@ -145,6 +123,91 @@ def _load_compose_document(compose_path: pathlib.Path) -> Dict[str, Any]:
     if invalid_services:
         raise ValueError(f"Compose services must be mappings: {', '.join(map(str, invalid_services))}")
     return compose
+
+
+def run_strict_store_validation(
+    app_dir: str,
+    version: Optional[str] = None,
+    emit_output: bool = False,
+) -> Dict[str, Any]:
+    validate_script = pathlib.Path(__file__).resolve().parent / "validate-v2.sh"
+    if not validate_script.is_file():
+        return {
+            "mode": "strict-store",
+            "validator": str(validate_script),
+            "valid": False,
+            "failed": True,
+            "errors": [f"validate-v2.sh not found: {validate_script}"],
+            "stdout": "",
+            "stderr": "",
+            "returncode": 127,
+        }
+
+    command = ["bash", str(validate_script), "--dir", app_dir]
+    if version:
+        command.extend(["--version", version])
+    command.append("--strict-store")
+    proc = subprocess.run(command, text=True, capture_output=True)
+    if emit_output and proc.stdout:
+        print(proc.stdout, end="")
+    if emit_output and proc.stderr:
+        print(proc.stderr, end="", file=sys.stderr)
+    errors = [line for line in (proc.stdout + proc.stderr).splitlines() if "[FAIL]" in line]
+    if proc.returncode != 0 and not errors:
+        errors.append(f"strict-store validation failed with exit code {proc.returncode}")
+    return {
+        "mode": "strict-store",
+        "validator": str(validate_script),
+        "valid": proc.returncode == 0,
+        "failed": proc.returncode != 0,
+        "errors": errors,
+        "stdout": proc.stdout,
+        "stderr": proc.stderr,
+        "returncode": proc.returncode,
+    }
+
+
+def evaluate_baota_delivery_readiness(
+    appspec: Dict[str, Any],
+    compose_data: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    import_source = appspec.get("importSource", {})
+    if not isinstance(import_source, dict) or import_source.get("type") != "baota":
+        return {"applicable": False, "ready": True, "status": "not_applicable", "blockers": []}
+
+    blockers: List[Dict[str, str]] = []
+    if appspec.get("evidenceStatus") != "official_complete":
+        blockers.append({
+            "code": "unverified-source",
+            "message": "Baota metadata does not prove official upstream deployment evidence.",
+        })
+    if appspec.get("architectureEvidence") != "registry_manifest_verified":
+        blockers.append({
+            "code": "unverified-architectures",
+            "message": "Packaged architectures have not been verified from registry manifests.",
+        })
+
+    manual_reasons = appspec.get("manualReviewReasons", []) or []
+    if compose_data and isinstance(compose_data, dict):
+        transform = compose_data.get("_transform", {})
+        if isinstance(transform, dict):
+            manual_reasons = [*manual_reasons, *(transform.get("manualReviewReasons", []) or [])]
+    seen_codes = {blocker["code"] for blocker in blockers}
+    for reason in manual_reasons:
+        code = reason.get("code", "compose-manual-review")
+        if code in seen_codes:
+            continue
+        seen_codes.add(code)
+        blockers.append({
+            "code": code,
+            "message": reason.get("message", "Compose semantics require manual review."),
+        })
+    return {
+        "applicable": True,
+        "ready": not blockers,
+        "status": "ready" if not blockers else "manual_review_required",
+        "blockers": blockers,
+    }
 
 
 def _normalize_git_remote_url(remote_url: str) -> str:
@@ -281,13 +344,32 @@ def _write_default_readme(app_out: pathlib.Path, appspec: Dict[str, Any], versio
     lines = [
         f"# {title}",
         "",
+        "## 产品介绍",
+        "",
         str(desc),
+        "",
+        "## 主要功能",
+        "",
+        "- 具体功能以项目官方文档和当前镜像版本为准。",
+        "",
+        "## 访问说明",
+        "",
+        "- 安装后通过应用配置的端口访问服务。",
+        "",
+        "## Introduction",
+        "",
+        str(desc),
+        "",
+        "## Features",
+        "",
+        "- Refer to the official project documentation for features supported by the selected image version.",
         "",
         "## Information",
         "",
         f"- App Key: {appspec.get('appKey', '')}",
         "- Version: select the required version from the app store version list",
         f"- Type: {appspec.get('type', 'Tool')}",
+        "- Source evidence: source-evidence.json",
         "",
     ]
     notes = appspec.get("migrationNotes") or []
@@ -985,30 +1067,25 @@ class BaotaToAppSpecMapper:
     ) -> None:
         home = app_json.get("home", "")
         help_url = app_json.get("help", "")
-        home_official = _is_official_url(home) if home else False
-        help_official = _is_official_url(help_url) if help_url else False
-
-        if home_official and help_official:
-            level = "official_complete"
-        elif home_official or help_official:
-            level = "official_partial"
-        else:
-            level = "third_party_only"
 
         import_source = {
             "type": "baota",
             "appName": app_json.get("appname", ""),
             "version": version,
             "sourcePath": input_dir,
+            "declaredHome": home if _is_https_url(home) else "",
+            "declaredHelp": help_url if _is_https_url(help_url) else "",
         }
         compose_path = pathlib.Path(input_dir) / version / "docker-compose.yml" if input_dir and version else None
         compose_file_url = _source_file_url_from_git(compose_path) if compose_path and compose_path.is_file() else ""
         source_repo_url = _source_repo_url_from_git(compose_path) if compose_path and compose_path.is_file() else ""
         appspec["importSource"] = import_source
-        appspec["evidenceStatus"] = level
+        appspec["evidenceStatus"] = "third_party_only"
         appspec["repository"] = home if _is_https_url(home) else source_repo_url
         appspec["dockerDocs"] = help_url if _is_https_url(help_url) else ""
         appspec["composeFile"] = compose_file_url
+        appspec["architectures"] = ["amd64"]
+        appspec["architectureEvidence"] = "unverified_default"
 
     # ── Fields → formFields ───────────────────────────────────────────
 
@@ -1218,6 +1295,8 @@ class BaotaToAppSpecMapper:
             "enabled": True,
             "compose": _strip_internal_metadata(compose_data),
         }
+        transform = compose_data.get("_transform", {}) if isinstance(compose_data, dict) else {}
+        appspec["manualReviewReasons"] = list(transform.get("manualReviewReasons", []) or [])
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -1250,10 +1329,18 @@ class ImportRunner:
             "app": "",
             "version": version or "latest",
             "success": False,
+            "stage": "precheck",
+            "candidateStatus": "blocked",
             "outputPath": "",
             "errors": [],
             "warnings": [],
         }
+
+        if require_validate and not (validate or strict_store_validate):
+            message = "--require-validate requires --validate or --strict-store-validate"
+            result["errorCode"] = E_1PANEL_VALIDATION_MODE_REQUIRED
+            result["errors"] = [{"code": E_1PANEL_VALIDATION_MODE_REQUIRED, "message": message}]
+            return result
 
         # 1. Precheck
         precheck_report = self.precheck.validate(input_dir, include_disabled)
@@ -1273,6 +1360,7 @@ class ImportRunner:
             # Only disabled-app error → skip gracefully
             result["success"] = True
             result["skipped"] = True
+            result["candidateStatus"] = "skipped"
             result["reason"] = "App is disabled"
             return result
 
@@ -1314,13 +1402,39 @@ class ImportRunner:
             return result
         result["outputPath"] = output_path
         result["success"] = True
+        result["stage"] = "converted_candidate"
 
-        if validate or strict_store_validate or require_validate:
+        delivery = evaluate_baota_delivery_readiness(appspec, compose_data)
+        result["delivery"] = delivery
+        result["deliveryReady"] = delivery["ready"]
+        result["candidateStatus"] = "delivery_ready" if delivery["ready"] else "manual_review_required"
+
+        if strict_store_validate:
+            result["stage"] = "strict_store_validate"
+            validation = run_strict_store_validation(output_path, selected_version)
+            result["validation"] = validation
+            if validation.get("failed"):
+                result["errors"].append({
+                    "code": "E_1PANEL_STRICT_VALIDATE_FAILED",
+                    "message": "strict-store validation failed",
+                })
+            if not delivery["ready"]:
+                result["errors"].extend({
+                    "code": "E_BAOTA_DELIVERY_BLOCKED",
+                    "message": blocker["message"],
+                } for blocker in delivery["blockers"])
+            if validation.get("failed") or not delivery["ready"]:
+                result["success"] = False
+        elif validate:
+            result["stage"] = "basic_validate"
             validation = self._validate_output(output_path)
+            validation["mode"] = "basic"
             result["validation"] = validation
             if require_validate and validation.get("failed"):
                 result["success"] = False
                 result["errors"] = [{"code": "E_1PANEL_VALIDATE_FAILED", "message": err} for err in validation.get("errors", [])]
+            else:
+                result["stage"] = "converted_candidate"
 
         return result
 
@@ -1503,7 +1617,7 @@ class ImportRunner:
                 "description": _i18n_map(appspec.get("shortDescZh", ""), appspec.get("description", "")),
                 "crossVersionUpdate": False,
                 "limit": 0,
-                "architectures": ["amd64"],
+                "architectures": appspec.get("architectures", ["amd64"]),
             },
         }
 
@@ -1523,6 +1637,8 @@ class ImportRunner:
             "dockerDocs": appspec.get("dockerDocs", ""),
             "composeFile": appspec.get("composeFile", ""),
             "evidenceStatus": appspec.get("evidenceStatus", "third_party_only"),
+            "architectures": appspec.get("architectures", ["amd64"]),
+            "architectureEvidence": appspec.get("architectureEvidence", "unverified_default"),
             "importSource": appspec.get("importSource", {}),
         }
         notes = appspec.get("migrationNotes", [])

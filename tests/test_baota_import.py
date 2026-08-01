@@ -719,6 +719,32 @@ class TestBaotaToAppSpecMapper(unittest.TestCase):
         # alist has empty home, help=https://alist.nn.ci (not a known pattern)
         self.assertEqual(appspec["evidenceStatus"], "third_party_only")
 
+    def test_declared_github_urls_remain_unverified_hints(self):
+        app_json = _base_app_json(
+            "source-hints",
+            "Source Hints",
+            "Unverified source declarations.",
+            home="https://github.com/unrelated/project",
+            help_url="https://github.com/unrelated/project/wiki",
+        )
+
+        appspec = self.mapper.build_appspec(
+            app_json,
+            "latest",
+            {"services": {"app": {"image": "busybox:latest"}}},
+        )
+
+        self.assertEqual(appspec["evidenceStatus"], "third_party_only")
+        self.assertEqual(
+            appspec["importSource"]["declaredHome"],
+            "https://github.com/unrelated/project",
+        )
+        self.assertEqual(
+            appspec["importSource"]["declaredHelp"],
+            "https://github.com/unrelated/project/wiki",
+        )
+        self.assertEqual(appspec["architectureEvidence"], "unverified_default")
+
 
 # ═══════════════════════════════════════════════════════════════════════
 #  ImportRunner
@@ -767,6 +793,13 @@ class TestImportRunner(unittest.TestCase):
         self.assertTrue(result["success"], f"Import failed: {result.get('errors')}")
         self.assertEqual(result["app"], "alist")
         self.assertEqual(result.get("validation", {}).get("valid"), True)
+        self.assertEqual(result["stage"], "converted_candidate")
+        self.assertEqual(result["candidateStatus"], "manual_review_required")
+        self.assertFalse(result["delivery"]["ready"])
+        self.assertEqual(
+            {blocker["code"] for blocker in result["delivery"]["blockers"]},
+            {"unverified-source", "unverified-architectures"},
+        )
 
         out = pathlib.Path(result["outputPath"])
         self.assertTrue((out / "data.yml").is_file())
@@ -779,6 +812,8 @@ class TestImportRunner(unittest.TestCase):
         readme_text = (out / "README.md").read_text(encoding="utf-8")
         self.assertNotIn("- Version: latest", readme_text)
         self.assertIn("app store version list", readme_text)
+        for heading in ("## 产品介绍", "## 主要功能", "## 访问说明", "## Introduction", "## Features"):
+            self.assertIn(heading, readme_text)
         self.assertTrue((out / "latest" / "data").is_dir())
         self.assertTrue((out / "latest" / "scripts" / "init.sh").is_file())
         self.assertTrue((out / "latest" / "scripts" / "upgrade.sh").is_file())
@@ -804,6 +839,36 @@ class TestImportRunner(unittest.TestCase):
         self.assertIn("PANEL_APP_PORT_5426=5426", env_sample)
         self.assertIn("APP_DATA_DIR_DATA=./data/data", env_sample)
         self.assertIn("APP_DATA_DIR_MNT=./data/mnt", env_sample)
+        evidence = json.loads((out / "source-evidence.json").read_text(encoding="utf-8"))
+        self.assertEqual(evidence["architectureEvidence"], "unverified_default")
+        self.assertEqual(root_data["additionalProperties"]["architectures"], ["amd64"])
+
+    def test_strict_store_validation_runs_real_validator_and_fails_closed(self):
+        result = self.runner.import_one(
+            _sample("alist"),
+            self.tmpdir,
+            "latest",
+            strict_store_validate=True,
+            require_validate=True,
+        )
+
+        self.assertFalse(result["success"])
+        self.assertEqual(result["stage"], "strict_store_validate")
+        self.assertEqual(result["validation"]["mode"], "strict-store")
+        self.assertIn("validate-v2.sh", result["validation"]["validator"])
+        self.assertEqual(result["validation"]["returncode"], 0)
+        self.assertTrue(result["validation"]["valid"])
+        self.assertIn("SUMMARY:", result["validation"]["stdout"])
+        self.assertFalse(result["delivery"]["ready"])
+
+    def test_require_validate_without_validation_mode_fails(self):
+        result = self.runner.import_one(
+            _sample("alist"), self.tmpdir, "latest", require_validate=True,
+        )
+
+        self.assertFalse(result["success"])
+        self.assertEqual(result["errorCode"], "E_1PANEL_VALIDATION_MODE_REQUIRED")
+        self.assertFalse((pathlib.Path(self.tmpdir) / "alist").exists())
 
     def test_import_records_git_compose_source_url(self):
         source_root = pathlib.Path(self.tmpdir) / "source-root"
@@ -928,6 +993,16 @@ class TestCliAndGenerator(unittest.TestCase):
         self.assertNotEqual(proc.returncode, 0)
         self.assertIn("not allowed with argument", proc.stderr)
 
+    def test_cli_require_validate_requires_mode(self):
+        proc = self._run_cli(
+            "--input", _sample("alist"),
+            "--out-dir", self.tmpdir,
+            "--require-validate",
+        )
+
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("requires --validate or --strict-store-validate", proc.stderr)
+
     def test_generate_from_appspec_roundtrip_complete_structure(self):
         appspec_path = pathlib.Path(self.tmpdir) / "alist.appspec.json"
         out_dir = pathlib.Path(self.tmpdir) / "generated"
@@ -964,10 +1039,49 @@ class TestCliAndGenerator(unittest.TestCase):
 
         root_data = yaml.safe_load((root / "data.yml").read_text(encoding="utf-8"))
         self.assertIsInstance(root_data.get("additionalProperties", {}).get("description"), dict)
+        source_evidence = json.loads((root / "source-evidence.json").read_text(encoding="utf-8"))
+        self.assertEqual(source_evidence["architectures"], ["amd64"])
+        self.assertEqual(source_evidence["architectureEvidence"], "unverified_default")
         ver_data = yaml.safe_load((root / "latest" / "data.yml").read_text(encoding="utf-8"))
         fields = ver_data.get("additionalProperties", {}).get("formFields", [])
         self.assertTrue(fields)
         self.assertTrue(all(isinstance(field.get("label"), dict) for field in fields))
+
+    def test_generate_from_baota_appspec_strict_validation_fails_closed(self):
+        appspec_path = pathlib.Path(self.tmpdir) / "alist.appspec.json"
+        out_dir = pathlib.Path(self.tmpdir) / "strict-generated"
+        report_path = pathlib.Path(self.tmpdir) / "strict-report.json"
+        emit_proc = self._run_cli(
+            "--input", _sample("alist"),
+            "--emit-appspec", str(appspec_path),
+            "--version", "latest",
+        )
+        self.assertEqual(emit_proc.returncode, 0, emit_proc.stderr)
+
+        gen_proc = subprocess.run(
+            [
+                sys.executable,
+                str(self.project_dir / "scripts" / "generate-from-appspec.py"),
+                "--spec", str(appspec_path),
+                "--out-dir", str(out_dir),
+                "--strict-store-validate",
+                "--report", str(report_path),
+            ],
+            cwd=str(self.project_dir),
+            text=True,
+            capture_output=True,
+        )
+
+        self.assertNotEqual(gen_proc.returncode, 0)
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        self.assertTrue(report["strictValidation"]["valid"])
+        self.assertEqual(report["strictValidation"]["mode"], "strict-store")
+        self.assertIn("validate-v2.sh", report["strictValidation"]["validator"])
+        self.assertFalse(report["delivery"]["ready"])
+        self.assertEqual(
+            {blocker["code"] for blocker in report["delivery"]["blockers"]},
+            {"unverified-source", "unverified-architectures"},
+        )
 
     def test_generate_from_legacy_appspec_preserves_core_fields(self):
         spec_path = self.project_dir / "assets" / "sample-appspec.json"

@@ -19,7 +19,6 @@ import os
 import pathlib
 import re
 import shutil
-import subprocess
 import sys
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -31,7 +30,15 @@ except ImportError:
     sys.stderr.write("Error: PyYAML is required. Install with: pip install pyyaml\n")
     raise SystemExit(1)
 
-from baota_import_lib import _i18n_map, _normalize_form_field, _sanitize_env_suffix, _strip_internal_metadata
+from baota_import_lib import (
+    _i18n_map,
+    _normalize_form_field,
+    _sanitize_env_suffix,
+    _strip_internal_metadata,
+    _write_default_readme,
+    evaluate_baota_delivery_readiness,
+    run_strict_store_validation,
+)
 from runtime_script_utils import write_init_script
 
 EXIT_SUCCESS = 0
@@ -98,6 +105,8 @@ def _normalize_appspec(raw_spec: Dict[str, Any]) -> Dict[str, Any]:
         spec.setdefault("dockerDocs", source_evidence.get("dockerDocs", ""))
         spec.setdefault("composeFile", source_evidence.get("composeFile", ""))
         spec.setdefault("evidenceStatus", source_evidence.get("evidenceStatus", "official_partial"))
+        spec.setdefault("architectures", source_evidence.get("architectures", ["amd64"]))
+        spec.setdefault("architectureEvidence", source_evidence.get("architectureEvidence", "unverified_default"))
 
     spec["type"] = _canonical_type(spec.get("type", "Tool"))
     spec["tag"] = _canonical_type(spec.get("tag") or spec.get("type") or "Tool")
@@ -194,7 +203,7 @@ class AppSpecGenerator:
                 "description": _i18n_map(self.spec.get("shortDescZh", ""), self.spec.get("description", "")),
                 "crossVersionUpdate": False,
                 "limit": self.spec.get("limit", 0),
-                "architectures": ["amd64"],
+                "architectures": self.spec.get("architectures", ["amd64"]),
             },
         }
         self._write_yaml(self.app_dir / "data.yml", root)
@@ -389,6 +398,8 @@ class AppSpecGenerator:
             "dockerDocs": self.spec.get("dockerDocs", ""),
             "composeFile": self.spec.get("composeFile", "(generated)"),
             "evidenceStatus": self.spec.get("evidenceStatus", "third_party_only"),
+            "architectures": self.spec.get("architectures", ["amd64"]),
+            "architectureEvidence": self.spec.get("architectureEvidence", "unverified_default"),
         }
 
         import_source = self.spec.get("importSource")
@@ -405,42 +416,7 @@ class AppSpecGenerator:
     # ── README.md ─────────────────────────────────────────────────────
 
     def _write_readme(self) -> None:
-        title = self.spec.get("title", self.app_key)
-        desc = self.spec.get("description", "")
-        type_str = self.spec.get("type", "Tool")
-        import_source = self.spec.get("importSource", {})
-
-        lines = [
-            f"# {title}",
-            "",
-            desc,
-            "",
-            "## Information",
-            "",
-            f"- **Type**: {type_str}",
-            f"- **App Key**: {self.app_key}",
-            "",
-        ]
-
-        if import_source:
-            lines.extend([
-                "## Import Source",
-                "",
-                f"- **Source**: {import_source.get('type', 'unknown')}",
-                "- **Version**: see the app store version list and source-evidence.json",
-                "",
-            ])
-
-        notes = self.spec.get("migrationNotes")
-        if notes:
-            lines.append("## Migration Notes")
-            lines.append("")
-            for note in notes:
-                lines.append(f"- {note}")
-            lines.append("")
-
-        with open(self.app_dir / "README.md", "w", encoding="utf-8") as fh:
-            fh.write("\n".join(lines))
+        _write_default_readme(self.app_dir, self.spec, self.version)
 
     def _write_logo(self) -> None:
         explicit_logo = self.spec.get("logoPath") or self.spec.get("logo")
@@ -571,41 +547,6 @@ def validate_output(app_dir: str) -> Dict[str, Any]:
     return {"valid": len(errors) == 0, "errors": errors, "failed": len(errors) > 0}
 
 
-def run_strict_store_validation(app_dir: str) -> Dict[str, Any]:
-    script_dir = pathlib.Path(__file__).resolve().parent
-    validate_script = script_dir / "validate-v2.sh"
-    if not validate_script.is_file():
-        return {
-            "valid": False,
-            "failed": True,
-            "errors": [f"validate-v2.sh not found: {validate_script}"],
-            "stdout": "",
-            "stderr": "",
-            "returncode": 127,
-        }
-
-    proc = subprocess.run(
-        ["bash", str(validate_script), "--dir", app_dir, "--strict-store"],
-        text=True,
-        capture_output=True,
-    )
-    if proc.stdout:
-        print(proc.stdout, end="")
-    if proc.stderr:
-        print(proc.stderr, end="", file=sys.stderr)
-    errors: List[str] = []
-    if proc.returncode != 0:
-        errors.append(f"strict-store validation failed with exit code {proc.returncode}")
-    return {
-        "valid": proc.returncode == 0,
-        "failed": proc.returncode != 0,
-        "errors": errors,
-        "stdout": proc.stdout,
-        "stderr": proc.stderr,
-        "returncode": proc.returncode,
-    }
-
-
 def write_report(path_value: str, report: Dict[str, Any]) -> None:
     path = pathlib.Path(path_value).resolve()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -626,6 +567,7 @@ def main() -> int:
         "appDir": "",
         "validation": None,
         "strictValidation": None,
+        "delivery": None,
         "error": "",
     }
 
@@ -660,6 +602,7 @@ def main() -> int:
 
     print(f"Generated: {output_path}")
     report["appDir"] = output_path
+    report["delivery"] = evaluate_baota_delivery_readiness(generator.spec)
 
     # Validate
     if args.validate:
@@ -682,8 +625,10 @@ def main() -> int:
 
     if args.strict_store_validate:
         report["step"] = "strict_store_validate"
-        strict_validation = run_strict_store_validation(output_path)
+        strict_validation = run_strict_store_validation(output_path, emit_output=True)
         report["strictValidation"] = {
+            "mode": strict_validation.get("mode"),
+            "validator": strict_validation.get("validator"),
             "valid": strict_validation.get("valid"),
             "failed": strict_validation.get("failed"),
             "errors": strict_validation.get("errors", []),
@@ -691,6 +636,10 @@ def main() -> int:
         }
         if strict_validation["failed"]:
             report["error"] = "strict-store validation failed"
+            return finish(EXIT_FAILURE)
+        if not report["delivery"]["ready"]:
+            report["error"] = "Baota delivery gates are not satisfied"
+            print(f"Error: {report['error']}", file=sys.stderr)
             return finish(EXIT_FAILURE)
 
     report["status"] = "ok"

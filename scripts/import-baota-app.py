@@ -31,7 +31,10 @@ def parse_args():
     parser.add_argument("--require-validate", action="store_true", help="Exit non-zero if validation fails / 校验失败时返回非零退出码")
     parser.add_argument("--include-disabled", action="store_true", help="Import apps with appstatus=0 / 导入 appstatus=0 的应用")
     parser.add_argument("--report", help="Write JSON import report to this path / 将 JSON 导入报告写入该路径")
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.require_validate and not (args.validate or args.strict_store_validate):
+        parser.error("--require-validate requires --validate or --strict-store-validate")
+    return args
 
 
 def load_library():
