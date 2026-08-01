@@ -29,13 +29,20 @@ from runtime_script_utils import render_init_script_content
 
 # ── Error Codes ───────────────────────────────────────────────────────
 E_BAOTA_REQUIRED_FILES = "E_BAOTA_REQUIRED_FILES"
+E_BAOTA_APP_KEY_INVALID = "E_BAOTA_APP_KEY_INVALID"
 E_BAOTA_APP_JSON_MISSING = "E_BAOTA_APP_JSON_MISSING"
 E_BAOTA_APP_JSON_INVALID = "E_BAOTA_APP_JSON_INVALID"
+E_BAOTA_COMPOSE_INVALID = "E_BAOTA_COMPOSE_INVALID"
 E_BAOTA_COMPOSE_MISSING = "E_BAOTA_COMPOSE_MISSING"
 E_BAOTA_ICON_MISSING = "E_BAOTA_ICON_MISSING"
+E_BAOTA_OUTPUT_PATH_INVALID = "E_BAOTA_OUTPUT_PATH_INVALID"
+E_BAOTA_VERSION_INVALID = "E_BAOTA_VERSION_INVALID"
 E_BAOTA_VERSION_DIR_MISSING = "E_BAOTA_VERSION_DIR_MISSING"
 E_BAOTA_VERSION_MISSING = "E_BAOTA_VERSION_MISSING"
 E_BAOTA_DISABLED = "E_BAOTA_DISABLED"
+
+APP_KEY_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,127}$")
+VERSION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 
 # ── Standard Baota platform fields / env keys ─────────────────────────
 STANDARD_FIELD_ATTRS = {"domain", "allow_access", "cpus", "memory_limit"}
@@ -98,6 +105,46 @@ def _is_official_url(url: str) -> bool:
 
 def _is_https_url(url: Any) -> bool:
     return isinstance(url, str) and bool(re.match(r"^https://[^\s]+$", url.strip()))
+
+
+def _is_safe_app_key(value: Any) -> bool:
+    return isinstance(value, str) and bool(APP_KEY_RE.fullmatch(value))
+
+
+def _is_safe_version(value: Any) -> bool:
+    return (
+        isinstance(value, str)
+        and value not in {".", ".."}
+        and bool(VERSION_RE.fullmatch(value))
+    )
+
+
+def _resolve_child(root: pathlib.Path, *components: str) -> pathlib.Path:
+    root_resolved = root.resolve()
+    candidate = root_resolved.joinpath(*components).resolve()
+    try:
+        candidate.relative_to(root_resolved)
+    except ValueError as exc:
+        raise ValueError(f"Path escapes root directory: {candidate}") from exc
+    return candidate
+
+
+def _load_compose_document(compose_path: pathlib.Path) -> Dict[str, Any]:
+    try:
+        with open(compose_path, "r", encoding="utf-8") as fh:
+            compose = yaml.safe_load(fh)
+    except yaml.YAMLError as exc:
+        raise ValueError(f"Cannot parse Compose YAML: {exc}") from exc
+
+    if not isinstance(compose, dict):
+        raise ValueError("Compose document must be a mapping")
+    services = compose.get("services")
+    if not isinstance(services, dict) or not services:
+        raise ValueError("Compose services must be a non-empty mapping")
+    invalid_services = [name for name, service in services.items() if not isinstance(service, dict)]
+    if invalid_services:
+        raise ValueError(f"Compose services must be mappings: {', '.join(map(str, invalid_services))}")
+    return compose
 
 
 def _normalize_git_remote_url(remote_url: str) -> str:
@@ -374,6 +421,15 @@ class BaotaPrecheck:
             })
             return
 
+        app_key = data.get("appname")
+        if not _is_safe_app_key(app_key):
+            report["errors"].append({
+                "code": E_BAOTA_APP_KEY_INVALID,
+                "message": "appname must match ^[a-z0-9][a-z0-9_-]{0,127}$",
+                "path": str(app_json_path),
+            })
+            return
+
         # Version directories
         versions = _expand_versions(data.get("appversion", []))
         report["fields"]["versions"] = versions
@@ -383,9 +439,16 @@ class BaotaPrecheck:
                 "message": "No versions defined in appversion[]",
             })
             return
+        invalid_versions = [version for version in versions if not _is_safe_version(version)]
+        if invalid_versions:
+            report["errors"].append({
+                "code": E_BAOTA_VERSION_INVALID,
+                "message": f"Unsafe version directory names: {', '.join(invalid_versions)}",
+            })
+            return
         found_any = False
         for ver in versions:
-            version_dir = input_path / ver
+            version_dir = _resolve_child(input_path, ver)
             if not version_dir.is_dir():
                 report["warnings"].append({
                     "code": E_BAOTA_VERSION_DIR_MISSING,
@@ -404,6 +467,15 @@ class BaotaPrecheck:
                 report["errors"].append({
                     "code": E_BAOTA_COMPOSE_MISSING,
                     "message": f"docker-compose.yml missing for version {ver}",
+                    "path": str(compose_file),
+                })
+                continue
+            try:
+                _load_compose_document(compose_file)
+            except (OSError, ValueError) as exc:
+                report["errors"].append({
+                    "code": E_BAOTA_COMPOSE_INVALID,
+                    "message": str(exc),
                     "path": str(compose_file),
                 })
         if not found_any:
@@ -538,8 +610,7 @@ class BaotaParser:
 
     def load_compose(self, compose_path: str) -> Dict[str, Any]:
         """Load docker-compose.yml via yaml.safe_load."""
-        with open(compose_path, "r", encoding="utf-8") as fh:
-            return yaml.safe_load(fh) or {}
+        return _load_compose_document(pathlib.Path(compose_path))
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -552,11 +623,14 @@ class ComposeTransformer:
     def transform(self, input_dir: str, version: str) -> Dict[str, Any]:
         """Main entry: deep-copy compose and apply all transforms."""
         # Phase 1: Parse real Baota compose for variable discovery
-        compose_path = str(pathlib.Path(input_dir) / version / "docker-compose.yml")
-        compose = self.load_compose(compose_path)  # read the raw compose
+        if not _is_safe_version(version):
+            raise ValueError(f"Unsafe version directory name: {version}")
+        compose_path = _resolve_child(pathlib.Path(input_dir), version, "docker-compose.yml")
+        compose = self.load_compose(str(compose_path))
 
         # Phase 2: Deep copy for transformation
         result = copy.deepcopy(compose)
+        manual_review_reasons = self._collect_manual_review_reasons(result)
 
         # Phase 3: Apply transformations sequentially
         port_map = self._replace_host_ip_ports(result)
@@ -572,17 +646,35 @@ class ComposeTransformer:
         result["_transform"]["portMap"] = port_map
         result["_transform"]["volumeInfo"] = vol_info
         result["_transform"]["unresolved"] = unresolved
+        result["_transform"]["manualReviewRequired"] = bool(manual_review_reasons)
+        result["_transform"]["manualReviewReasons"] = manual_review_reasons
 
         return result
 
     @staticmethod
     def load_compose(compose_path: str) -> Dict[str, Any]:
-        """Load raw compose file. Returns empty dict on failure."""
-        try:
-            with open(compose_path, "r", encoding="utf-8") as fh:
-                return yaml.safe_load(fh) or {}
-        except Exception:
-            return {}
+        """Load and validate a raw Compose document."""
+        return _load_compose_document(pathlib.Path(compose_path))
+
+    @staticmethod
+    def _collect_manual_review_reasons(compose: Dict[str, Any]) -> List[Dict[str, str]]:
+        reasons: List[Dict[str, str]] = []
+        for service_name, service in compose.get("services", {}).items():
+            for index, port in enumerate(service.get("ports", []) or []):
+                if isinstance(port, dict):
+                    reasons.append({
+                        "code": "compose-long-port-syntax",
+                        "path": f"services.{service_name}.ports[{index}]",
+                        "message": "Long port syntax requires manual semantic review.",
+                    })
+            for index, volume in enumerate(service.get("volumes", []) or []):
+                if isinstance(volume, dict):
+                    reasons.append({
+                        "code": "compose-long-volume-syntax",
+                        "path": f"services.{service_name}.volumes[{index}]",
+                        "message": "Long volume syntax requires manual semantic review.",
+                    })
+        return reasons
 
     # ── Port transformation ───────────────────────────────────────────
 
@@ -735,11 +827,17 @@ class ComposeTransformer:
             if not isinstance(svc, dict):
                 continue
             nets = svc.get("networks", [])
-            if nets:
+            if isinstance(nets, list):
                 svc["networks"] = [
                     "1panel-network" if str(n) == "baota_net" else n
                     for n in nets
                 ]
+            elif isinstance(nets, dict) and "baota_net" in nets:
+                rewritten = {}
+                for name, config in nets.items():
+                    target = "1panel-network" if str(name) == "baota_net" else name
+                    rewritten[target] = config
+                svc["networks"] = rewritten
         top_nets = compose.get("networks", {})
         if isinstance(top_nets, dict) and "baota_net" in top_nets:
             top_nets["1panel-network"] = top_nets.pop("baota_net")
@@ -1160,6 +1258,7 @@ class ImportRunner:
         # 1. Precheck
         precheck_report = self.precheck.validate(input_dir, include_disabled)
         result["precheck"] = precheck_report
+        result["warnings"] = list(precheck_report.get("warnings", []))
         result["app"] = pathlib.Path(input_dir).name
         if precheck_report.get("errors"):
             # Filter: only disabled is non-fatal if skipped
@@ -1207,7 +1306,12 @@ class ImportRunner:
         result["appspec"] = appspec
 
         # 5. Write output
-        output_path = self._write_output(appspec, compose_data, input_dir, out_dir, selected_version)
+        try:
+            output_path = self._write_output(appspec, compose_data, input_dir, out_dir, selected_version)
+        except (OSError, ValueError) as exc:
+            result["errors"].append({"code": E_BAOTA_OUTPUT_PATH_INVALID, "message": str(exc)})
+            result["errorCode"] = E_BAOTA_OUTPUT_PATH_INVALID
+            return result
         result["outputPath"] = output_path
         result["success"] = True
 
@@ -1272,8 +1376,14 @@ class ImportRunner:
     ) -> str:
         """Write 1Panel v2 app directory structure."""
         app_key = appspec.get("appKey", "unknown")
-        app_out = pathlib.Path(out_dir) / app_key
-        ver_out = app_out / version
+        if not _is_safe_app_key(app_key):
+            raise ValueError(f"Unsafe app key: {app_key}")
+        if not _is_safe_version(version):
+            raise ValueError(f"Unsafe version directory name: {version}")
+        output_root = pathlib.Path(out_dir).resolve()
+        output_root.mkdir(parents=True, exist_ok=True)
+        app_out = _resolve_child(output_root, app_key)
+        ver_out = _resolve_child(app_out, version)
         ver_out.mkdir(parents=True, exist_ok=True)
         (ver_out / "data").mkdir(parents=True, exist_ok=True)
 

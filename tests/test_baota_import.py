@@ -28,8 +28,11 @@ from baota_import_lib import (
     ComposeTransformer,
     ImportRunner,
     E_BAOTA_DISABLED,
+    E_BAOTA_APP_KEY_INVALID,
     E_BAOTA_APP_JSON_INVALID,
+    E_BAOTA_COMPOSE_INVALID,
     E_BAOTA_COMPOSE_MISSING,
+    E_BAOTA_VERSION_INVALID,
     E_BAOTA_VERSION_DIR_MISSING,
     E_BAOTA_VERSION_MISSING,
     _expand_versions,
@@ -413,6 +416,53 @@ class TestBaotaPrecheck(unittest.TestCase):
         codes = [e["code"] for e in report["errors"]]
         self.assertIn(E_BAOTA_COMPOSE_MISSING, codes)
 
+    def test_invalid_app_key_is_rejected(self):
+        with tempfile.TemporaryDirectory(prefix="baota_invalid_key_") as tmpdir:
+            app_dir = pathlib.Path(tmpdir) / "source"
+            _write_app(
+                app_dir,
+                _base_app_json("../escaped", "Escaped", "Invalid app key."),
+                "services:\n  app:\n    image: busybox:latest\n",
+            )
+
+            report = self.precheck.validate(str(app_dir))
+
+        codes = [error["code"] for error in report["errors"]]
+        self.assertIn(E_BAOTA_APP_KEY_INVALID, codes)
+
+    def test_invalid_version_name_is_rejected(self):
+        with tempfile.TemporaryDirectory(prefix="baota_invalid_version_") as tmpdir:
+            app_dir = pathlib.Path(tmpdir) / "source"
+            _write_app(
+                app_dir,
+                _base_app_json(
+                    "safe-app",
+                    "Safe App",
+                    "Invalid version name.",
+                    appversion=[{"m_version": "../outside", "s_version": []}],
+                ),
+                "services:\n  app:\n    image: busybox:latest\n",
+            )
+
+            report = self.precheck.validate(str(app_dir))
+
+        codes = [error["code"] for error in report["errors"]]
+        self.assertIn(E_BAOTA_VERSION_INVALID, codes)
+
+    def test_malformed_compose_is_rejected(self):
+        with tempfile.TemporaryDirectory(prefix="baota_invalid_compose_") as tmpdir:
+            app_dir = pathlib.Path(tmpdir) / "source"
+            _write_app(
+                app_dir,
+                _base_app_json("broken-yaml", "Broken YAML", "Malformed compose."),
+                "services: [\n",
+            )
+
+            report = self.precheck.validate(str(app_dir))
+
+        codes = [error["code"] for error in report["errors"]]
+        self.assertIn(E_BAOTA_COMPOSE_INVALID, codes)
+
     def test_standard_fields_detected(self):
         parser = BaotaParser()
         app_json = parser.parse_app_json(_sample("alist"))
@@ -555,9 +605,64 @@ class TestComposeTransformer(unittest.TestCase):
     def test_file_volume_app(self):
         compose = self.transformer.transform(_sample("file-volume-app"), "latest")
         vol_info = compose.get("_transform", {}).get("volumeInfo", [])
-        # File volumes should be noted
-        # (The compose may still have path-type volume for data)
-        self.assertTrue(len(vol_info) >= 0)
+        self.assertEqual(len(vol_info), 2)
+        self.assertTrue(any(item["containerPath"] == "/app/config.yml" for item in vol_info))
+
+    def test_network_mapping_preserves_aliases(self):
+        with tempfile.TemporaryDirectory(prefix="baota_network_mapping_") as tmpdir:
+            app_dir = pathlib.Path(tmpdir) / "network-app"
+            _write_app(
+                app_dir,
+                _base_app_json("network-app", "Network App", "Mapping-style networks."),
+                """services:
+  app:
+    image: busybox:latest
+    networks:
+      baota_net:
+        aliases:
+          - app-alias
+      private: {}
+networks:
+  baota_net:
+    external: true
+  private: {}
+""",
+            )
+
+            compose = self.transformer.transform(str(app_dir), "latest")
+
+        networks = compose["services"]["app"]["networks"]
+        self.assertIsInstance(networks, dict)
+        self.assertEqual(networks["1panel-network"]["aliases"], ["app-alias"])
+        self.assertIn("private", networks)
+
+    def test_long_syntax_requires_manual_review(self):
+        with tempfile.TemporaryDirectory(prefix="baota_long_syntax_") as tmpdir:
+            app_dir = pathlib.Path(tmpdir) / "long-syntax"
+            _write_app(
+                app_dir,
+                _base_app_json("long-syntax", "Long Syntax", "Long Compose syntax."),
+                """services:
+  app:
+    image: busybox:latest
+    ports:
+      - target: 8080
+        published: ${WEB_PORT}
+    volumes:
+      - type: bind
+        source: ${APP_PATH}/data
+        target: /data
+""",
+            )
+
+            compose = self.transformer.transform(str(app_dir), "latest")
+
+        transform = compose["_transform"]
+        self.assertTrue(transform["manualReviewRequired"])
+        self.assertEqual(
+            {reason["code"] for reason in transform["manualReviewReasons"]},
+            {"compose-long-port-syntax", "compose-long-volume-syntax"},
+        )
 
     def test_unresolved_variables_collected(self):
         compose = self.transformer.transform(_sample("alist"), "latest")
@@ -626,6 +731,34 @@ class TestImportRunner(unittest.TestCase):
 
     def tearDown(self):
         shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def test_import_rejects_output_path_escape(self):
+        source = pathlib.Path(self.tmpdir) / "source"
+        out_dir = pathlib.Path(self.tmpdir) / "out"
+        _write_app(
+            source,
+            _base_app_json("../escaped", "Escaped", "Invalid output path."),
+            "services:\n  app:\n    image: busybox:latest\n",
+        )
+
+        result = self.runner.import_one(str(source), str(out_dir), "latest")
+
+        self.assertFalse(result["success"])
+        self.assertEqual(result["errorCode"], E_BAOTA_APP_KEY_INVALID)
+        self.assertFalse((pathlib.Path(self.tmpdir) / "escaped" / "data.yml").exists())
+
+    def test_import_rejects_existing_symlink_escape(self):
+        out_dir = pathlib.Path(self.tmpdir) / "out"
+        outside = pathlib.Path(self.tmpdir) / "outside"
+        out_dir.mkdir()
+        outside.mkdir()
+        (out_dir / "alist").symlink_to(outside, target_is_directory=True)
+
+        result = self.runner.import_one(_sample("alist"), str(out_dir), "latest")
+
+        self.assertFalse(result["success"])
+        self.assertEqual(result["errorCode"], "E_BAOTA_OUTPUT_PATH_INVALID")
+        self.assertFalse((outside / "data.yml").exists())
 
     def test_import_alist_success(self):
         result = self.runner.import_one(
