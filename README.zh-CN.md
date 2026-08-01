@@ -1,234 +1,173 @@
-# 1panel-app-adapter
+# 1Panel AppStore Docker 应用适配 Skill
 
-[![README-English](https://img.shields.io/badge/README-English-1f6feb)](./README.md) [![README-简体中文](https://img.shields.io/badge/README-%E7%AE%80%E4%BD%93%E4%B8%AD%E6%96%87-fa8c16)](./README.zh-CN.md)
+[English](./README.md) | [简体中文](./README.zh-CN.md)
 
-另见：[`DELIVERY_REPORT.md`](./DELIVERY_REPORT.md)，用于维护者查看规则决策与回归说明。
+`1panel-app-adapter` 是一个 **1Panel app skill**，用于将 Docker 应用适配为 **1Panel 应用商店**（`AppStore`/`appstore`）安装包。它支持创建新应用、转换 Docker Compose 与 AppSpec、导入 aaPanel/宝塔应用、从 v1 迁移到 v2，并校验可提交到应用商店的产物。
 
-`1panel-app-adapter` 是一个面向公开发布的 1Panel 应用适配 skill，用于把 Docker 应用输入整理为 1Panel 应用产物。它保留了生成、迁移、补丁和校验所需的运行脚本，同时移除了研究过程材料、重放日志和第三方仓库快照。
+## 主要能力
 
-## 规则优先级
+| 任务 | 输入 | 产物 |
+| --- | --- | --- |
+| 创建应用骨架 | 镜像、端口、卷和官方来源 URL | 1Panel v2 应用骨架 |
+| 从规范生成 | AppSpec JSON | 可复现的应用包与可选报告 |
+| 导入应用 | aaPanel/宝塔 `apphub` 目录 | 规范化的 1Panel 应用包 |
+| 迁移应用 | 现有 v1 或混合结构应用 | 1Panel v2 目录结构 |
+| 校验应用 | 生成或手写的应用目录 | 基础、strict-store 与多语言检查结果 |
 
-当规则冲突时，按以下顺序判断：
+本 skill 优先依据 1Panel 运行时行为和官方资料，其次才参考仓库约定与第三方示例。如果应用没有可靠的 Docker 部署来源，它不会猜测镜像、端口、存储卷或依赖关系。
 
-1. `1Panel-dev/1Panel` 运行时行为与源码硬规则
-2. 1Panel 官方 wiki 与官方文档
-3. 官方 appstore 仓库约定
-4. 外部参考文章与第三方示例
+## 在 Agent 中使用
 
-只有被运行时行为或明确官方文档支持的规则，才应升级为阻断生成或阻断校验的硬约束。仓库习惯默认属于指导信息，除非校验器显式把它升级为严格规则。
+可以让兼容 skill 的编码 Agent 显式调用：
 
-## 内置脚本
+```text
+使用 $1panel-app-adapter 将这个 Docker 应用适配为通过校验的 1Panel AppStore 应用包。
+```
 
-- `scripts/scaffold-v2.sh`
-- `scripts/migrate-v1-to-v2.sh`
-- `scripts/normalize-logo.sh`
-- `scripts/detect_architectures.sh`
-- `scripts/patch_root_data_yml.py`
-- `scripts/patch_version_data_yml.py`
-- `scripts/patch_compose_yml.py`
-- `scripts/hint-panel-deps.sh`
-- `scripts/gen-env-sample.sh`
-- `scripts/gen_env_sample.py`
-- `scripts/generate-from-appspec.py`
-- `scripts/import-baota-app.py` — 导入宝塔/aaPanel Docker 商店应用
-- `scripts/finalize_runtime_scripts.sh`
-- `scripts/validate-v2.sh`
-- `scripts/generate.sh` — v2 生成器包装脚本（兼容 CLI）
-- `scripts/validate.sh` — v2 校验包装脚本
-- `scripts/cleanup-migrate-backups.sh` — 清理迁移备份
-- `scripts/test-env-sample-closure.sh` — 回归测试：.env.sample 闭合检查
+它适用于单应用和批量应用适配、已有应用更新、AppStore 投稿准备以及提交前校验。
 
-## 生成新的应用骨架
+## 快速开始
+
+根据官方 Docker 来源创建 v2 应用骨架：
 
 ```bash
 bash scripts/scaffold-v2.sh \
-  --app-key <key> \
-  --title <title> \
-  --image <image> \
-  --version <version> \
-  --source-repository <url> \
-  --source-docker-docs <url> \
-  --source-compose-file <url> \
-  [--timezone <tz>] \
-  [--out-dir <dir>] \
-  [--port <host-port>] \
-  [--target-port <container-port>] \
-  [--type <type>] \
-  [--tag <tag>] \
-  [--website <url>] \
-  [--document <url>] \
-  [--github <url>] \
-  [--volumes <host:container,...>] \
-  [--with-panel-deps] \
-  [--force]
+  --app-key demo \
+  --title "Demo" \
+  --image nginx:latest \
+  --version 1.0.0 \
+  --source-repository <repository-url> \
+  --source-docker-docs <docker-docs-url> \
+  --source-compose-file <compose-url>
 ```
 
-说明：
-
-- `--with-panel-db-redis` 是 `--with-panel-deps` 的别名
-- 生成的 compose 使用 `container_name: ${CONTAINER_NAME}`
-- 宿主机路径类型的 volume 会在版本级 `data.yml` 中生成对应的 `APP_DATA_DIR_*` 字段
-- 生成的 compose 会保留上游显式 healthcheck，但不会自动添加默认探针
-- 未显式传入 `--tag` 时，脚手架会根据 `--type`、标题和镜像推断更合适的默认标签
-- 来源证据是可选的溯源材料；生成器可以写出 `<app>/source-evidence.json`，但成品 appstore 包不需要保留它
-- `--timezone` 用于控制版本级 `data.yml` 里 `TZ` 的默认值
-- 默认不会覆盖非空目标应用目录；如确认要覆盖，需显式传 `--force`
-- raw scaffold 输出只是起点，不应直接视为 strict-store 可交付产物
-- `--force` 只是允许写入已有非空目录，不会替你清理残留文件
-
-## 从 scaffold 到 strict-store 的最短路径
+替换生成的 README 与元数据占位内容，检查 Compose 变量和 `.env.sample`，再执行交付门禁：
 
 ```bash
-# 1）先生成脚手架
-bash scripts/scaffold-v2.sh   --app-key demo   --title "Demo"   --image nginx:latest   --version 1.0.0   --source-repository <repo-url>   --source-docker-docs <docs-url>   --source-compose-file <compose-url>
-
-# 2）替换脚手架占位内容：
-#    - README.md
-#    - root data.yml 中的 description / shortDesc / 多语言文案
-
-# 3）如果改过 envKey 或 compose 内容，检查 compose 变量与 .env.sample
-
-# 4）对“已补齐真实内容”的产物跑 strict-store
-bash scripts/validate-v2.sh --dir ./1panel-apps/demo --strict-store
+bash scripts/validate-v2.sh \
+  --dir ./1panel-apps/demo \
+  --strict-store \
+  --i18n-mode strict \
+  --i18n-scope all
 ```
 
-## 从 AppSpec 生成
+脚手架产物只是起点。应用专属元数据、翻译、拓扑、镜像来源和运行行为完成复核后，才能视为可提交应用商店的产物。
+
+## 工作流
+
+### 从 AppSpec 生成
 
 ```bash
-python3 scripts/generate-from-appspec.py --spec assets/sample-appspec.json
-python3 scripts/generate-from-appspec.py --spec assets/sample-appspec.json --validate
-python3 scripts/generate-from-appspec.py --spec assets/sample-appspec.json --strict-store-validate
-python3 scripts/generate-from-appspec.py --spec assets/sample-appspec.json --validate --require-validate
-python3 scripts/generate-from-appspec.py --spec assets/sample-appspec.json --strict-store-validate --require-validate
-python3 scripts/generate-from-appspec.py --spec assets/sample-appspec.json --validate --report artifacts/run-report.json
+python3 scripts/generate-from-appspec.py \
+  --spec assets/sample-appspec.json \
+  --validate \
+  --require-validate \
+  --report artifacts/run-report.json
 ```
 
-当启用校验时，报告 JSON 会包含 `validateSummary.fail/warn/info`。其中 `--validate` 运行基础校验；`--strict-store-validate` 仅适用于已替换 placeholder 的交付态产物。
-报告 JSON 还会包含 `qualityGate`（`not_run` / `passed` / `failed`）。
+参见 [AppSpec 说明](./references/appspec.md)与[示例 AppSpec](./assets/sample-appspec.json)。只有将生成的占位内容替换为交付态内容后，才应使用 `--strict-store-validate`。
 
-参考：
+### 导入 aaPanel 或宝塔应用
 
-- `references/appspec.md`
-- `assets/sample-appspec.json`
-
-## 导入宝塔/aaPanel Docker 商店应用
+导入单个应用：
 
 ```bash
-# 单应用目录，包含 app.json/icon.png/<version>/docker-compose.yml
 python3 scripts/import-baota-app.py \
   --input <baota-app-dir> \
   --out-dir ./1panel-apps \
   --version latest \
   --validate \
   --require-validate
+```
 
-# 批量导入 apphub 目录，其直接子目录是各个应用目录
+批量导入 `apphub` 的直接子目录：
+
+```bash
 python3 scripts/import-baota-app.py \
   --input <apphub-dir> \
   --batch \
   --out-dir ./1panel-apps \
   --validate \
   --report artifacts/baota-import-report.json
-
-# 只导出标准化 AppSpec，再走 AppSpec 生成路径
-python3 scripts/import-baota-app.py \
-  --input <baota-app-dir> \
-  --version latest \
-  --emit-appspec artifacts/app.appspec.json
 ```
 
-导入器基于公开的 `aaPanel/apphub` 格式和 aaPanel Docker 应用运行逻辑实现。它会把 `${HOST_IP}:${APP_PORT}:<container>` 端口转换为 `PANEL_APP_PORT_*`，把 `${APP_PATH}` 挂载转换为可配置的 `APP_DATA_DIR*` 字段，将 `baota_net` 替换为 `1panel-network`，将 `createdBy: bt_apps` 改为 `Apps`，移除宝塔 CPU/内存 deploy 限制，并把迁移说明写入 `source-evidence.json`。
+导入器会把 aaPanel/宝塔的端口、绑定挂载、网络设置、资源限制和元数据转换为 1Panel 约定。导入结果仍需对照应用官方来源核验。参见[格式说明](./references/baota-app-format.md)与[映射规则](./references/baota-to-1panel-mapping.md)。
 
-参考：
-
-- `references/baota-app-format.md`
-- `references/baota-to-1panel-mapping.md`
-
-## 迁移已有应用目录
+### 从 v1 迁移到 v2
 
 ```bash
-bash scripts/migrate-v1-to-v2.sh --src <app-dir> [--out <out-root>] [--version <source-ver>] [--target-version <target-ver>]
+bash scripts/migrate-v1-to-v2.sh \
+  --src <app-dir> \
+  --out <out-root> \
+  --version <source-version> \
+  --target-version <target-version>
 ```
 
-## 校验结果
+更新已经发布的应用时，在调整镜像、变量、依赖、存储卷或生命周期脚本前，应先检查[升级与维护安全规则](./references/upgrade-maintenance.md)。
 
-```bash
-bash scripts/validate-v2.sh --dir <app-dir>
-bash scripts/validate-v2.sh --dir <app-dir> --strict-store
-bash scripts/validate-v2.sh --dir <app-dir> --strict-c
-bash scripts/validate-v2.sh --dir <app-dir> --source-evidence-mode required
-bash scripts/validate-v2.sh --dir <app-dir> --i18n-mode warn --i18n-scope description
-bash scripts/validate-v2.sh --dir <app-dir> --i18n-mode strict --i18n-scope all
-```
-
-当前校验覆盖：
-
-- 可选 `source-evidence.json` 溯源检查；文件存在时检查 `repository` / `dockerDocs` / `composeFile`
-- `--source-evidence-mode warn|required|off`；默认 `warn`，只有明确把溯源证据作为门禁的流程才使用 `required`
-- 来源证据键在启用检查时需满足 `https://` URL 形态
-- compose `${VAR}` 与版本级 `data.yml` 的 `envKey` 闭环关系
-- root/version/compose 的重复 YAML key 检测
-- 基于 `.env.sample` 与安全兜底 `CONTAINER_NAME` 的 `docker compose config` 解析校验
-- `.env.sample` 仅视为独立 compose 运行时的参考文件；1Panel 运行时值应来自表单、面板注入、compose 默认值或生命周期脚本，不应依赖 `env_file: ./.env.sample`
-- 如果包内还带有 `dify.env` 这类运行时默认 env 文件，应明确说明它是先于 `./.env` 加载的默认层；其中尽量不要放用户级密钥样例，真实安装值应由后续 env 层或 compose 显式映射覆盖
-- 完整的 compose 渲染校验依赖执行环境中可用的 `docker compose` CLI
-- `--strict-store` 下对 README/元数据占位模板残留的阻断检测
-- `references/implicit-envkeys.md` 中声明的隐式变量例外
-- 在 `--strict-store` 下执行 `references/readme-style.md` 约定的 README 结构检查
-- 可配置的 i18n 质量告警，覆盖 `additionalProperties.description` 与表单 `label` 多语言映射
-- 表单 `label map` 缺项、旧版 `zh-hant` 命名等提示
-- service 级 `networks:` 与 `1panel-network` 相关的桥接网络检查
-- 多服务应用在共享网络下使用 `redis`、`mongo` 等通用内部服务主机名时的 Docker DNS 碰撞告警
-- healthcheck 作为可选运行增强项处理，不作为交付门禁
-
-## 策略与风格参考
-
-- `references/source-policy.md`
-- `references/readme-style.md`
-- `references/implicit-envkeys.md`
-- `references/edit-exempt-envkeys.md` — edit:true 例外清单
-- `references/schema.md` — 1Panel AppStore v2 字段事实表
-
-## 运行脚本补齐
+### 补齐生命周期脚本
 
 ```bash
 bash scripts/finalize_runtime_scripts.sh <app-dir> <version-dir>
 ```
 
-当你需要在最终校验前确保 `init.sh`、`upgrade.sh`、`uninstall.sh` 存在时，使用这个脚本。生成的 `init.sh` 在路径表单值未注入脚本进程环境时，会回退读取应用根目录的 `.env`，去除 1Panel 写入的成对引号，并基于应用根目录解析相对路径。
+该命令会补齐缺失的 `init.sh`、`upgrade.sh` 和 `uninstall.sh`，并使用基于应用根目录的路径处理方式。
 
-## 运行时启动经验
+### 校验应用包
 
-- 如果 compose wrapper 先以 `root` 修复 bind mount 权限，再用 `setpriv`、`gosu` 或 `su-exec` 降权启动应用，`exec` 前要同步设置目标用户的 `HOME`、`USER`、`LOGNAME`；否则 `pnpm` 等运行时可能仍尝试写 `/root` 下的配置并触发权限错误。
-- 官方 PostgreSQL 18+ 镜像优先把持久化目录挂到 `/var/lib/postgresql`，不要惯性沿用 `/var/lib/postgresql/data`，除非已经明确配置并测试了自定义 `PGDATA`。
-- 生成配置文件需要使用 1Panel 随机密码字段时，优先在应用容器启动阶段生成配置；不要假设 `scripts/init.sh` 一定能收到所有表单生成的 secret。
-- 多服务应用的主服务如果同时加入 `1panel-network` 和内部网络，内部依赖主机名使用 `<app>-redis`、`<app>-mongo` 等应用前缀服务名或显式内部 alias，不要直接使用 `redis`、`mongo`、`db` 等通用名，避免 Docker DNS 解析到共享网络上的其他应用服务。
-- 需要在启动前执行初始化逻辑时，避免依赖一次性 init sidecar。1Panel 部署过程可能改写 restart policy 行为，使 `service_completed_successfully` 变脆；优先使用可重试的主服务启动初始化或 healthcheck 初始化。
+```bash
+# 基础校验
+bash scripts/validate-v2.sh --dir <app-dir>
 
-## Runtime 选择器证据
+# AppStore 交付检查
+bash scripts/validate-v2.sh --dir <app-dir> --strict-store
 
-- `mysql` 与 `localmysql` 是不同的 1Panel 应用 key，必须分别验证 `PANEL_DB_TYPE` 实际使用的 `/apps/services/<key>`。
-- service 列表返回运行实例只证明可枚举，不证明数据库生命周期已接入。数据库表单还应在安装 payload 的 `services` 中出现主机字段，并在安装后、升级后获得 `linkDB` 或匹配的 `resourceKeys` 证据。
-- 上游初始化必须使用数据库管理员密码时，应读取所选 runtime 的真实安装值；表单默认值不是现有 runtime 凭据。
-- 升级不得覆盖旧安装已有的 selector、主机、库名、用户和密码。发起升级前先验证源版本 HTTP readiness，并将 selector 关联资源清理与手工外部数据库清理分开审计。
+# 校验多版本应用中的一个版本
+bash scripts/validate-v2.sh --dir <app-dir> --version <version> --strict-store
 
-## 打包与平台预期
+# 在有溯源门禁的流程中强制要求来源证据
+bash scripts/validate-v2.sh --dir <app-dir> --source-evidence-mode required
+```
 
-- 面向 GitHub 托管仓库与 Linux 执行环境
-- 文本文件应使用 LF 换行
-- shell 脚本以 `bash` 为目标环境
-- Python 脚本依赖 `python3` 与 `PyYAML`
-- `scripts/normalize-logo.sh` 额外需要 ImageMagick（`convert`、`identify`）和 GNU 兼容 `stat`
-- 公开包内容应限制在 docs、references、assets 与运行脚本本身
+校验覆盖：
 
-## 当前实现范围
+- 根目录与版本级 `data.yml` 的结构、必填字段、重复 YAML key 和标签；
+- Compose 渲染、变量闭环、`.env.sample`、服务标签、端口、存储卷和网络拓扑；
+- 占位内容残留和 AppStore README 结构；
+- `en`、`zh`、`zh-Hant`、`ja`、`ko`、`ru`、`ms`、`pt-br` 的描述与表单标签；
+- 可选来源证据和 strict-store 交付规则。
 
-这个公开包按阶段逐步增强：
+完整 Compose 渲染依赖 `docker compose` CLI。来源证据默认只告警，只有显式传入 `--source-evidence-mode required` 时才会成为必需项。
 
-1. 先明确规则优先级与权威来源
-2. 提供不含研究材料的干净公开 skill 目录
-3. 提供 scaffold、migrate、patch、env-sample、runtime-script-finalize、validate 等脚本
-4. 让 OpenClaw 工作流描述和实际公开脚本表面保持一致
-5. 继续提升默认生成质量，减少 scaffold / migrate 之后还要手工回填的内容，逐步逼近一键交付
+## 环境要求
 
-文档描述必须和脚本真实能力一致。随着当前版本默认生成质量提升，README 和 SKILL 也应同步更新，但不要夸大尚未实现的智能能力。
+- Linux 或其他带有 `bash` 的环境
+- Python 3 与 `PyYAML`
+- 用于完整 Compose 校验的 Docker Compose
+- `scripts/normalize-logo.sh` 所需的 ImageMagick 与 GNU 兼容 `stat`
+
+文本与 shell 文件应使用 LF 换行。
+
+## 规则参考
+
+- [来源策略](./references/source-policy.md)
+- [拓扑预检](./references/topology-preflight.md)
+- [1Panel schema 事实表](./references/schema.md)
+- [应用 README 风格](./references/readme-style.md)
+- [隐式环境变量](./references/implicit-envkeys.md)
+- [可编辑字段例外](./references/edit-exempt-envkeys.md)
+- [升级与维护安全](./references/upgrade-maintenance.md)
+
+## 常见问题
+
+### 这是一个 1Panel app skill 吗？
+
+是。它为编码 Agent 提供 1Panel 应用适配、生成、迁移和校验所需的来源规则、打包规则与脚本。
+
+### 能把 Docker Compose 转换为 1Panel AppStore 应用包吗？
+
+可以，前提是应用有可信的 Docker 部署来源。生成后仍需完成应用专属复核和运行测试，才能进入投稿流程。
+
+### 会直接发布到 1Panel 应用商店吗？
+
+不会。它只准备并校验本地应用产物；发布、推送分支和创建拉取请求仍属于单独的 Git 与 GitHub 操作。
