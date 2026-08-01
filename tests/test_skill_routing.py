@@ -58,6 +58,7 @@ class SkillRoutingTests(unittest.TestCase):
             "references/topology-preflight.md",
             "references/appspec.md",
             "references/baota-app-format.md",
+            "references/baota-migration-workflow.md",
             "references/baota-to-1panel-mapping.md",
             "references/upgrade-maintenance.md",
             "references/php-runtime.md",
@@ -74,6 +75,7 @@ class SkillRoutingTests(unittest.TestCase):
             4: (
                 "scripts/import-baota-app.py",
                 "references/baota-app-format.md",
+                "references/baota-migration-workflow.md",
                 "references/baota-to-1panel-mapping.md",
             ),
             5: ("helper commands", "references/upgrade-maintenance.md"),
@@ -91,6 +93,11 @@ class SkillRoutingTests(unittest.TestCase):
                 self.assertIn("review", route.casefold())
                 for item in required:
                     self.assertIn(item, route)
+
+        baota_route = next(line for line in router.splitlines() if line.startswith("4. "))
+        self.assertIn("--precheck-only", baota_route)
+        self.assertIn("--version <exact-version>", baota_route)
+        self.assertNotIn("--version latest", baota_route)
 
     def test_completion_gates_cover_static_and_runtime_readiness(self) -> None:
         router = self.skill[self.start : self.rule_priority]

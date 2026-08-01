@@ -26,25 +26,33 @@ def parse_args():
     mode_group = parser.add_mutually_exclusive_group()
     mode_group.add_argument("--batch", action="store_true", help="Batch import subdirectories under input / 批量导入输入目录下的应用子目录")
     mode_group.add_argument("--emit-appspec", help="Only generate AppSpec JSON to this path / 仅生成 AppSpec JSON 到该路径")
+    parser.add_argument("--precheck-only", action="store_true", help="Validate prepared input without generating app output / 只校验已准备的输入，不生成应用输出")
     parser.add_argument("--validate", action="store_true", help="Run basic validation after import / 导入后执行基础校验")
     parser.add_argument("--strict-store-validate", action="store_true", help="Run strict store validation / 执行严格商店校验")
     parser.add_argument("--require-validate", action="store_true", help="Exit non-zero if validation fails / 校验失败时返回非零退出码")
     parser.add_argument("--include-disabled", action="store_true", help="Import apps with appstatus=0 / 导入 appstatus=0 的应用")
     parser.add_argument("--report", help="Write JSON import report to this path / 将 JSON 导入报告写入该路径")
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.precheck_only and args.emit_appspec:
+        parser.error("--precheck-only cannot be combined with --emit-appspec")
+    if args.precheck_only and (args.validate or args.strict_store_validate or args.require_validate):
+        parser.error("--precheck-only cannot be combined with output validation options")
+    if args.require_validate and not (args.validate or args.strict_store_validate):
+        parser.error("--require-validate requires --validate or --strict-store-validate")
+    return args
 
 
 def load_library():
     sys.path.insert(0, os.path.dirname(__file__))
     try:
-        from baota_import_lib import BaotaParser, BaotaToAppSpecMapper, ComposeTransformer, ImportRunner
+        from baota_import_lib import BaotaParser, BaotaPrecheck, BaotaToAppSpecMapper, ComposeTransformer, ImportRunner
     except ImportError as exc:
         text = str(exc).lower()
         if getattr(exc, "name", None) == "yaml" or "pyyaml" in text or "yaml" in text:
             print("Error: PyYAML is required. Install with: pip install pyyaml", file=sys.stderr)
             raise SystemExit(EXIT_FAILURE)
         raise
-    return ImportRunner, BaotaParser, BaotaToAppSpecMapper, ComposeTransformer
+    return ImportRunner, BaotaParser, BaotaPrecheck, BaotaToAppSpecMapper, ComposeTransformer
 
 
 def ensure_input_dir(path_value):
@@ -170,7 +178,7 @@ def exit_for_result(require_validate, result, failed_count):
 
 
 def run_single_import(args):
-    ImportRunner, _, _, _ = load_library()
+    ImportRunner, _, _, _, _ = load_library()
     input_dir = ensure_input_dir(args.input)
     out_dir = pathlib.Path(args.out_dir)
     app_name = input_dir.name
@@ -220,7 +228,7 @@ def discover_batch_candidates(input_dir):
 
 
 def run_batch_import(args):
-    ImportRunner, _, _, _ = load_library()
+    ImportRunner, _, _, _, _ = load_library()
     input_dir = ensure_input_dir(args.input)
     out_dir = pathlib.Path(args.out_dir)
     candidates = discover_batch_candidates(input_dir)
@@ -305,7 +313,7 @@ def run_batch_import(args):
 
 
 def run_emit_appspec(args):
-    _, BaotaParser, BaotaToAppSpecMapper, ComposeTransformer = load_library()
+    _, BaotaParser, _, BaotaToAppSpecMapper, ComposeTransformer = load_library()
     input_dir = ensure_input_dir(args.input)
     parser = BaotaParser()
     mapper = BaotaToAppSpecMapper()
@@ -320,9 +328,69 @@ def run_emit_appspec(args):
     return EXIT_SUCCESS
 
 
+def run_precheck(args):
+    _, _, BaotaPrecheck, _, _ = load_library()
+    input_dir = ensure_input_dir(args.input)
+    precheck = BaotaPrecheck()
+
+    if not args.batch:
+        result = precheck.validate(str(input_dir), args.include_disabled)
+        success = not result.get("errors")
+        payload = {
+            "mode": "precheck",
+            "input": str(input_dir),
+            "success": success,
+            "result": result,
+        }
+        print(f"Prechecking {input_dir.name}... {'OK' if success else 'FAILED'}")
+        if args.report:
+            write_json(args.report, payload)
+            print(f"Report: {args.report}")
+        return EXIT_SUCCESS if success else EXIT_FAILURE
+
+    candidates = sorted(
+        path
+        for path in input_dir.iterdir()
+        if path.is_dir() and not path.name.startswith(".")
+    )
+    items = []
+    for candidate in candidates:
+        result = precheck.validate(str(candidate), args.include_disabled)
+        success = not result.get("errors")
+        items.append({
+            "directory": candidate.name,
+            "input": str(candidate),
+            "success": success,
+            "result": result,
+        })
+        print(f"Prechecking {candidate.name}... {'OK' if success else 'FAILED'}")
+
+    passed_count = sum(1 for item in items if item["success"])
+    failed_count = len(items) - passed_count
+    payload = {
+        "mode": "batch-precheck",
+        "input": str(input_dir),
+        "success": bool(items) and failed_count == 0,
+        "checked_count": len(items),
+        "passed_count": passed_count,
+        "failed_count": failed_count,
+        "items": items,
+    }
+    if not items:
+        payload["error"] = "No app directories found"
+        print(f"No app directories found under: {input_dir}", file=sys.stderr)
+    print(f"Summary: {passed_count} passed, {payload['failed_count']} failed")
+    if args.report:
+        write_json(args.report, payload)
+        print(f"Report: {args.report}")
+    return EXIT_SUCCESS if payload["success"] else EXIT_FAILURE
+
+
 def main():
     args = parse_args()
     try:
+        if args.precheck_only:
+            return run_precheck(args)
         if args.emit_appspec:
             return run_emit_appspec(args)
         if args.batch:

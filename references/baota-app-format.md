@@ -10,6 +10,12 @@ Verified public sources:
 
 Note: `btpanel/apphub` was not publicly accessible during verification; use the public aaPanel apphub as the auditable format source unless the user provides private Baota apphub data.
 
+## Intake Boundary
+
+This reference describes the prepared directory consumed by `scripts/import-baota-app.py`. A live Baota/aaPanel market may instead expose catalog JSON and downloadable template archives. Those are acquisition inputs, not importer inputs.
+
+Snapshot and safely extract live-market artifacts into task-owned prepared directories first. Reject archive path traversal and links that escape the staging root. Prepared required files, version directories, and Compose files must be regular non-symlink entries. The importer does not download URLs, parse a market-wide catalog, or extract archives. Follow `baota-migration-workflow.md` for the complete staged process.
+
 ## Directory Structure
 
 ### Single App Directory
@@ -99,6 +105,8 @@ Version expansion rules:
 - `m_version: "latest"` → candidate `"latest"`
 - `m_version: "3"`, `s_version: ["42.0"]` → candidate `"3.42.0"`
 - `m_version: "3"`, `s_version: ["42.0", "41.0"]` → candidates `"3.42.0"`, `"3.41.0"`
+
+The array declares candidates; it does not define a trustworthy newest-version order. Each selected version must have a local directory and must be converted, qualified, strictly validated, and runtime-tested explicitly.
 
 ### Field Definition (field[])
 
