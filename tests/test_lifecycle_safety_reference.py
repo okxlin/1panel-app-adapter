@@ -2,7 +2,6 @@
 import pathlib
 import unittest
 
-
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 REFERENCE = REPO_ROOT / "references" / "lifecycle-safety.md"
 
@@ -34,6 +33,23 @@ class LifecycleSafetyReferenceTests(unittest.TestCase):
             "recursive `chown`",
             "--no-dereference",
             "resolved target",
+        ):
+            with self.subTest(guard=guard):
+                self.assertIn(guard.casefold(), self.text.casefold())
+
+    def test_non_root_writable_bind_has_a_fail_closed_decision_procedure(self) -> None:
+        for guard in (
+            "upstream-recommended named volume",
+            "--dir-owner",
+            "--replace-init",
+            "root-created `0755`",
+            "direct child",
+            "root-owned",
+            "parent chain",
+            "descriptor-based initializer",
+            "stat",
+            "write probe",
+            "blocks delivery",
         ):
             with self.subTest(guard=guard):
                 self.assertIn(guard.casefold(), self.text.casefold())

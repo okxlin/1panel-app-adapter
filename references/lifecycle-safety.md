@@ -39,6 +39,37 @@ Keep this ledger in the adaptation report or delivery evidence; do not add proce
 - Do not add `chown` for a guessed identity. If the image is intentionally root, preserve that upstream behavior unless verified hardening proves the full application workflow still works.
 - For every non-root writable bind mount, create the host directory with a source-backed ownership/permission plan before startup. A root-created `0755` directory is not writable by an arbitrary non-root container user.
 
+### Non-root writable bind decision procedure
+
+Use this sequence for every mount that a non-root process must write. Do not skip from a
+proven UID/GID directly to `mkdir -p`.
+
+1. Prefer an upstream-recommended named volume when direct host access is not a package
+   requirement. Preserve the upstream volume name/target and lifecycle semantics; do not add
+   an `APP_DATA_DIR` form merely to replace it with a bind mount.
+2. If a bind mount is required, record the exact source-backed numeric UID, GID, and narrowest
+   usable directory mode. Regenerate the confined init script explicitly after reviewing any
+   existing customization:
+
+   ```bash
+   bash scripts/finalize_runtime_scripts.sh <app-dir> <version-dir> \
+     --dir-owner APP_DATA_DIR=<uid>:<gid>:0750 --replace-init
+   ```
+
+   Repeat `--dir-owner` for independently writable directories. The helper rejects unknown
+   path fields, non-numeric identities, non-octal modes, owner modes without `rwx`, and duplicate
+   entries. It accepts only a direct child beneath a root-owned parent chain that is not writable
+   by group or others, requires root for the ownership step, and never performs recursive `chown`
+   or `chmod`.
+   Nested bind sources require an upstream named volume or an independently audited,
+   descriptor-based initializer; pathname prechecks alone do not close symlink-swap races.
+3. Run the exact `init.sh`, inspect the resulting directory with `stat`, and run a write probe as
+   the delivered runtime UID/GID (for example with `setpriv` on a disposable clean directory).
+   A root-only write test is insufficient. Record the commands and results, not an intended mode.
+4. If neither a source-backed named volume nor a verified bind ownership plan is available, the
+   unresolved writable mount blocks delivery. Do not claim that a mode or owner was applied when
+   the exact delivered script does not apply and verify it.
+
 ## 3. Confine every host path
 
 - Prefer fixed package-local defaults such as `./data`, `./config`, and `./certs/app.p12`. Expose a custom host path only when the upstream contract or user requirement needs it.
@@ -47,7 +78,7 @@ Keep this ledger in the adaptation report or delivery evidence; do not add proce
 - Resolve the candidate canonically from the version root before `mkdir`, `touch`, `install`, `chmod`, `chown`, copy, move, or deletion. Require the resolved target to equal the version root or start with `<version-root>/`; for persistent data, normally require a child rather than the root itself.
 - Reject on any resolution error. Do not fall back to the raw path, the process working directory, `/`, or a home directory.
 - Use `scripts/finalize_runtime_scripts.sh` only as a safe baseline for explicit directories. The generic helper accepts only an environment key with an independent `DIR` segment (for example `APP_DATA_DIR` or `APP_DATA_DIR_CACHE`) or a default ending in `/`. It refuses every other path field because a name or extension cannot prove the mount type. Implement exact file creation/validation in application-specific code.
-- Do not replace the generated confinement when customizing a directory path. Preserve its environment-key validation, control/absolute/traversal rejection, canonical version-root boundary, every-component symlink rejection, and post-mutation recheck.
+- Do not replace the generated confinement when customizing a directory path. Preserve its environment-key validation, control/absolute/traversal rejection, canonical version-root boundary, and symbolic-link rejection. For ownership changes, also preserve the direct-child restriction and trusted-parent-chain check.
 
 The generated helper intentionally accepts package-local relative paths only. Keep equivalent checks in hand-written scripts:
 
@@ -79,11 +110,11 @@ resolve_confined_path() {
 
 This lexical/canonical boundary check does not by itself authorize ownership changes. Also reject symbolic links and recheck the resolved target immediately before each mutation to reduce time-of-check/time-of-use exposure.
 
-Test custom path logic with a normal relative path, an absolute path, parent traversal, an inside-root symbolic link, and an outside-root symbolic link. Require rejection for both symlink cases; resolving a symlink back inside the version root does not make it an approved package path.
+Test custom path logic with a normal direct-child path, a nested path, an absolute path, parent traversal, an inside-root symbolic link, and an outside-root symbolic link. Ordinary directory creation may accept a confined nested path; ownership changes must reject it. Require rejection for both symlink cases; resolving a symlink back inside the version root does not make it an approved package path.
 
 ## 4. Bound ownership and permission changes
 
-- Avoid recursive `chown`. Prefer creating the exact known directories with `install -d -o <uid> -g <gid> -m <mode>` or changing only newly created paths.
+- Avoid recursive `chown`. For a direct child under a trusted parent chain, create and change only that exact directory and use a non-dereferencing ownership operation. Use a descriptor-relative initializer when a mutable or nested parent cannot be excluded.
 - If recursion is unavoidable, first prove the target is package-local, reject symbolic links, re-resolve the boundary, stay on one filesystem when practical, and use `--no-dereference` (plus `--preserve-root` where supported). Record why every descendant belongs to the application.
 - Never run `chown -R`, `chmod -R`, deletion, or copy operations on an arbitrary absolute/form path, the version root, `/`, a home directory, or a path accepted after only checking that it is not `/`.
 - Do not use `chmod 777` as an ownership substitute. Preserve the narrowest mode that the application and its backup/upgrade flow require.

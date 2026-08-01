@@ -120,9 +120,13 @@ For an existing published app, review [upgrade and maintenance safety](./referen
 
 ```bash
 bash scripts/finalize_runtime_scripts.sh <app-dir> <version-dir>
+
+# After proving a non-root writable bind's numeric identity from the exact image:
+bash scripts/finalize_runtime_scripts.sh <app-dir> <version-dir> \
+  --dir-owner APP_DATA_DIR=<uid>:<gid>:0750 --replace-init
 ```
 
-This adds missing `init.sh`, `upgrade.sh`, and `uninstall.sh` files with app-root-aware path handling.
+This adds missing `init.sh`, `upgrade.sh`, and `uninstall.sh` files with app-root-aware path handling. `--dir-owner` regenerates `init.sh` only after the explicit `--replace-init` acknowledgement and applies non-recursive ownership to a direct child of a trusted version directory. It must run as root. Never infer the UID/GID from the application name or reuse the example values for another image.
 
 ### Validate a Package
 
