@@ -178,6 +178,7 @@ class SkillRoutingTests(unittest.TestCase):
         for field in (
             "sourceRevision",
             "imageEvidence",
+            "images",
             "licenseEvidence",
             "logoEvidence",
             "redistributionEvidence",

@@ -34,7 +34,7 @@ behavior notes:
   - multi-version app directories require --version <version-dir> so validation targets one release explicitly
   - --strict-store is intended for delivery-ready artifacts, not raw scaffold placeholders
   - --source-evidence-mode required preserves its historical provenance-schema meaning
-  - --require-delivery-evidence additionally requires verified application-license and hash-bound redistribution evidence
+  - --require-delivery-evidence additionally requires verified application-license, hash-bound redistribution evidence, and digest evidence for every selected Compose service image
   - --strict-store with --source-evidence-mode required implies --require-delivery-evidence for backward compatibility
   - when docker compose is available, validator runs a real `docker compose config` render check
   - when docker compose is unavailable, that render check is skipped and reported as a warning
@@ -233,7 +233,13 @@ if [[ $FAILURES -gt 0 ]]; then
 fi
 
 if [[ -s "$SOURCE_EVIDENCE" && "$SOURCE_EVIDENCE_MODE" != "off" ]]; then
-  source_ev_args=("$SOURCE_EVIDENCE" --artifact-root "$DIR")
+  source_ev_args=(
+    "$SOURCE_EVIDENCE"
+    --artifact-root "$DIR"
+    --compose "$COMPOSE"
+    --env-file "$VER_DIR/.env.sample"
+    --version-name "$(basename "$VER_DIR")"
+  )
   if [[ "$REQUIRE_DELIVERY_EVIDENCE" -eq 1 || ("$STRICT_STORE" -eq 1 && "$SOURCE_EVIDENCE_MODE" == "required") ]]; then
     source_ev_args+=(--require-delivery)
   fi
@@ -335,6 +341,9 @@ for item in items:
         print('[A][FAIL] CONTAINER_NAME must not be a formFields envKey')
         failures += 1
         continue
+    if item.get('rule', '') == 'paramPort' and not env.startswith('PANEL_APP_PORT_'):
+        print(f'[A][FAIL] {env} uses rule:paramPort but envKey must start with PANEL_APP_PORT_')
+        failures += 1
     if env.startswith('PANEL_APP_PORT'):
         if typ != 'number':
             print(f'[A][FAIL] {env} must use type:number')

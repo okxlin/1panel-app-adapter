@@ -37,6 +37,13 @@ only when their values were verified from official source, registry, license, or
     "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     "platforms": ["linux/amd64", "linux/arm64"]
   },
+  "images": [{
+    "version": "1.2.3",
+    "service": "app",
+    "reference": "example/app@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "platforms": ["linux/amd64", "linux/arm64"]
+  }],
   "licenseEvidence": {
     "spdx": "MIT",
     "url": "https://example.com/project/LICENSE"
@@ -67,12 +74,23 @@ only when their values were verified from official source, registry, license, or
 
 - `sourceRevision.tag` is the exact release tag; `sourceRevision.commit` is the full 40- or
   64-hex commit identifier resolved for that tag.
-- `imageEvidence.digest` is an immutable `sha256:` image digest. For a multi-platform tag, use the
-  OCI index digest here and record each platform child digest separately in the report.
+- `imageEvidence` remains a backward-compatible single-service record. Delivery validation accepts
+  it only when the selected Compose has exactly one image and the record includes that image's
+  registry digest. The Compose reference may be an immutable digest or a source-backed version tag;
+  report that a tag reference itself can still move. Use `images` for every multi-service package
+  and prefer it for new packages.
+- Each `images[]` entry binds one exact version directory and Compose service to its resolved
+  `reference` and matching registry `digest`. The `(version, service)` pair must be unique. Cover
+  every service with an `image:` key, including databases, caches, browsers, migration helpers, and
+  other sidecars. Prefer an `@sha256:` runtime reference; when a source-backed version tag must
+  remain in Compose, record its resolved digest and report that the runtime reference itself can
+  still move. Unrecorded auxiliary images block delivery evidence. For a multi-platform tag, use
+  the OCI index digest in `digest` and record each platform child digest separately in the report.
+  `imageEvidence.digest` and each `images[].digest` are immutable `sha256:` image digests.
   `imageEvidence.platforms` records verified OCI platform strings and must not be inferred from the
-  host running the test. Use the same registry descriptor to build every platform-to-child-digest
-  association and require it to name both values. Never assign a platform child digest by list
-  position, current host architecture, or a separate registry query.
+  host running the test; the same rule applies to `images[].platforms`. Use the same registry descriptor
+  to build every platform-to-child-digest association and require it to name both values. Never assign
+  a platform child digest by list position, current host architecture, or a separate registry query.
 - `licenseEvidence.spdx` records an SPDX expression when known; `licenseEvidence.url` links the
   exact upstream license evidence.
 - `logoEvidence.source` is an HTTPS source URL or `bundled:<package-relative-path>` for a bundled

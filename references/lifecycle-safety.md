@@ -218,6 +218,17 @@ Selecting an AIO image does not satisfy a `specialized_conditional` route. Keep 
 
 ## 10. Delivery checklist
 
+Before finalizing the README or adaptation report, build a configuration claim ledger. For every
+configuration statement, record the key or control, classify it as fixed, defaulted, generated,
+optional, or user-configurable, and point to the delivered artifact that enforces that
+classification. Compare every report claim against the exact Compose, `data.yml`, `.env.sample`,
+and lifecycle scripts instead of copying an earlier plan or upstream description.
+
+If a value has an editable form field, describe it as user-configurable with a default of the
+delivered value, not as fixed. Keep application defaults, package defaults, sample placeholders,
+generated install values, and runtime observations distinct. A report/README contradiction blocks
+a delivery-ready claim even when the artifact itself is structurally valid.
+
 Before a pass claim, answer all items with evidence:
 
 1. Does every required startup value have a complete startup configuration contract row and a verified final-artifact mapping?
@@ -231,5 +242,6 @@ Before a pass claim, answer all items with evidence:
 9. Are credentials URL-encoded or otherwise escaped with the exact connection-string grammar?
 10. Do clean install, readiness, restart, upgrade, uninstall, and cleanup evidence cover the actual application behavior?
 11. Does every Compose lifecycle command target the intended version directory without relying on the caller's working directory, and does uninstall preserve persistent volumes unless their deletion is explicitly proven safe?
+12. Does the configuration claim ledger match every delivered control and avoid calling an editable or generated value fixed?
 
 Any unresolved item blocks a runtime-ready or delivery-ready claim even when structural, strict-store, i18n, environment-closure, and Compose-render checks pass.

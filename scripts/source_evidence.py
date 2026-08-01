@@ -10,9 +10,18 @@ import re
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 HTTPS_URL = re.compile(r"https://[^\s]+")
 COMMIT_ID = re.compile(r"(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})")
 IMAGE_DIGEST = re.compile(r"sha256:[0-9a-fA-F]{64}")
+PINNED_IMAGE_REFERENCE = re.compile(
+    r"[^\s]+@(?P<digest>sha256:[0-9a-fA-F]{64})"
+)
+SERVICE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*")
+VERSION_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+&-]{0,127}")
+ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+UNBRACED_ENV = re.compile(r"\$([A-Za-z_][A-Za-z0-9_]*)")
 OCI_PLATFORM = re.compile(
     r"[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._-]*" r"(?:/[a-z0-9][a-z0-9._-]*)?"
 )
@@ -41,6 +50,157 @@ def _optional_object(payload: dict[str, Any], key: str, errors: list[str]):
         errors.append(f"{key} must be a non-empty object when present")
         return None
     return value
+
+
+def _validate_image_fields(
+    value: dict[str, Any],
+    field: str,
+    errors: list[str],
+    *,
+    require_digest: bool = False,
+) -> None:
+    digest = value.get("digest")
+    platforms = value.get("platforms")
+    if digest is not None and (
+        not isinstance(digest, str)
+        or IMAGE_DIGEST.fullmatch(digest.strip()) is None
+    ):
+        errors.append(f"{field}.digest must be a sha256 digest with 64 hex characters")
+    if platforms is not None and (
+        not isinstance(platforms, list)
+        or not platforms
+        or any(
+            not isinstance(item, str)
+            or OCI_PLATFORM.fullmatch(item.strip()) is None
+            for item in platforms
+        )
+    ):
+        errors.append(
+            f"{field}.platforms must be a non-empty list of OCI platform strings"
+        )
+    if require_digest and digest is None:
+        errors.append(f"{field}.digest is required")
+    elif digest is None and platforms is None:
+        errors.append(f"{field} must include digest or platforms")
+
+
+def _read_env_file(path: Path) -> dict[str, str]:
+    values: dict[str, str] = {}
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        if ENV_NAME.fullmatch(key) is None:
+            continue
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+            value = value[1:-1]
+        values[key] = value
+    return values
+
+
+def _split_parameter_expression(expression: str) -> tuple[str, str | None, str]:
+    match = ENV_NAME.match(expression)
+    if match is None:
+        raise ValueError(f"unsupported Compose image interpolation: ${{{expression}}}")
+    name = match.group(0)
+    remainder = expression[match.end():]
+    if not remainder:
+        return name, None, ""
+    for operator in (":-", ":?", ":+", "-", "?", "+"):
+        if remainder.startswith(operator):
+            return name, operator, remainder[len(operator):]
+    raise ValueError(f"unsupported Compose image interpolation: ${{{expression}}}")
+
+
+def _resolve_compose_image(reference: str, env: dict[str, str]) -> str:
+    def find_parameter_end(text: str, start: int) -> int:
+        depth = 1
+        cursor = start
+        while cursor < len(text):
+            if text.startswith("$$", cursor):
+                cursor += 2
+                continue
+            if text.startswith("${", cursor):
+                depth += 1
+                cursor += 2
+                continue
+            if text[cursor] == "}":
+                depth -= 1
+                if depth == 0:
+                    return cursor
+            cursor += 1
+        raise ValueError("unterminated Compose image interpolation")
+
+    def resolve_braced(text: str) -> str:
+        output: list[str] = []
+        cursor = 0
+        while cursor < len(text):
+            if text.startswith("$$", cursor):
+                output.append("$")
+                cursor += 2
+                continue
+            if not text.startswith("${", cursor):
+                output.append(text[cursor])
+                cursor += 1
+                continue
+            end = find_parameter_end(text, cursor + 2)
+            expression = text[cursor + 2:end]
+            name, operator, operand = _split_parameter_expression(expression)
+            is_set = name in env
+            value = env.get(name, "")
+            is_nonempty = is_set and value != ""
+            if operator is None:
+                if not is_set:
+                    raise ValueError(f"Compose image variable is unset: {name}")
+                replacement = value
+            elif operator == ":-":
+                replacement = value if is_nonempty else resolve_braced(operand)
+            elif operator == "-":
+                replacement = value if is_set else resolve_braced(operand)
+            elif operator in {":?", "?"}:
+                valid = is_nonempty if operator == ":?" else is_set
+                if not valid:
+                    raise ValueError(f"Compose image variable is required: {name}")
+                replacement = value
+            elif operator == ":+":
+                replacement = resolve_braced(operand) if is_nonempty else ""
+            else:
+                replacement = resolve_braced(operand) if is_set else ""
+            output.append(replacement)
+            cursor = end + 1
+        return "".join(output)
+
+    resolved = resolve_braced(reference)
+
+    def replace_unbraced(match: re.Match[str]) -> str:
+        name = match.group(1)
+        if name not in env:
+            raise ValueError(f"Compose image variable is unset: {name}")
+        return env[name]
+
+    resolved = UNBRACED_ENV.sub(replace_unbraced, resolved)
+    if not resolved or resolved != resolved.strip() or re.search(r"\s", resolved):
+        raise ValueError("resolved Compose image reference must be one non-empty token")
+    return resolved
+
+
+def load_compose_images(compose_path: Path, env_path: Path) -> dict[str, str]:
+    payload = yaml.safe_load(compose_path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict) or not isinstance(payload.get("services"), dict):
+        raise ValueError("Compose must contain a services object")
+    env = _read_env_file(env_path)
+    images: dict[str, str] = {}
+    for service, config in payload["services"].items():
+        if not isinstance(config, dict) or "image" not in config:
+            continue
+        reference = config.get("image")
+        if not isinstance(reference, str):
+            raise ValueError(f"Compose service image must be a string: {service}")
+        images[str(service)] = _resolve_compose_image(reference, env)
+    return images
 
 
 def _is_safe_package_path(value: Any) -> bool:
@@ -251,6 +411,8 @@ def validate_source_evidence(
     require_urls: bool = True,
     artifact_root: Path | None = None,
     require_delivery: bool = False,
+    compose_images: dict[str, str] | None = None,
+    compose_version: str | None = None,
 ) -> list[str]:
     errors: list[str] = []
     if not isinstance(payload, dict):
@@ -281,29 +443,96 @@ def validate_source_evidence(
 
     image_evidence = _optional_object(payload, "imageEvidence", errors)
     if image_evidence is not None:
-        digest = image_evidence.get("digest")
-        platforms = image_evidence.get("platforms")
-        if digest is not None and (
-            not isinstance(digest, str)
-            or IMAGE_DIGEST.fullmatch(digest.strip()) is None
-        ):
-            errors.append(
-                "imageEvidence.digest must be a sha256 digest with 64 hex characters"
+        _validate_image_fields(image_evidence, "imageEvidence", errors)
+
+    image_entries = payload.get("images")
+    images_by_version_service: dict[tuple[str, str], dict[str, Any]] = {}
+    if image_entries is not None:
+        if not isinstance(image_entries, list) or not image_entries:
+            errors.append("images must be a non-empty list when present")
+            image_entries = []
+        for index, image in enumerate(image_entries):
+            field = f"images[{index}]"
+            if not isinstance(image, dict):
+                errors.append(f"{field} must be an object")
+                continue
+            version = image.get("version")
+            service = image.get("service")
+            reference = image.get("reference")
+            valid_version = (
+                isinstance(version, str)
+                and VERSION_NAME.fullmatch(version.strip()) is not None
+                and version == version.strip()
             )
-        if platforms is not None and (
-            not isinstance(platforms, list)
-            or not platforms
-            or any(
-                not isinstance(item, str)
-                or OCI_PLATFORM.fullmatch(item.strip()) is None
-                for item in platforms
-            )
-        ):
-            errors.append(
-                "imageEvidence.platforms must be a non-empty list of OCI platform strings"
-            )
-        if digest is None and platforms is None:
-            errors.append("imageEvidence must include digest or platforms")
+            if not valid_version:
+                errors.append(f"{field}.version must be a valid version directory name")
+            if (
+                not isinstance(service, str)
+                or SERVICE_NAME.fullmatch(service.strip()) is None
+                or service != service.strip()
+            ):
+                errors.append(f"{field}.service must be a valid Compose service name")
+            elif valid_version:
+                key = (version, service)
+                if key in images_by_version_service:
+                    errors.append(
+                        "images version/service pairs must be unique: "
+                        f"{version}/{service}"
+                    )
+                else:
+                    images_by_version_service[key] = image
+            if (
+                not isinstance(reference, str)
+                or not reference
+                or reference != reference.strip()
+                or re.search(r"\s", reference)
+            ):
+                errors.append(f"{field}.reference must be one non-empty image reference")
+            _validate_image_fields(image, field, errors, require_digest=True)
+
+    if require_delivery and compose_images is not None:
+        if image_entries is None and len(compose_images) == 1 and image_evidence is not None:
+            service, reference = next(iter(compose_images.items()))
+            pinned = PINNED_IMAGE_REFERENCE.fullmatch(reference)
+            digest = image_evidence.get("digest")
+            if not isinstance(digest, str) or IMAGE_DIGEST.fullmatch(digest.strip()) is None:
+                errors.append("imageEvidence.digest is required for delivery")
+            elif pinned is not None and digest.lower() != pinned.group("digest").lower():
+                errors.append(
+                    f"imageEvidence.digest must match Compose service image: {service}"
+                )
+        else:
+            selected_images: dict[str, dict[str, Any]] = {}
+            if compose_version is None:
+                errors.append("Compose version is required to select images evidence")
+            else:
+                selected_images = {
+                    service: image
+                    for (version, service), image in images_by_version_service.items()
+                    if version == compose_version
+                }
+            for service, reference in compose_images.items():
+                image = selected_images.get(service)
+                if image is None:
+                    errors.append(f"Compose service image lacks evidence: {service}")
+                    continue
+                evidence_reference = image.get("reference")
+                if evidence_reference != reference:
+                    errors.append(
+                        f"images evidence reference must match Compose service image: {service}"
+                    )
+                pinned = PINNED_IMAGE_REFERENCE.fullmatch(reference)
+                digest = image.get("digest")
+                if (
+                    pinned is not None
+                    and isinstance(digest, str)
+                    and digest.lower() != pinned.group("digest").lower()
+                ):
+                    errors.append(
+                        f"images evidence digest must match Compose service image: {service}"
+                    )
+            for service in sorted(selected_images.keys() - compose_images.keys()):
+                errors.append(f"images evidence service is absent from Compose: {service}")
 
     license_evidence = _optional_object(payload, "licenseEvidence", errors)
     if license_evidence is not None:
@@ -513,6 +742,9 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Validate source-evidence.json")
     parser.add_argument("evidence_file")
     parser.add_argument("--artifact-root")
+    parser.add_argument("--compose")
+    parser.add_argument("--env-file")
+    parser.add_argument("--version-name")
     parser.add_argument("--require-delivery", action="store_true")
     args = parser.parse_args()
     try:
@@ -521,10 +753,26 @@ def main() -> int:
         print(f"[A][FAIL] source-evidence.json invalid JSON: {exc}")
         return 1
 
+    compose_images = None
+    if args.compose or args.env_file:
+        if not args.compose or not args.env_file:
+            print("[A][FAIL] source-evidence.json --compose and --env-file must be used together")
+            return 1
+        try:
+            compose_images = load_compose_images(
+                Path(args.compose),
+                Path(args.env_file),
+            )
+        except (OSError, ValueError, yaml.YAMLError) as exc:
+            print(f"[A][FAIL] source-evidence.json cannot inspect Compose images: {exc}")
+            return 1
+
     errors = validate_source_evidence(
         payload,
         artifact_root=Path(args.artifact_root) if args.artifact_root else None,
         require_delivery=args.require_delivery,
+        compose_images=compose_images,
+        compose_version=args.version_name,
     )
     for error in errors:
         print(f"[A][FAIL] source-evidence.json {error}")

@@ -25,11 +25,38 @@ For each viable shape, record:
 - authoritative persistent state, backup boundary, upgrade order, and rollback boundary;
 - upstream positioning for production, evaluation, or testing.
 
+Also build a capability contract for each viable shape. Record its user-visible capabilities,
+whether each capability is enabled by default in the full upstream default, and the exact service,
+image, environment, and dependency combination that enables it. Mark each capability as core,
+optional, or conditional and cite the exact-version official evidence for that classification.
+
+Name the selected profile as the full upstream default, a capability-equivalent alternative, or a
+reduced-capability profile. Preserve the full upstream capability set by default. A
+capability-equivalent alternative must have official or target-platform evidence that maps every
+default user-visible capability to the replacement service, image, environment, and dependency
+combination without feature loss.
+
+Select a reduced-capability profile only when the user explicitly requests reduced capability. Do
+not choose one merely to remove services, simplify validation, or keep an otherwise conditional
+topology on the ordinary route. A reduced-capability profile must list exactly which features
+become unavailable, the operator-visible effect, and the supported path for enabling them later.
+Do not describe it as the default, minimal default, or source-equivalent topology merely because
+the core service can start. Disclosure does not substitute for capability preservation.
+
+An optional sidecar, overlay, or profile may be omitted only when exact-version evidence proves
+that the remaining topology is supported and that its selected service, image, environment, and
+dependency combination is internally compatible. When omission requires a compatible image
+variant or different environment setting, deliver and verify that combination. An `optional`
+comment by itself does not prove that every partial combination works. Missing capability or
+compatibility evidence blocks scaffolding.
+
 A single Compose service can still be an operationally complex multi-process application. Count both the visible Compose topology and the processes and state hidden inside the image.
 
 ## 3. Inspect the published OCI image
 
-Inspect the resolved manifest and OCI config for every required application image, not only the upstream Dockerfile or Compose file. Record at least:
+Inspect the resolved manifest and OCI config for every Compose service image, including database,
+cache, browser, migration, and helper images, not only the primary application image or upstream
+Dockerfile. Record at least:
 
 - digest and supported platforms;
 - `User`;

@@ -11,10 +11,212 @@ SCRIPT_DIR = pathlib.Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPT_DIR))
 
 from baota_import_lib import evaluate_baota_delivery_readiness
-from source_evidence import validate_source_evidence
+from source_evidence import load_compose_images, validate_source_evidence
 
 
 class SourceEvidenceDeliveryTests(unittest.TestCase):
+    @staticmethod
+    def _minimal_delivery_payload() -> dict:
+        return {
+            "licenseEvidence": {"spdx": "MIT"},
+            "redistributionEvidence": {
+                "status": "verified",
+                "requiredFiles": [],
+                "materials": [],
+                "assets": [{
+                    "path": "NOTICE.txt",
+                    "source": "https://example.com/NOTICE.txt",
+                    "license": "MIT",
+                    "sha256": "f" * 64,
+                    "requiredFiles": [],
+                }],
+            },
+        }
+
+    def test_legacy_single_image_evidence_covers_one_pinned_service(self) -> None:
+        digest = "sha256:" + "a" * 64
+        payload = self._minimal_delivery_payload()
+        payload["imageEvidence"] = {
+            "digest": digest,
+            "platforms": ["linux/amd64"],
+        }
+
+        errors = validate_source_evidence(
+            payload,
+            require_urls=False,
+            require_delivery=True,
+            compose_images={"app": f"example/app@{digest}"},
+        )
+
+        self.assertEqual(errors, [])
+
+    def test_legacy_single_image_evidence_covers_one_tagged_service(self) -> None:
+        digest = "sha256:" + "a" * 64
+        payload = self._minimal_delivery_payload()
+        payload["imageEvidence"] = {
+            "digest": digest,
+            "platforms": ["linux/amd64"],
+        }
+
+        errors = validate_source_evidence(
+            payload,
+            require_urls=False,
+            require_delivery=True,
+            compose_images={"app": "example/app:1.0.0"},
+        )
+
+        self.assertEqual(errors, [])
+
+    def test_legacy_single_image_evidence_cannot_cover_two_services(self) -> None:
+        digest = "sha256:" + "a" * 64
+        payload = self._minimal_delivery_payload()
+        payload["imageEvidence"] = {
+            "digest": digest,
+            "platforms": ["linux/amd64"],
+        }
+
+        errors = validate_source_evidence(
+            payload,
+            require_urls=False,
+            require_delivery=True,
+            compose_images={
+                "app": f"example/app@{digest}",
+                "redis": "redis@sha256:" + "b" * 64,
+            },
+        )
+
+        self.assertIn("Compose service image lacks evidence: app", errors)
+        self.assertIn("Compose service image lacks evidence: redis", errors)
+
+    def test_compose_image_variable_resolves_from_env_sample(self) -> None:
+        digest = "sha256:" + "a" * 64
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            compose = root / "docker-compose.yml"
+            env = root / ".env.sample"
+            compose.write_text(
+                "services:\n  app:\n    image: ${IMAGE_NAME}\n",
+                encoding="utf-8",
+            )
+            env.write_text(f"IMAGE_NAME=example/app@{digest}\n", encoding="utf-8")
+
+            images = load_compose_images(compose, env)
+
+        self.assertEqual(images, {"app": f"example/app@{digest}"})
+
+    def test_compose_image_nested_default_interpolation_resolves(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            compose = root / "docker-compose.yml"
+            env = root / ".env.sample"
+            compose.write_text(
+                "services:\n"
+                "  app:\n"
+                "    image: example/app:${IMAGE_TAG:-${DEFAULT_TAG:-1.0.0}}\n",
+                encoding="utf-8",
+            )
+            env.write_text("DEFAULT_TAG=2.0.0\n", encoding="utf-8")
+
+            images = load_compose_images(compose, env)
+
+        self.assertEqual(images, {"app": "example/app:2.0.0"})
+
+    def test_images_evidence_service_names_are_unique(self) -> None:
+        digest = "sha256:" + "a" * 64
+        payload = {
+            "images": [
+                {
+                    "version": "latest",
+                    "service": "app",
+                    "reference": f"example/app@{digest}",
+                    "digest": digest,
+                },
+                {
+                    "version": "latest",
+                    "service": "app",
+                    "reference": f"example/app@{digest}",
+                    "digest": digest,
+                },
+            ]
+        }
+
+        errors = validate_source_evidence(payload, require_urls=False)
+
+        self.assertIn("images version/service pairs must be unique: latest/app", errors)
+
+    def test_images_evidence_accepts_appstore_ampersand_version(self) -> None:
+        digest = "sha256:" + "a" * 64
+        payload = {
+            "images": [{
+                "version": "7.4.11&mysql",
+                "service": "zabbix-server",
+                "reference": "zabbix/zabbix-server-mysql:7.4.11",
+                "digest": digest,
+            }]
+        }
+
+        errors = validate_source_evidence(payload, require_urls=False)
+
+        self.assertEqual(errors, [])
+
+    def test_images_evidence_scopes_the_same_service_to_each_version(self) -> None:
+        old_digest = "sha256:" + "a" * 64
+        new_digest = "sha256:" + "b" * 64
+        payload = self._minimal_delivery_payload()
+        payload["images"] = [
+            {
+                "version": "1.0.0",
+                "service": "app",
+                "reference": f"example/app:1.0.0@{old_digest}",
+                "digest": old_digest,
+            },
+            {
+                "version": "2.0.0",
+                "service": "app",
+                "reference": f"example/app:2.0.0@{new_digest}",
+                "digest": new_digest,
+            },
+        ]
+
+        old_errors = validate_source_evidence(
+            payload,
+            require_urls=False,
+            require_delivery=True,
+            compose_images={"app": f"example/app:1.0.0@{old_digest}"},
+            compose_version="1.0.0",
+        )
+        new_errors = validate_source_evidence(
+            payload,
+            require_urls=False,
+            require_delivery=True,
+            compose_images={"app": f"example/app:2.0.0@{new_digest}"},
+            compose_version="2.0.0",
+        )
+
+        self.assertEqual(old_errors, [])
+        self.assertEqual(new_errors, [])
+
+    def test_version_tag_with_registry_digest_evidence_remains_compatible(self) -> None:
+        digest = "sha256:" + "a" * 64
+        payload = self._minimal_delivery_payload()
+        payload["images"] = [{
+            "version": "2.10.4",
+            "service": "netdata",
+            "reference": "netdata/netdata:v2.10.4",
+            "digest": digest,
+            "platforms": ["linux/amd64", "linux/arm64"],
+        }]
+
+        errors = validate_source_evidence(
+            payload,
+            require_urls=False,
+            require_delivery=True,
+            compose_images={"netdata": "netdata/netdata:v2.10.4"},
+            compose_version="2.10.4",
+        )
+
+        self.assertEqual(errors, [])
+
     def test_verified_bundled_source_must_be_a_hash_bound_required_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app_dir = pathlib.Path(tmp)

@@ -195,6 +195,55 @@ class ValidateV2Tests(unittest.TestCase):
         self.assertNotEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         self.assertIn("CONTAINER_NAME must not be a formFields envKey", proc.stdout)
 
+    def test_host_network_param_port_uses_panel_port_env_key(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            app = self._write_sample_app(pathlib.Path(tmp))
+            version = app / "latest"
+            version_data = version / "data.yml"
+            version_data.write_text(
+                version_data.read_text(encoding="utf-8").replace(
+                    "PANEL_APP_PORT_HTTP",
+                    "NETDATA_LISTENER_PORT",
+                ),
+                encoding="utf-8",
+            )
+            env_sample = version / ".env.sample"
+            env_sample.write_text(
+                env_sample.read_text(encoding="utf-8").replace(
+                    "PANEL_APP_PORT_HTTP",
+                    "NETDATA_LISTENER_PORT",
+                ),
+                encoding="utf-8",
+            )
+            compose = version / "docker-compose.yml"
+            compose.write_text(
+                compose.read_text(encoding="utf-8")
+                .replace(
+                    "      - DB_HOST=${PANEL_DB_HOST}\n",
+                    "      - DB_HOST=${PANEL_DB_HOST}\n"
+                    "      - NETDATA_LISTENER_PORT=${NETDATA_LISTENER_PORT}\n",
+                )
+                .replace(
+                    "    ports:\n"
+                    '      - "${PANEL_APP_PORT_HTTP}:80"\n',
+                    "    network_mode: host\n",
+                ),
+                encoding="utf-8",
+            )
+
+            proc = subprocess.run(
+                ["bash", str(VALIDATE), "--dir", str(app)],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+
+        self.assertNotEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn(
+            "NETDATA_LISTENER_PORT uses rule:paramPort but envKey must start with PANEL_APP_PORT_",
+            proc.stdout,
+        )
+
     def test_values_items_are_not_counted_as_form_fields(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = self._write_sample_app(pathlib.Path(tmp))
@@ -532,6 +581,107 @@ class ValidateV2Tests(unittest.TestCase):
             )
 
         self.assertNotEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+
+    def test_delivery_evidence_covers_every_compose_service_image(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            app = self._write_sample_app(pathlib.Path(tmp))
+            primary_digest = "sha256:" + "a" * 64
+            redis_digest = "sha256:" + "b" * 64
+            compose_path = app / "latest" / "docker-compose.yml"
+            compose = compose_path.read_text(encoding="utf-8").replace(
+                "image: nginx:alpine",
+                f"image: nginx@{primary_digest}",
+            )
+            compose = compose.replace(
+                "networks:\n  1panel-network:",
+                "  redis:\n"
+                "    image: redis:alpine\n"
+                "    container_name: ${CONTAINER_NAME}-redis\n"
+                "    labels:\n"
+                '      createdBy: "Apps"\n'
+                "networks:\n"
+                "  1panel-network:",
+            )
+            compose_path.write_text(compose, encoding="utf-8")
+
+            delivery_asset = app / "DELIVERY-NOTICE.txt"
+            delivery_asset.write_text("delivery evidence\n", encoding="utf-8")
+            delivery_hash = hashlib.sha256(delivery_asset.read_bytes()).hexdigest()
+            evidence_path = app / "source-evidence.json"
+            evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+            evidence.update({
+                "images": [{
+                    "version": "latest",
+                    "service": "sample",
+                    "reference": f"nginx@{primary_digest}",
+                    "digest": primary_digest,
+                    "platforms": ["linux/amd64"],
+                }],
+                "licenseEvidence": {"spdx": "MIT"},
+                "redistributionEvidence": {
+                    "status": "verified",
+                    "requiredFiles": [],
+                    "materials": [],
+                    "assets": [{
+                        "path": "DELIVERY-NOTICE.txt",
+                        "source": "https://example.com/delivery-notice.txt",
+                        "license": "MIT",
+                        "sha256": delivery_hash,
+                        "requiredFiles": [],
+                    }],
+                },
+            })
+            evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
+
+            missing = subprocess.run(
+                [
+                    "bash",
+                    str(VALIDATE),
+                    "--dir",
+                    str(app),
+                    "--require-delivery-evidence",
+                ],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+
+            self.assertNotEqual(
+                missing.returncode,
+                0,
+                "uncovered mutable Redis image unexpectedly passed:\n"
+                + missing.stdout
+                + missing.stderr,
+            )
+            self.assertIn("Compose service image lacks evidence: redis", missing.stdout)
+
+            compose_path.write_text(
+                compose.replace("image: redis:alpine", f"image: redis@{redis_digest}"),
+                encoding="utf-8",
+            )
+            evidence["images"].append({
+                "version": "latest",
+                "service": "redis",
+                "reference": f"redis@{redis_digest}",
+                "digest": redis_digest,
+                "platforms": ["linux/amd64", "linux/arm64"],
+            })
+            evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
+
+            covered = subprocess.run(
+                [
+                    "bash",
+                    str(VALIDATE),
+                    "--dir",
+                    str(app),
+                    "--require-delivery-evidence",
+                ],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+
+        self.assertEqual(covered.returncode, 0, covered.stdout + covered.stderr)
 
     def test_version_option_validates_selected_version_in_multi_version_app(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
