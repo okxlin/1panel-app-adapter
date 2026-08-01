@@ -68,6 +68,14 @@ use restrictions, also name it, link its official terms, and summarize the deplo
 restriction in the README, not only `source-evidence.json`. Do not invent an SPDX identifier or add
 an undocumented root-metadata key merely to duplicate that evidence.
 
+When the exact application or asset terms require attribution, a copyright notice, a license copy,
+source disclosure, or a NOTICE file for redistribution, include the required material in the
+delivered AppStore package; a URL in `source-evidence.json` is not a substitute. Preserve required
+text verbatim and use the filename or README placement allowed by those exact terms. Verify asset
+terms separately; do not assume the application code license covers a logo, icon, font, trademark,
+or other bundled media. If asset redistribution or trademark permission remains unresolved, ship
+the neutral placeholder instead.
+
 ## Public URL Inputs
 
 Treat callback, origin, external base, and other browser-facing public URLs as deployment inputs.
