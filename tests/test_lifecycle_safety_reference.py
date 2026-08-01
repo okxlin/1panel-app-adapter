@@ -42,6 +42,9 @@ class LifecycleSafetyReferenceTests(unittest.TestCase):
         self.assertIn("OCI `Config.User`", self.text)
         self.assertIn("Compose `user`", self.text)
         self.assertIn("Dockerfile", self.text)
+        self.assertIn("startup identity", self.text)
+        self.assertIn("steady-state identity", self.text)
+        self.assertIn("entrypoint", self.text)
 
     def test_file_secret_and_url_contracts_are_explicit(self) -> None:
         for guard in (
@@ -49,11 +52,20 @@ class LifecycleSafetyReferenceTests(unittest.TestCase):
             "application's exact format",
             "stable across upgrades",
             "URL-encode",
+            "keyword/value DSN",
+            "connection string",
             "PKCS#12",
             "Base64",
         ):
             with self.subTest(guard=guard):
                 self.assertIn(guard.casefold(), self.text.casefold())
+
+    def test_custom_path_scripts_preserve_generated_confinement(self) -> None:
+        self.assertIn("Do not replace the generated confinement", self.text)
+        self.assertIn("inside-root symbolic link", self.text)
+        self.assertIn("outside-root symbolic link", self.text)
+        self.assertIn('for part in "${parts[@]}"', self.text)
+        self.assertIn('[[ ! -L "$current" ]]', self.text)
 
     def test_aio_image_does_not_clear_specialized_route(self) -> None:
         self.assertIn("AIO image", self.text)

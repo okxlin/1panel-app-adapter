@@ -2,6 +2,18 @@
 
 Apply this contract to every generated, migrated, imported, updated, or reviewed package. Structural validation cannot prove these application semantics. Resolve each item from official sources and the exact artifact before claiming delivery readiness.
 
+## Contents
+
+1. Build the path and mount ledger first
+2. Prove the runtime identity
+3. Confine every host path
+4. Bound ownership and permission changes
+5. Distinguish file binds from directory binds
+6. Generate and preserve secrets correctly
+7. Preserve lifecycle behavior
+8. Keep topology gates terminal
+9. Complete the delivery checklist
+
 ## 1. Build the path and mount ledger first
 
 Record one row for every bind mount and named volume before writing lifecycle scripts:
@@ -11,7 +23,7 @@ Record one row for every bind mount and named volume before writing lifecycle sc
 | host source | The exact package-relative path, named volume, or documented external source. |
 | container target | The exact path and whether the application reads, writes, or initializes it. |
 | file or directory | The required source type; do not infer it from a filename alone. |
-| runtime UID/GID | The source-backed writer/reader identity for the exact published image. |
+| runtime UID/GID | The source-backed startup and steady-state writer/reader identities for the exact published image. |
 | creation | Which packaged file or lifecycle step creates the exact source before Compose starts. |
 | ownership | The smallest path whose owner or mode must change, with the source-backed identity. |
 | upgrade | Whether the path is retained, migrated, regenerated, or validated. |
@@ -21,8 +33,8 @@ Keep this ledger in the adaptation report or delivery evidence; do not add proce
 
 ## 2. Prove the runtime identity
 
-- Determine the effective runtime user from the exact published image's OCI `Config.User` and any explicit Compose `user`. Inspect the fresh image by immutable digest when possible and record the command/result without leaking registry credentials.
-- Treat an empty OCI `Config.User` with no Compose override as root. Do not claim a non-root runtime merely because a Dockerfile creates a user, changes ownership, or describes an intended UID/GID.
+- Record startup identity separately from steady-state identity. Determine the startup identity from the exact published image's OCI `Config.User` and any explicit Compose `user`; then inspect the verified entrypoint/process behavior for any privilege drop before claiming the steady-state UID/GID. Inspect the fresh image by immutable digest when possible and record the command/result without leaking registry credentials.
+- Treat an empty OCI `Config.User` with no Compose override as root startup identity. An official entrypoint may later initialize ownership and drop privileges, but prove that from the exact entrypoint and runtime process. Do not claim a non-root steady-state identity merely because a Dockerfile creates a user, changes ownership, or describes an intended UID/GID.
 - When Compose overrides `user`, verify that the selected UID/GID can execute the image entrypoint, read required configuration, and write every writable mount.
 - Do not add `chown` for a guessed identity. If the image is intentionally root, preserve that upstream behavior unless verified hardening proves the full application workflow still works.
 - For every non-root writable bind mount, create the host directory with a source-backed ownership/permission plan before startup. A root-created `0755` directory is not writable by an arbitrary non-root container user.
@@ -34,26 +46,40 @@ Keep this ledger in the adaptation report or delivery evidence; do not add proce
 - Reject empty values, absolute paths, bare `.` or `..`, `..` traversal, newline/control characters, and symbolic links in the target or any existing parent component.
 - Resolve the candidate canonically from the version root before `mkdir`, `touch`, `install`, `chmod`, `chown`, copy, move, or deletion. Require the resolved target to equal the version root or start with `<version-root>/`; for persistent data, normally require a child rather than the root itself.
 - Reject on any resolution error. Do not fall back to the raw path, the process working directory, `/`, or a home directory.
-- Use `scripts/finalize_runtime_scripts.sh` only as a safe baseline. Review the generated script against the ledger and replace generic handling when the application needs ownership changes, exact file generation, or application-specific validation.
+- Use `scripts/finalize_runtime_scripts.sh` only as a safe baseline for explicit directories. The generic helper accepts only an environment key with an independent `DIR` segment (for example `APP_DATA_DIR` or `APP_DATA_DIR_CACHE`) or a default ending in `/`. It refuses every other path field because a name or extension cannot prove the mount type. Implement exact file creation/validation in application-specific code.
+- Do not replace the generated confinement when customizing a directory path. Preserve its environment-key validation, control/absolute/traversal rejection, canonical version-root boundary, every-component symlink rejection, and post-mutation recheck.
 
 The generated helper intentionally accepts package-local relative paths only. Keep equivalent checks in hand-written scripts:
 
 ```bash
 resolve_confined_path() {
-  local key="$1" raw="$2" candidate resolved
+  local key="$1" raw="$2" clean candidate resolved current part
+  local -a parts=()
   case "$raw" in
     ""|/*|.|..|../*|*/../*|*/..) echo "unsafe ${key} path" >&2; return 1 ;;
   esac
-  candidate="$ROOT_DIR/${raw#./}"
+  [[ ! "$raw" =~ [[:cntrl:]] ]] || { echo "unsafe ${key} path" >&2; return 1; }
+  clean="${raw#./}"
+  candidate="$ROOT_DIR/$clean"
   resolved="$(realpath -m -- "$candidate")" || return 1
   case "$resolved" in
-    "$ROOT_DIR"/*) printf '%s\n' "$resolved" ;;
+    "$ROOT_DIR"/*) ;;
     *) echo "unsafe ${key} path" >&2; return 1 ;;
   esac
+  current="$ROOT_DIR"
+  IFS='/' read -r -a parts <<< "$clean"
+  for part in "${parts[@]}"; do
+    [[ -z "$part" || "$part" == "." ]] && continue
+    current="$current/$part"
+    [[ ! -L "$current" ]] || { echo "unsafe ${key} path" >&2; return 1; }
+  done
+  printf '%s\n' "$resolved"
 }
 ```
 
 This lexical/canonical boundary check does not by itself authorize ownership changes. Also reject symbolic links and recheck the resolved target immediately before each mutation to reduce time-of-check/time-of-use exposure.
+
+Test custom path logic with a normal relative path, an absolute path, parent traversal, an inside-root symbolic link, and an outside-root symbolic link. Require rejection for both symlink cases; resolving a symlink back inside the version root does not make it an approved package path.
 
 ## 4. Bound ownership and permission changes
 
@@ -77,7 +103,7 @@ This lexical/canonical boundary check does not by itself authorize ownership cha
 - Use a cryptographically secure generator and validate the result before writing it. For example, distinguish 32 random bytes encoded as Base64 from a 32-character string; they are not equivalent.
 - Generate an install secret once, persist it atomically in the intended state file, and keep it stable across upgrades and restarts. Do not silently regenerate encryption keys, signing passwords, session secrets, or database credentials.
 - Keep real secrets out of `.env.sample`, reports, logs, commits, and command output. Use explicit placeholders in samples.
-- If a credential must appear inside a connection URL, URL-encode each username/password component with a standard encoder before assembling the URL. Prefer separate upstream variables when supported. Do not interpolate raw random credentials into a URL.
+- Treat every connection string as a grammar, not plain text. Prefer separate upstream variables. If a credential must appear inside a connection URL, URL-encode each username/password component with a standard encoder before assembling the URL. For a keyword/value DSN, quote and escape each credential with the official parser's rules or restrict generation to a source-backed safe alphabet and validate it. Do not interpolate arbitrary random credentials raw into any connection string.
 - Validate coupled values together: a PKCS#12 path and passphrase, an encryption key and its format, or database credentials and the resulting connection URL.
 
 ## 7. Preserve lifecycle behavior
@@ -91,17 +117,17 @@ This lexical/canonical boundary check does not by itself authorize ownership cha
 
 Selecting an AIO image does not satisfy a `specialized_conditional` route. Keep the route stopped until every recorded process-supervision, proxy/TLS, stateful dependency, migration, upgrade, backup/restore, and uninstall prerequisite has direct evidence. If the application is a platform stack whose lifecycle cannot be represented safely by an ordinary AppStore package, retain `platform_stack_terminal` and report the evidence instead of scaffolding.
 
-## Delivery checklist
+## 9. Delivery checklist
 
 Before a pass claim, answer all items with evidence:
 
 1. Does every mount have a complete path and mount ledger row?
-2. Does runtime UID/GID come from OCI `Config.User` or an explicit Compose `user` for the exact image?
+2. Are startup and steady-state runtime UID/GID separately proven from OCI/Compose and verified entrypoint/process behavior?
 3. Are all mutable host paths package-local, confined, non-symlink, and rechecked before mutation?
 4. Is each ownership change minimal, source-backed, and protected against traversal and dereference?
 5. Does every file bind have the exact source file before Compose starts?
 6. Does every generated secret match the application's exact format and remain stable across upgrades?
-7. Are credentials URL-encoded when embedded in URLs?
+7. Are credentials URL-encoded or otherwise escaped with the exact connection-string grammar?
 8. Do clean install, readiness, restart, upgrade, uninstall, and cleanup evidence cover the actual application behavior?
 
 Any unresolved item blocks a runtime-ready or delivery-ready claim even when structural, strict-store, i18n, environment-closure, and Compose-render checks pass.

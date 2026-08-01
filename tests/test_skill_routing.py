@@ -169,6 +169,8 @@ class SkillRoutingTests(unittest.TestCase):
             "exact source file",
             "secret format",
             "URL-encode",
+            "unresolved asset license",
+            "neutral placeholder immediately",
         ):
             with self.subTest(guard=guard):
                 self.assertIn(guard, router)

@@ -46,7 +46,7 @@ from baota_import_lib import (
     evaluate_baota_delivery_readiness,
     run_strict_store_validation,
 )
-from runtime_script_utils import write_init_script
+from runtime_script_utils import collect_runtime_path_fields, write_init_script
 
 EXIT_SUCCESS = 0
 EXIT_FAILURE = 1
@@ -185,6 +185,7 @@ class AppSpecGenerator:
 
     def generate(self) -> str:
         """Generate the complete 1Panel v2 app directory. Returns output path."""
+        collect_runtime_path_fields(self._build_version_data())
         self._ensure_dirs()
         self._write_root_data_yml()
         self._write_version_data_yml()
@@ -231,13 +232,16 @@ class AppSpecGenerator:
     # ── Version data.yml ──────────────────────────────────────────────
 
     def _write_version_data_yml(self) -> None:
+        self._write_yaml(self.version_dir / "data.yml", self._build_version_data())
+
+    def _build_version_data(self) -> Dict[str, Any]:
         form_fields = self._build_form_fields()
         ver_data: Dict[str, Any] = {
             "additionalProperties": {},
         }
         if form_fields:
             ver_data["additionalProperties"]["formFields"] = form_fields
-        self._write_yaml(self.version_dir / "data.yml", ver_data)
+        return ver_data
 
     def _build_form_fields(self) -> List[Dict[str, Any]]:
         """Build formFields from spec formFields[] + ports[]."""
