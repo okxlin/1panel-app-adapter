@@ -891,6 +891,12 @@ class TestImportRunner(unittest.TestCase):
         self.assertTrue((out / "latest" / "scripts" / "init.sh").is_file())
         self.assertTrue((out / "latest" / "scripts" / "upgrade.sh").is_file())
         self.assertTrue((out / "latest" / "scripts" / "uninstall.sh").is_file())
+        uninstall_text = (out / "latest" / "scripts" / "uninstall.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('cd "$ROOT_DIR"', uninstall_text)
+        self.assertIn("docker-compose down\n", uninstall_text)
+        self.assertNotIn("--volumes", uninstall_text)
 
         root_data = yaml.safe_load((out / "data.yml").read_text(encoding="utf-8"))
         desc = root_data.get("additionalProperties", {}).get("description")
@@ -1224,6 +1230,12 @@ class TestCliAndGenerator(unittest.TestCase):
         self.assertTrue((root / "latest" / "scripts" / "init.sh").is_file())
         self.assertTrue((root / "latest" / "scripts" / "upgrade.sh").is_file())
         self.assertTrue((root / "latest" / "scripts" / "uninstall.sh").is_file())
+        uninstall_text = (root / "latest" / "scripts" / "uninstall.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('cd "$ROOT_DIR"', uninstall_text)
+        self.assertIn("docker-compose down\n", uninstall_text)
+        self.assertNotIn("--volumes", uninstall_text)
 
         root_data = yaml.safe_load((root / "data.yml").read_text(encoding="utf-8"))
         self.assertIsInstance(root_data.get("additionalProperties", {}).get("description"), dict)

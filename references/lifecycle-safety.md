@@ -162,6 +162,7 @@ Test custom path logic with a normal direct-child path, a nested path, an absolu
 
 - Make initialization idempotent. Do not overwrite user state, rotate stable secrets, or replace user-modified configuration on restart or upgrade.
 - Define clean-install, restart, direct-upgrade, backup/restore, and uninstall behavior for every ledger row. Treat unknown database major-version transitions and irreversible migrations as blockers until tested.
+- Make lifecycle scripts independent of the caller's working directory: resolve the version directory from the script path, then either change to it before Compose commands or pass an equivalent absolute project/Compose path. Preserve bind data and persistent named volumes by default; use `down --volumes` only when the ledger proves every affected volume is package-owned, disposable, and approved for deletion.
 - Exercise an application-specific ready path. A running container, healthy status, open TCP port, or generic HTTP `200` alone is not sufficient.
 - Test the exact delivered files in a real 1Panel development/test instance. Verify the file/directory types, ownership and modes on the host and in the container before and after restart and upgrade.
 
@@ -182,5 +183,6 @@ Before a pass claim, answer all items with evidence:
 7. Does every generated secret match the application's exact format and remain stable across upgrades?
 8. Are credentials URL-encoded or otherwise escaped with the exact connection-string grammar?
 9. Do clean install, readiness, restart, upgrade, uninstall, and cleanup evidence cover the actual application behavior?
+10. Does every Compose lifecycle command target the intended version directory without relying on the caller's working directory, and does uninstall preserve persistent volumes unless their deletion is explicitly proven safe?
 
 Any unresolved item blocks a runtime-ready or delivery-ready claim even when structural, strict-store, i18n, environment-closure, and Compose-render checks pass.
