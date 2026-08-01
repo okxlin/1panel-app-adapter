@@ -36,6 +36,13 @@ capability-equivalent alternative must have official or target-platform evidence
 default user-visible capability to the replacement service, image, environment, and dependency
 combination without feature loss.
 
+The default capability set excludes optional features that are not enabled by default. Full
+upstream default does not mean every documented opt-in feature. Do not pre-publish optional
+listeners, mounts, devices, capabilities, or host permissions. Preserve one only when the selected
+profile explicitly enables and fully configures that capability and its behavior is validated.
+Saying that access remains available "for later configuration" is not evidence that the capability
+belongs in the selected profile.
+
 Select a reduced-capability profile only when the user explicitly requests reduced capability. Do
 not choose one merely to remove services, simplify validation, or keep an otherwise conditional
 topology on the ordinary route. A reduced-capability profile must list exactly which features
@@ -51,6 +58,20 @@ comment by itself does not prove that every partial combination works. Missing c
 compatibility evidence blocks scaffolding.
 
 A single Compose service can still be an operationally complex multi-process application. Count both the visible Compose topology and the processes and state hidden inside the image.
+
+### Historical official source fallback
+
+Apply the bounded fallback in `source-policy.md` before treating missing deployment documentation
+as a route blocker. A single 404 or moved page is not a terminal condition. Check the exact release
+tree, versioned branches and path history, official documentation repositories, historical Compose
+at a pinned commit, and official image/startup sources. Record each attempted official source and
+why it was accepted or rejected; never replace exact-version behavior silently with current docs.
+
+Assign a terminal route for missing evidence only after those official paths are exhausted and a
+concrete unsafe unknown remains. State the missing service, image, variable, mount, network,
+runtime identity, persistence, migration, or upgrade fact and the unsafe guessed decision it
+blocks. A failed URL without that mapping is a temporary source lookup failure, not a topology
+finding.
 
 ## 3. Inspect the published OCI image
 

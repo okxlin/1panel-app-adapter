@@ -11,6 +11,31 @@ This policy defines source priority and anti-guessing rules for `1panel-app-adap
 
 When conflicts exist, use higher-priority sources.
 
+## Historical Official Source Fallback
+
+A single 404 or moved page is not a terminal condition. Treat it as one failed lookup, not as
+proof that the exact-version Docker contract is unavailable. Before assigning a terminal route,
+use this bounded fallback sequence:
+
+1. Inspect the exact release tag or source tree for Compose files, Dockerfiles, deployment
+   examples, install scripts, and filenames containing `compose`, `docker`, `deploy`, or `install`.
+2. Inspect versioned branches, release assets, and the relevant path history in the same official
+   repository. Do not silently substitute current default-branch behavior for the target version.
+3. Search official documentation repositories and other repositories owned by the same upstream
+   organization. Pin any historical Compose or deployment evidence to an exact commit and verify
+   that it covers the target release family.
+4. Inspect official image documentation, OCI metadata, entrypoints, and startup source for the
+   remaining image/runtime facts. Registry evidence can corroborate a deployment contract but
+   cannot invent a missing service graph.
+
+Record every attempted official source with its URL or repository/ref/path, result, and reason for
+accepting or rejecting it. Continue source discovery while another official exact-version or
+version-compatible source path remains unchecked. A terminal stop is justified only after this
+fallback is exhausted and the remaining gap is a concrete unsafe unknown, such as an unproven
+service, image, variable, mount, network, runtime identity, migration, persistence, or upgrade
+contract that would otherwise have to be guessed. Name that unknown and the unsafe decision it
+blocks. An unavailable page by itself is only a temporary lookup failure.
+
 ## Mandatory Evidence
 
 Every generated app must provide source evidence containing at least:

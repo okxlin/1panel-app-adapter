@@ -402,14 +402,124 @@ fi
 if grep -qE '^\s{6,}[A-Za-z0-9_]+:\s*\$\{' "$COMPOSE"; then
   warn "compose environment appears to use map-style entries; list-style is preferred"
 fi
-if grep -qE '^\s*ports:\s*$' "$COMPOSE"; then
-  if grep -q 'PANEL_APP_PORT' "$COMPOSE"; then
-    info "compose uses PANEL_APP_PORT mapping"
-  else
-    fail "compose exposes ports but does not use PANEL_APP_PORT mapping"
-  fi
-else
-  info "compose does not expose ports"
+set +e
+port_output=$("$PYTHON_BIN" - <<'PY' "$VER" "$COMPOSE"
+import re
+import sys
+from pathlib import Path
+
+import yaml
+
+
+PANEL_PORT = re.compile(
+    r"\$\{(PANEL_APP_PORT_[A-Z0-9_]+)(?::?[-+?][^}]*)?\}"
+)
+
+
+def split_short_port(value):
+    value = re.sub(r"/(?:tcp|udp|sctp)$", "", value.strip(), flags=re.IGNORECASE)
+    parts = []
+    current = []
+    brace_depth = 0
+    bracket_depth = 0
+    for char in value:
+        if char == "{":
+            brace_depth += 1
+        elif char == "}" and brace_depth:
+            brace_depth -= 1
+        elif char == "[":
+            bracket_depth += 1
+        elif char == "]" and bracket_depth:
+            bracket_depth -= 1
+        if char == ":" and brace_depth == 0 and bracket_depth == 0:
+            parts.append("".join(current))
+            current = []
+        else:
+            current.append(char)
+    parts.append("".join(current))
+    return parts[-2].strip() if len(parts) >= 2 else None
+
+
+def panel_port_key(value):
+    if value is None:
+        return None
+    match = PANEL_PORT.fullmatch(str(value).strip())
+    return match.group(1) if match else None
+
+
+try:
+    version_data = yaml.safe_load(Path(sys.argv[1]).read_text(encoding="utf-8")) or {}
+    compose_data = yaml.safe_load(Path(sys.argv[2]).read_text(encoding="utf-8")) or {}
+except Exception as exc:
+    print(f"[A][FAIL] cannot parse Compose ports or form fields: {exc}")
+    raise SystemExit(1)
+
+form_fields = (version_data.get("additionalProperties") or {}).get("formFields") or []
+declared = {
+    item.get("envKey")
+    for item in form_fields
+    if isinstance(item, dict)
+    and isinstance(item.get("envKey"), str)
+    and item["envKey"].startswith("PANEL_APP_PORT_")
+}
+
+failures = 0
+published_count = 0
+services = compose_data.get("services") or {}
+if not isinstance(services, dict):
+    print("[A][FAIL] compose services must be a mapping for port validation")
+    raise SystemExit(1)
+
+for service_name, service in services.items():
+    if not isinstance(service, dict):
+        continue
+    ports = service.get("ports") or []
+    if not isinstance(ports, list):
+        print(f"[A][FAIL] Compose service {service_name} ports must be a list")
+        failures += 1
+        continue
+    for entry in ports:
+        published_count += 1
+        if isinstance(entry, dict):
+            published = entry.get("published")
+        elif isinstance(entry, (str, int)):
+            published = split_short_port(str(entry))
+        else:
+            published = None
+        key = panel_port_key(published)
+        if key not in declared:
+            print(
+                f"[A][FAIL] Compose service {service_name} published port must use a "
+                f"declared PANEL_APP_PORT_* form field: {entry!r}"
+            )
+            failures += 1
+
+if published_count == 0:
+    print("[C][INFO] compose does not expose ports")
+elif failures == 0:
+    print(
+        f"[C][INFO] compose uses declared PANEL_APP_PORT_* fields for "
+        f"{published_count} published port entr{'y' if published_count == 1 else 'ies'}"
+    )
+
+raise SystemExit(1 if failures else 0)
+PY
+)
+port_status=$?
+set -e
+if [[ -n "$port_output" ]]; then
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    echo "$line"
+    if [[ "$line" == "[A][FAIL]"* ]]; then
+      FAILURES=$((FAILURES + 1))
+    elif [[ "$line" == "[C][INFO]"* ]]; then
+      INFOS=$((INFOS + 1))
+    fi
+  done <<< "$port_output"
+fi
+if [[ $port_status -ne 0 && $FAILURES -eq 0 ]]; then
+  fail "Compose published-port validation failed without a finding"
 fi
 
 set +e

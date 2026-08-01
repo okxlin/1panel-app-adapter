@@ -244,6 +244,86 @@ class ValidateV2Tests(unittest.TestCase):
             proc.stdout,
         )
 
+    def test_every_published_port_uses_a_declared_panel_port_field(self) -> None:
+        invalid_ports = {
+            "mixed fixed short syntax": (
+                '      - "${PANEL_APP_PORT_HTTP}:80"\n'
+                '      - "6060:6060"\n'
+            ),
+            "fixed short syntax with bind address": (
+                '      - "${PANEL_APP_PORT_HTTP}:80"\n'
+                '      - "127.0.0.1:6060:6060"\n'
+            ),
+            "fixed long syntax": (
+                "      - target: 80\n"
+                "        published: ${PANEL_APP_PORT_HTTP}\n"
+                "      - target: 6060\n"
+                "        published: 6060\n"
+                "        protocol: tcp\n"
+            ),
+            "undeclared panel port variable": (
+                '      - "${PANEL_APP_PORT_DNS}:53/udp"\n'
+            ),
+        }
+
+        for label, ports in invalid_ports.items():
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as tmp:
+                app = self._write_sample_app(pathlib.Path(tmp))
+                compose = app / "latest" / "docker-compose.yml"
+                compose.write_text(
+                    compose.read_text(encoding="utf-8").replace(
+                        '      - "${PANEL_APP_PORT_HTTP}:80"\n',
+                        ports,
+                    ),
+                    encoding="utf-8",
+                )
+
+                proc = subprocess.run(
+                    ["bash", str(VALIDATE), "--dir", str(app)],
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                )
+
+            self.assertNotEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+            self.assertIn("published port must use a declared PANEL_APP_PORT_*", proc.stdout)
+
+    def test_structured_port_check_accepts_supported_panel_port_forms(self) -> None:
+        valid_ports = {
+            "bound short syntax": '      - "127.0.0.1:${PANEL_APP_PORT_HTTP}:80/tcp"\n',
+            "long syntax": (
+                "      - target: 80\n"
+                '        published: "${PANEL_APP_PORT_HTTP}"\n'
+                '        host_ip: "127.0.0.1"\n'
+                "        protocol: tcp\n"
+            ),
+            "shared TCP and UDP field": (
+                '      - "${PANEL_APP_PORT_HTTP}:80/tcp"\n'
+                '      - "${PANEL_APP_PORT_HTTP}:80/udp"\n'
+            ),
+        }
+
+        for label, ports in valid_ports.items():
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as tmp:
+                app = self._write_sample_app(pathlib.Path(tmp))
+                compose = app / "latest" / "docker-compose.yml"
+                compose.write_text(
+                    compose.read_text(encoding="utf-8").replace(
+                        '      - "${PANEL_APP_PORT_HTTP}:80"\n',
+                        ports,
+                    ),
+                    encoding="utf-8",
+                )
+
+                proc = subprocess.run(
+                    ["bash", str(VALIDATE), "--dir", str(app)],
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                )
+
+            self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+
     def test_values_items_are_not_counted_as_form_fields(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = self._write_sample_app(pathlib.Path(tmp))
