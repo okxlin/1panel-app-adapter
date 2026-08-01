@@ -36,6 +36,21 @@ service, image, variable, mount, network, runtime identity, migration, persisten
 contract that would otherwise have to be guessed. Name that unknown and the unsafe decision it
 blocks. An unavailable page by itself is only a temporary lookup failure.
 
+## Companion Deployment Repositories
+
+When the authoritative deployment contract lives in a companion deployment repository, freeze
+that repository to an observed exact commit before using it. Cite files at that commit rather than
+at a moving default branch, and record how the companion revision relates to the target application
+release. A same-organization repository or current `main` checkout is official provenance, but it
+is not automatically version-compatible evidence.
+
+Trace the selected root Compose, launcher, or sample through its actual include and template chain.
+Base service, image, dependency, or database-version claims on the files the selected root really
+loads. Treat an alternative template that merely exists in the repository as an unselected
+candidate; do not describe it as active unless the actual include chain selects it. Resolve includes
+before summarizing the topology, and recheck every reported version or role against that resolved
+chain.
+
 ## Mandatory Evidence
 
 Every generated app must provide source evidence containing at least:

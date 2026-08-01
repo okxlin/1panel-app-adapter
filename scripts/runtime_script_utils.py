@@ -584,7 +584,14 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 cd "$ROOT_DIR"
-docker-compose down
+if docker compose version >/dev/null 2>&1; then
+  docker compose down
+elif docker-compose version >/dev/null 2>&1; then
+  docker-compose down
+else
+  echo "Docker Compose is not available" >&2
+  exit 1
+fi
 """
 
 

@@ -33,6 +33,31 @@ class LifecycleSafetyReferenceTests(unittest.TestCase):
             with self.subTest(field=field):
                 self.assertIn(field.casefold(), self.text.casefold())
 
+    def test_startup_contract_requires_cross_field_and_literal_substitution_checks(self) -> None:
+        for guard in (
+            "cross-field constraints",
+            "literal data",
+            "replacement program",
+        ):
+            with self.subTest(guard=guard):
+                self.assertIn(guard, self.flat_startup_text.casefold())
+
+        self.assertIn("cross-field", self.flat_skill_text.casefold())
+
+    def test_compose_command_selection_matches_current_1panel_fallback(self) -> None:
+        for guard in (
+            "docker compose version",
+            "docker-compose version",
+            "16e3d496ebc4eae6637ce63f17149c6928469af1",
+        ):
+            with self.subTest(guard=guard):
+                self.assertIn(guard, self.text)
+                self.assertIn(guard, self.skill_text)
+
+        for command in ("docker compose down", "docker-compose down"):
+            with self.subTest(command=command):
+                self.assertIn(command, self.skill_text)
+
     def test_path_and_ownership_rules_cover_known_escape_modes(self) -> None:
         for guard in (
             "absolute paths",

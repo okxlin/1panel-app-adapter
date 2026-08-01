@@ -220,6 +220,19 @@ class SkillRoutingTests(unittest.TestCase):
             with self.subTest(weakened_rule=weakened_rule):
                 self.assertNotIn(weakened_rule.casefold(), flat_policy.casefold())
 
+    def test_source_policy_pins_companion_deployment_include_chains(self) -> None:
+        policy = (REPO_ROOT / "references" / "source-policy.md").read_text(encoding="utf-8")
+        flat_policy = " ".join(policy.split()).casefold()
+        for guard in (
+            "companion deployment repository",
+            "exact commit",
+            "actual include",
+            "alternative template",
+            "moving default branch",
+        ):
+            with self.subTest(guard=guard):
+                self.assertIn(guard, flat_policy)
+
     def test_cycle_one_evidence_repairs_are_explicit(self) -> None:
         policy = (REPO_ROOT / "references" / "source-policy.md").read_text(
             encoding="utf-8"
