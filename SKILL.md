@@ -47,10 +47,10 @@ Use scripts for their named job instead of manually recreating their behavior. R
 - Preserve the selected upstream service graph, dependencies, internal networks, persistence, and security controls. Give every Compose service `labels.createdBy: "Apps"` and a unique `container_name` based on `${CONTAINER_NAME}` unless current 1Panel runtime evidence requires another shape.
 - Keep a minimal install form: expose only settings users need for the selected default topology. Do not mirror every optional upstream profile or environment variable; remove disabled profiles or resolve reviewed package defaults while maintaining Compose/form/`.env.sample` closure.
 - Treat `.env` as untrusted data in lifecycle scripts. Never `source` or `eval` it; parse only exact known keys, strip quotes, validate values, and resolve relative paths from the app root.
-- Complete the `references/lifecycle-safety.md` path and mount ledger. Derive startup and steady-state runtime UID/GID separately from the published OCI configuration, Compose `user`, and verified entrypoint/process behavior; keep mutable host paths package-local and confined before creation, permission changes, or cleanup. For each non-root writable path, prefer an upstream-recommended named volume or use the explicit `--dir-owner` helper with a source-backed identity on a direct child of the trusted version root, then verify the exact owner, mode, and a write probe as that identity. A plain root-created `0755` bind directory blocks delivery. Do not recursively change ownership on an unconfined or symlinked path.
+- Complete the `references/lifecycle-safety.md` path and mount ledger, including each source-backed mount mechanism, mount options, and operator-access contract. Treat source, target, read/write mode, propagation, and security options in authoritative Compose as required delivery defaults; preserve them exactly unless target-platform evidence proves incompatibility and a reviewed replacement preserves the same contract. A named volume is not a drop-in replacement for a configuration bind used by official host-side editing, backup, restore, or support procedures; preserve that fixed package-local bind and do not add an `APP_DATA_DIR` form unless a selectable host path is actually required. Derive startup and steady-state runtime UID/GID separately from the published OCI configuration, Compose `user`, and verified entrypoint/process behavior; keep mutable host paths package-local and confined before creation, permission changes, or cleanup. When the selected authoritative deployment uses a named volume for a non-root writable path, preserve that volume. When it uses a bind, use the explicit `--dir-owner`/`--fixed-dir-owner` helper with a source-backed identity on a direct child of the trusted version root, then verify the exact owner, mode, and a write probe as that identity. Change the mechanism only through the same target-platform incompatibility and equivalent-replacement gate. A plain root-created `0755` bind directory blocks delivery. Do not recursively change ownership on an unconfined or symlinked path.
 - Create or validate the exact source file for every file bind before Compose starts. Prove each generated secret format against the application contract, keep stable secrets across upgrade, URL-encode URL credentials, and apply the official escaping rules to every other connection-string grammar.
 - Replace placeholders with real product metadata and meaningful translations in all required locales. English fields must contain English. When an asset's redistribution basis is verified, record it; for an unresolved asset license, use the neutral placeholder immediately rather than shipping the asset with a future-confirmation note.
-- Render and validate the exact delivered artifact without creating then removing a file it needs. Run baseline validation first, then `bash scripts/validate-v2.sh --dir <app-dir> [--version <version>] --strict-store --i18n-mode strict`; unresolved failures block a pass claim.
+- Render and validate the exact delivered artifact without creating then removing a file it needs. Ensure `init.sh`, `upgrade.sh`, and `uninstall.sh` exist and retain executable mode in the delivered tree. Run baseline validation first, then `bash scripts/validate-v2.sh --dir <app-dir> [--version <version>] --strict-store --i18n-mode strict`; unresolved failures block a pass claim.
 - Test in a real 1Panel development/test instance: clean install, application-specific readiness, restart, upgrade when applicable, uninstall, and task-owned cleanup. Report artifact paths, evidence, checks, risk-bearing permissions, assumptions, warnings, and every unexecuted runtime gate; static validation or HTTP 200 alone is insufficient.
 
 ## Rule Priority
@@ -222,7 +222,7 @@ Key points for adaptation:
 >     volumes:
 >       - zeroclaw-data:/zeroclaw-data
 >     ```
->   - Only when upstream explicitly uses host path mapping, convert to `APP_DATA_DIR_*` + `./data/*` form.
+>   - When upstream explicitly uses a host path, preserve its bind semantics and mount options. Keep an official operator-edited path fixed and package-local; add an `APP_DATA_DIR_*` form only when users actually need a selectable host path.
 > - **Uninstall script**: Adaptation artifact's `<version>/scripts/uninstall.sh` needs to support cleanup volumes; minimal implementation can use:
 >   ```bash
 >   #!/bin/bash
@@ -260,12 +260,11 @@ Adaptation suggestions:
 
 Official library compose **mostly uses bind mount** (e.g., `./data:/data`, `./conf/xx:/etc/xx`), but official version-level `data.yml` **usually doesn't** parameterize paths through `APP_DATA_DIR_*` formFields (prefers directly writing fixed relative paths).
 
-Adaptation artifact convention (our own artifact style):
-- Although official library directly writes `./data/*`, **our adaptation artifacts prioritize recommending `APP_DATA_DIR(_N)`** to parameterize data directories, for user location selection and migration.
-- When compose has bind mount:
-  - Default at least provide one `APP_DATA_DIR` (or `APP_DATA_DIR_1`) field;
-  - In compose, write host path as `${APP_DATA_DIR}/...` (or `${APP_DATA_DIR_1}/...`).
-- If indeed don't want users to change paths (rare scenarios), fix to `./data/*`.
+Adaptation artifact convention:
+- Preserve every authoritative Compose mount mechanism, source/target, read/write mode, propagation setting, and security option such as `z`/`Z` as a required delivery default. Change one only when target-platform documentation or runtime evidence proves it incompatible and a reviewed replacement preserves the same contract.
+- Keep documented operator-edited configuration binds fixed and package-local, such as `./config:/etc/app:Z`. Do not replace them with named volumes or add path forms by default.
+- Add `APP_DATA_DIR` (or a semantic numbered variant) only when users need to select or migrate the host path. Use the same variable in Compose, `data.yml`, `.env.sample`, and lifecycle scripts.
+- Do not convert an authoritative bind to a named volume merely because direct host access appears unnecessary or the lifecycle seems equivalent. Apply the same target-platform incompatibility and equivalent-replacement gate before changing the mount mechanism.
 
 ### depends_on / External Dependencies → apps/service Injection
 

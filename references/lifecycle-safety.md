@@ -21,8 +21,11 @@ Record one row for every bind mount and named volume before writing lifecycle sc
 | Required field | Record |
 | --- | --- |
 | host source | The exact package-relative path, named volume, or documented external source. |
+| mount mechanism | `bind`, named volume, or external source, plus the official evidence for that mechanism. |
+| mount options | Preserve source/target syntax, read/write mode, propagation, and security options such as `ro`, `rw`, and SELinux `z`/`Z`; justify every change. |
 | container target | The exact path and whether the application reads, writes, or initializes it. |
 | file or directory | The required source type; do not infer it from a filename alone. |
+| operator access | Whether official setup, host-side editing, backup, restore, or support procedures require direct host access. |
 | runtime UID/GID | The source-backed startup and steady-state writer/reader identities for the exact published image. |
 | creation | Which packaged file or lifecycle step creates the exact source before Compose starts. |
 | ownership | The smallest path whose owner or mode must change, with the source-backed identity. |
@@ -30,6 +33,20 @@ Record one row for every bind mount and named volume before writing lifecycle sc
 | uninstall | Whether 1Panel removes it or intentionally preserves user data. |
 
 Keep this ledger in the adaptation report or delivery evidence; do not add process-only evidence to the AppStore artifact unless the target repository expects it. Stop when a required row contains an assumption that affects startup, persistence, security, or upgrade safety.
+
+Treat source, target, read/write mode, propagation, and security options in authoritative Compose
+as required delivery defaults. Preserve them exactly. Change a mount default only when target-platform documentation or runtime evidence proves it incompatible and the reviewed replacement preserves
+the same access, isolation, and labeling contract. Host-policy variability or an option being "not proven necessary" is not evidence to remove an official default such as SELinux `z`/`Z`.
+
+Preserve the authoritative source-backed mount mechanism as a required delivery default, including
+its operator-access contract. A named
+volume is not a drop-in replacement for an official configuration bind when the documented setup,
+host-side editing, backup, restore, or support flow uses that host path. In that case, keep a fixed
+package-local bind such as `./config` unless the user explicitly requires a selectable path. Do not
+add an `APP_DATA_DIR` form merely to make a fixed package-local bind configurable. Do not convert an
+authoritative bind to a named volume merely because direct host access appears unnecessary or the
+lifecycle seems equivalent. Apply the same target-platform incompatibility and equivalent-replacement
+gate before changing the mount mechanism.
 
 ## 2. Prove the runtime identity
 
@@ -44,23 +61,27 @@ Keep this ledger in the adaptation report or delivery evidence; do not add proce
 Use this sequence for every mount that a non-root process must write. Do not skip from a
 proven UID/GID directly to `mkdir -p`.
 
-1. Prefer an upstream-recommended named volume when direct host access is not a package
-   requirement. Preserve the upstream volume name/target and lifecycle semantics; do not add
-   an `APP_DATA_DIR` form merely to replace it with a bind mount.
-2. If a bind mount is required, record the exact source-backed numeric UID, GID, and narrowest
+1. When the selected authoritative deployment uses a named volume, preserve its mechanism,
+   name/target, operator-access contract, and lifecycle semantics; do not add an `APP_DATA_DIR`
+   form merely to replace it with a bind mount.
+2. When the selected authoritative deployment uses a bind, record the exact source-backed numeric UID, GID, and narrowest
    usable directory mode. Regenerate the confined init script explicitly after reviewing any
    existing customization:
 
    ```bash
    bash scripts/finalize_runtime_scripts.sh <app-dir> <version-dir> \
      --dir-owner APP_DATA_DIR=<uid>:<gid>:0750 --replace-init
+
+   bash scripts/finalize_runtime_scripts.sh <app-dir> <version-dir> \
+     --fixed-dir-owner ./config=<uid>:<gid>:0750 --replace-init
    ```
 
-   Repeat `--dir-owner` for independently writable directories. The helper rejects unknown
-   path fields, non-numeric identities, non-octal modes, owner modes without `rwx`, and duplicate
-   entries. It accepts only a direct child beneath a root-owned parent chain that is not writable
-   by group or others, requires root for the ownership step, and never performs recursive `chown`
-   or `chmod`.
+   Use `--dir-owner` for a selectable path backed by a form field. Use `--fixed-dir-owner` for a
+   fixed package-local bind without a form field. Repeat the relevant option for independently
+   writable directories. The helper rejects unknown path fields, non-local or nested fixed paths,
+   non-numeric identities, non-octal modes, owner modes without `rwx`, and duplicate entries. It
+   accepts only a direct child beneath a root-owned parent chain that is not writable by group or
+   others, requires root for the ownership step, and never performs recursive `chown` or `chmod`.
    Nested bind sources require an upstream named volume or an independently audited,
    descriptor-based initializer; pathname prechecks alone do not close symlink-swap races.
 3. Run the exact `init.sh`, inspect the resulting directory with `stat`, and run a write probe as
@@ -77,7 +98,7 @@ proven UID/GID directly to `mkdir -p`.
 - Reject empty values, absolute paths, bare `.` or `..`, `..` traversal, newline/control characters, and symbolic links in the target or any existing parent component.
 - Resolve the candidate canonically from the version root before `mkdir`, `touch`, `install`, `chmod`, `chown`, copy, move, or deletion. Require the resolved target to equal the version root or start with `<version-root>/`; for persistent data, normally require a child rather than the root itself.
 - Reject on any resolution error. Do not fall back to the raw path, the process working directory, `/`, or a home directory.
-- Use `scripts/finalize_runtime_scripts.sh` only as a safe baseline for explicit directories. The generic helper accepts only an environment key with an independent `DIR` segment (for example `APP_DATA_DIR` or `APP_DATA_DIR_CACHE`) or a default ending in `/`. It refuses every other path field because a name or extension cannot prove the mount type. Implement exact file creation/validation in application-specific code.
+- Use `scripts/finalize_runtime_scripts.sh` only as a safe baseline for explicit directories. `--dir-owner` accepts only an environment key with an independent `DIR` segment (for example `APP_DATA_DIR` or `APP_DATA_DIR_CACHE`) or a default ending in `/`; `--fixed-dir-owner` accepts only a fixed package-local direct child. The helper refuses every other path because a name or extension cannot prove the mount type. Implement exact file creation/validation in application-specific code.
 - Do not replace the generated confinement when customizing a directory path. Preserve its environment-key validation, control/absolute/traversal rejection, canonical version-root boundary, and symbolic-link rejection. For ownership changes, also preserve the direct-child restriction and trusted-parent-chain check.
 
 The generated helper intentionally accepts package-local relative paths only. Keep equivalent checks in hand-written scripts:
@@ -152,13 +173,14 @@ Selecting an AIO image does not satisfy a `specialized_conditional` route. Keep 
 
 Before a pass claim, answer all items with evidence:
 
-1. Does every mount have a complete path and mount ledger row?
-2. Are startup and steady-state runtime UID/GID separately proven from OCI/Compose and verified entrypoint/process behavior?
-3. Are all mutable host paths package-local, confined, non-symlink, and rechecked before mutation?
-4. Is each ownership change minimal, source-backed, and protected against traversal and dereference?
-5. Does every file bind have the exact source file before Compose starts?
-6. Does every generated secret match the application's exact format and remain stable across upgrades?
-7. Are credentials URL-encoded or otherwise escaped with the exact connection-string grammar?
-8. Do clean install, readiness, restart, upgrade, uninstall, and cleanup evidence cover the actual application behavior?
+1. Do `init.sh`, `upgrade.sh`, and `uninstall.sh` exist and retain executable mode in the delivered tree?
+2. Does every mount have a complete path and mount ledger row?
+3. Are startup and steady-state runtime UID/GID separately proven from OCI/Compose and verified entrypoint/process behavior?
+4. Are all mutable host paths package-local, confined, non-symlink, and rechecked before mutation?
+5. Is each ownership change minimal, source-backed, and protected against traversal and dereference?
+6. Does every file bind have the exact source file before Compose starts?
+7. Does every generated secret match the application's exact format and remain stable across upgrades?
+8. Are credentials URL-encoded or otherwise escaped with the exact connection-string grammar?
+9. Do clean install, readiness, restart, upgrade, uninstall, and cleanup evidence cover the actual application behavior?
 
 Any unresolved item blocks a runtime-ready or delivery-ready claim even when structural, strict-store, i18n, environment-closure, and Compose-render checks pass.

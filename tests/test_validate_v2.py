@@ -160,6 +160,103 @@ class ValidateV2Tests(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         self.assertIn("healthcheck not found", proc.stdout)
 
+    def test_strict_store_rejects_non_executable_lifecycle_script(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            app = self._write_sample_app(pathlib.Path(tmp))
+            (app / "README.md").write_text(
+                "## 产品介绍\nSample\n\n"
+                "## 主要功能\nSample\n\n"
+                "## 访问说明\nSample\n\n"
+                "## Introduction\nSample\n\n"
+                "## Features\nSample\n",
+                encoding="utf-8",
+            )
+            (app / "logo.png").write_bytes(b"not-a-real-logo")
+            scripts = app / "latest" / "scripts"
+            scripts.mkdir()
+            for name in ("init.sh", "upgrade.sh", "uninstall.sh"):
+                path = scripts / name
+                path.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+                path.chmod(0o755)
+            (scripts / "upgrade.sh").chmod(0o644)
+
+            proc = subprocess.run(
+                ["bash", str(VALIDATE), "--strict-store", "--dir", str(app)],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+
+        self.assertNotEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("version upgrade.sh is not executable", proc.stdout)
+
+    def test_strict_store_rejects_symlinked_lifecycle_script(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = pathlib.Path(tmp)
+            app = self._write_sample_app(tmp_path)
+            (app / "README.md").write_text(
+                "## 产品介绍\nSample\n\n"
+                "## 主要功能\nSample\n\n"
+                "## 访问说明\nSample\n\n"
+                "## Introduction\nSample\n\n"
+                "## Features\nSample\n",
+                encoding="utf-8",
+            )
+            (app / "logo.png").write_bytes(b"not-a-real-logo")
+            scripts = app / "latest" / "scripts"
+            scripts.mkdir()
+            external = tmp_path / "external-upgrade.sh"
+            external.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+            external.chmod(0o755)
+            for name in ("init.sh", "uninstall.sh"):
+                path = scripts / name
+                path.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+                path.chmod(0o755)
+            (scripts / "upgrade.sh").symlink_to(external)
+
+            proc = subprocess.run(
+                ["bash", str(VALIDATE), "--strict-store", "--dir", str(app)],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+
+        self.assertNotEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("version upgrade.sh is a symbolic link", proc.stdout)
+
+    def test_strict_store_rejects_symlinked_lifecycle_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = pathlib.Path(tmp)
+            app = self._write_sample_app(tmp_path)
+            (app / "README.md").write_text(
+                "## 产品介绍\nSample\n\n"
+                "## 主要功能\nSample\n\n"
+                "## 访问说明\nSample\n\n"
+                "## Introduction\nSample\n\n"
+                "## Features\nSample\n",
+                encoding="utf-8",
+            )
+            (app / "logo.png").write_bytes(b"not-a-real-logo")
+            external_scripts = tmp_path / "external-scripts"
+            external_scripts.mkdir()
+            for name in ("init.sh", "upgrade.sh", "uninstall.sh"):
+                path = external_scripts / name
+                path.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+                path.chmod(0o755)
+            (app / "latest" / "scripts").symlink_to(
+                external_scripts, target_is_directory=True
+            )
+
+            proc = subprocess.run(
+                ["bash", str(VALIDATE), "--strict-store", "--dir", str(app)],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+
+        self.assertNotEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("version scripts directory is a symbolic link", proc.stdout)
+
     def test_source_evidence_default_allows_package_audit(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = self._write_sample_app(pathlib.Path(tmp))
