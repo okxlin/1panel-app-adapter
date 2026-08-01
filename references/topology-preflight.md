@@ -15,6 +15,12 @@ When a release tag is annotated, record both the tag object and the peeled sourc
 
 Inspect all upstream-supported Docker shapes relevant to the release, including standard Compose, AIO images, optional overlays, and documented external-service modes. Do not select an AIO image only because it reduces the Compose service count.
 
+Before assigning any route, write a deployment-shape census. Start from official install guides and
+their indexes or README, then enumerate every referenced sample or Compose root in the application
+and companion deployment repositories. For each discovered root, trace its include/template chain
+and record whether it is selected or rejected and why. A route conclusion that considers only the
+most obvious sample is incomplete.
+
 For each viable shape, record:
 
 - Compose services and images;
@@ -78,6 +84,12 @@ finding.
 Inspect the resolved manifest and OCI config for every Compose service image, including database,
 cache, browser, migration, and helper images, not only the primary application image or upstream
 Dockerfile. Record at least:
+
+A terminal route does not waive OCI inspection. Inspect the OCI manifest and OCI config for each
+published image used by every viable official shape, including base, bootstrap, or runtime images
+named by launchers. If no immutable published registry artifact exists or registry access remains
+unavailable after the approved checks, record the unavailable registry fact and limit negative
+security or runtime claims; do not infer image controls from YAML alone.
 
 - digest and supported platforms;
 - `User`;

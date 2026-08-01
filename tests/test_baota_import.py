@@ -901,7 +901,10 @@ class TestImportRunner(unittest.TestCase):
             encoding="utf-8"
         )
         self.assertIn('cd "$ROOT_DIR"', uninstall_text)
-        self.assertIn("docker-compose down\n", uninstall_text)
+        self.assertIn("docker compose version", uninstall_text)
+        self.assertIn("docker compose down", uninstall_text)
+        self.assertIn("docker-compose version", uninstall_text)
+        self.assertIn("docker-compose down", uninstall_text)
         self.assertNotIn("--volumes", uninstall_text)
 
         root_data = yaml.safe_load((out / "data.yml").read_text(encoding="utf-8"))
@@ -1257,7 +1260,10 @@ class TestCliAndGenerator(unittest.TestCase):
             encoding="utf-8"
         )
         self.assertIn('cd "$ROOT_DIR"', uninstall_text)
-        self.assertIn("docker-compose down\n", uninstall_text)
+        self.assertIn("docker compose version", uninstall_text)
+        self.assertIn("docker compose down", uninstall_text)
+        self.assertIn("docker-compose version", uninstall_text)
+        self.assertIn("docker-compose down", uninstall_text)
         self.assertNotIn("--volumes", uninstall_text)
 
         root_data = yaml.safe_load((root / "data.yml").read_text(encoding="utf-8"))

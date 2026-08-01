@@ -53,6 +53,15 @@ contract; otherwise add reviewed generation or validation that rejects invalid i
 starts. If the target package cannot enforce a required format before application startup, the
 unresolved input blocks delivery.
 
+Derive and enforce source-backed cross-field constraints, not only each field's standalone syntax.
+Examples include two domains that must differ, a certificate that must match a key, or a path and
+secret that must be supplied together. Exercise both accepted and rejected combinations before
+claiming the generated configuration is valid. When a lifecycle script writes values into a
+template, treat each validated value as literal data rather than as a regular-expression or
+replacement program. Use a structured serializer or a literal-safe substitution method; otherwise
+restrict the accepted characters to the exact source-backed grammar and test replacement-sensitive
+characters such as `&` and backslash.
+
 Trace each delivered value to its actual consumer and startup validation. When official examples
 and startup enforcement disagree, follow the exact-version startup enforcement and record the
 conflict. A successful Compose render proves interpolation and structure, not that the application
@@ -208,6 +217,22 @@ Test custom path logic with a normal direct-child path, a nested path, an absolu
 - Make initialization idempotent. Do not overwrite user state, rotate stable secrets, or replace user-modified configuration on restart or upgrade.
 - Define clean-install, restart, direct-upgrade, backup/restore, and uninstall behavior for every ledger row. Treat unknown database major-version transitions and irreversible migrations as blockers until tested.
 - Make lifecycle scripts independent of the caller's working directory: resolve the version directory from the script path, then either change to it before Compose commands or pass an equivalent absolute project/Compose path. Preserve bind data and persistent named volumes by default; use `down --volumes` only when the ledger proves every affected volume is package-owned, disposable, and approved for deletion.
+- Match 1Panel's Compose command selection: probe `docker compose version` first, then fall back
+  to `docker-compose version` when only the supported legacy binary is installed. Fail clearly when
+  neither command exists. This order follows `1Panel-dev/1Panel` commit
+  `16e3d496ebc4eae6637ce63f17149c6928469af1`.
+
+  ```bash
+  if docker compose version >/dev/null 2>&1; then
+    docker compose down
+  elif docker-compose version >/dev/null 2>&1; then
+    docker-compose down
+  else
+    echo "Docker Compose is not available" >&2
+    exit 1
+  fi
+  ```
+
 - Exercise an application-specific ready path. A running container, healthy status, open TCP port, or generic HTTP `200` alone is not sufficient.
 - Test the exact delivered files in a real 1Panel development/test instance. Verify the file/directory types, ownership and modes on the host and in the container before and after restart and upgrade.
 - Report an observed owner or mode as an observation tied to the invoking UID/GID and umask. Claim a portable guarantee only when the delivered lifecycle script explicitly enforces that owner or mode and the exact-artifact test verifies it. A host observation alone does not prove behavior under another panel user, filesystem, or umask.

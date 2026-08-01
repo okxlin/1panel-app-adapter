@@ -37,38 +37,70 @@ class RuntimeScriptGenerationTest(unittest.TestCase):
     def assert_uninstall_runs_from_version_dir(
         self, uninstall_script: pathlib.Path, version_dir: pathlib.Path
     ) -> None:
-        capture_dir = version_dir.parent / "capture"
-        fake_bin = version_dir.parent / "fake-bin"
         unrelated_cwd = version_dir.parent / "unrelated"
-        capture_dir.mkdir()
-        fake_bin.mkdir()
         unrelated_cwd.mkdir()
-        fake_compose = fake_bin / "docker-compose"
-        fake_compose.write_text(
-            "#!/bin/sh\n"
-            "printf '%s\\n' \"$PWD\" > \"$CAPTURE_DIR/pwd\"\n"
-            "printf '%s\\n' \"$*\" > \"$CAPTURE_DIR/args\"\n",
-            encoding="utf-8",
-        )
-        fake_compose.chmod(0o755)
-        env = os.environ.copy()
-        env["CAPTURE_DIR"] = str(capture_dir)
-        env["PATH"] = f"{fake_bin}:{env['PATH']}"
+        for case, docker_version_status, legacy_version_status, expected_command in (
+            ("compose-v2", 0, 0, "docker:compose down"),
+            ("legacy-fallback", 1, 0, "docker-compose:down"),
+            ("compose-unavailable", 1, 1, None),
+        ):
+            with self.subTest(case=case):
+                capture_dir = version_dir.parent / f"capture-{case}"
+                fake_bin = version_dir.parent / f"fake-bin-{case}"
+                capture_dir.mkdir()
+                fake_bin.mkdir()
 
-        subprocess.run(
-            ["bash", str(uninstall_script)],
-            check=True,
-            cwd=unrelated_cwd,
-            env=env,
-        )
+                fake_docker = fake_bin / "docker"
+                fake_docker.write_text(
+                    "#!/bin/sh\n"
+                    "if [ \"$*\" = 'compose version' ]; then\n"
+                    f"  exit {docker_version_status}\n"
+                    "fi\n"
+                    "printf '%s\\n' \"$PWD\" > \"$CAPTURE_DIR/pwd\"\n"
+                    "printf 'docker:%s\\n' \"$*\" > \"$CAPTURE_DIR/command\"\n",
+                    encoding="utf-8",
+                )
+                fake_docker.chmod(0o755)
 
-        self.assertEqual(
-            (capture_dir / "pwd").read_text(encoding="utf-8").strip(),
-            str(version_dir.resolve()),
-        )
-        self.assertEqual(
-            (capture_dir / "args").read_text(encoding="utf-8").strip(), "down"
-        )
+                legacy_compose = fake_bin / "docker-compose"
+                legacy_compose.write_text(
+                    "#!/bin/sh\n"
+                    "if [ \"$*\" = 'version' ]; then\n"
+                    f"  exit {legacy_version_status}\n"
+                    "fi\n"
+                    "printf '%s\\n' \"$PWD\" > \"$CAPTURE_DIR/pwd\"\n"
+                    "printf 'docker-compose:%s\\n' \"$*\" > \"$CAPTURE_DIR/command\"\n",
+                    encoding="utf-8",
+                )
+                legacy_compose.chmod(0o755)
+
+                env = os.environ.copy()
+                env["CAPTURE_DIR"] = str(capture_dir)
+                env["PATH"] = f"{fake_bin}:{env['PATH']}"
+
+                proc = subprocess.run(
+                    ["bash", str(uninstall_script)],
+                    cwd=unrelated_cwd,
+                    env=env,
+                    text=True,
+                    capture_output=True,
+                )
+
+                if expected_command is None:
+                    self.assertNotEqual(proc.returncode, 0)
+                    self.assertIn("Docker Compose is not available", proc.stderr)
+                    self.assertFalse((capture_dir / "command").exists())
+                    continue
+
+                self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+                self.assertEqual(
+                    (capture_dir / "pwd").read_text(encoding="utf-8").strip(),
+                    str(version_dir.resolve()),
+                )
+                self.assertEqual(
+                    (capture_dir / "command").read_text(encoding="utf-8").strip(),
+                    expected_command,
+                )
 
     def test_collect_runtime_paths_rejects_unsafe_defaults(self):
         for default in (

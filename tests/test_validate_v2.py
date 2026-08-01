@@ -380,6 +380,46 @@ class ValidateV2Tests(unittest.TestCase):
         self.assertNotEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         self.assertIn("version upgrade.sh is not executable", proc.stdout)
 
+    def test_strict_store_allows_official_compose_cli_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            app = self._write_sample_app(pathlib.Path(tmp))
+            (app / "README.md").write_text(
+                "## 产品介绍\nSample\n\n"
+                "## 主要功能\nSample\n\n"
+                "## 访问说明\nSample\n\n"
+                "## Introduction\nSample\n\n"
+                "## Features\nSample\n",
+                encoding="utf-8",
+            )
+            (app / "logo.png").write_bytes(b"not-a-real-logo")
+            scripts = app / "latest" / "scripts"
+            scripts.mkdir()
+            for name in ("init.sh", "upgrade.sh", "uninstall.sh"):
+                path = scripts / name
+                content = "#!/usr/bin/env bash\nexit 0\n"
+                if name == "uninstall.sh":
+                    content = (
+                        "#!/usr/bin/env bash\n"
+                        "if docker compose version >/dev/null 2>&1; then\n"
+                        "  docker compose down\n"
+                        "elif docker-compose version >/dev/null 2>&1; then\n"
+                        "  docker-compose down\n"
+                        "else\n"
+                        "  exit 1\n"
+                        "fi\n"
+                    )
+                path.write_text(content, encoding="utf-8")
+                path.chmod(0o755)
+
+            proc = subprocess.run(
+                ["bash", str(VALIDATE), "--strict-store", "--dir", str(app)],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+
     def test_strict_store_rejects_symlinked_lifecycle_script(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = pathlib.Path(tmp)
