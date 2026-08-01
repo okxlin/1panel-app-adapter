@@ -142,14 +142,16 @@ fi
 if [[ ! -f "$APP_DIR/logo.png" ]]; then
   DEFAULT_LOGO="$SCRIPT_DIR/../assets/default-logo.png"
   DEFAULT_LOGO_LICENSE="$SCRIPT_DIR/../assets/default-logo.LICENSE.txt"
-  if [[ -f "$DEFAULT_LOGO" && -f "$DEFAULT_LOGO_LICENSE" ]]; then
+  DEFAULT_LOGO_SOURCE="$SCRIPT_DIR/../assets/default-logo.svg"
+  if [[ -f "$DEFAULT_LOGO" && -f "$DEFAULT_LOGO_LICENSE" && -f "$DEFAULT_LOGO_SOURCE" ]]; then
     if [[ -L "$APP_DIR/ASSET-LICENSES" ]]; then
       echo "FAIL: asset license directory must not be a symlink: $APP_DIR/ASSET-LICENSES" >&2
       exit 1
     fi
     cp "$DEFAULT_LOGO" "$APP_DIR/logo.png"
-    mkdir -p "$APP_DIR/ASSET-LICENSES"
+    mkdir -p "$APP_DIR/ASSET-LICENSES" "$APP_DIR/assets"
     cp "$DEFAULT_LOGO_LICENSE" "$APP_DIR/ASSET-LICENSES/default-logo.txt"
+    cp "$DEFAULT_LOGO_SOURCE" "$APP_DIR/assets/default-logo.svg"
     DEFAULT_LOGO_COPIED=1
   fi
 fi
@@ -209,7 +211,10 @@ materials = [
 
 for material in materials:
     relative_path = material["path"]
-    if default_logo_copied and relative_path == "ASSET-LICENSES/default-logo.txt":
+    if default_logo_copied and relative_path in {
+        "ASSET-LICENSES/default-logo.txt",
+        "assets/default-logo.svg",
+    }:
         continue
     source_file, error = _artifact_file(source_root, relative_path)
     if source_file is None:
@@ -222,7 +227,10 @@ for material in materials:
 required.extend(material["path"] for material in materials)
 
 for relative_path in dict.fromkeys(required):
-    if default_logo_copied and relative_path == "ASSET-LICENSES/default-logo.txt":
+    if default_logo_copied and relative_path in {
+        "ASSET-LICENSES/default-logo.txt",
+        "assets/default-logo.svg",
+    }:
         continue
     source_file, error = _artifact_file(source_root, relative_path)
     if source_file is None:
@@ -232,7 +240,7 @@ for relative_path in dict.fromkeys(required):
     shutil.copy2(source_file, target_file)
 PY
 
-"$PYTHON_BIN" - "$APP_DIR/source-evidence.json" "$APP_DIR/logo.png" "$APP_DIR/ASSET-LICENSES/default-logo.txt" "$SOURCE_LOGO_COPIED" "$DEFAULT_LOGO_COPIED" <<'PY'
+"$PYTHON_BIN" - "$APP_DIR/source-evidence.json" "$APP_DIR/logo.png" "$APP_DIR/ASSET-LICENSES/default-logo.txt" "$APP_DIR/assets/default-logo.svg" "$SOURCE_LOGO_COPIED" "$DEFAULT_LOGO_COPIED" <<'PY'
 import hashlib
 import json
 import sys
@@ -241,8 +249,9 @@ from pathlib import Path
 evidence_path = Path(sys.argv[1])
 logo_path = Path(sys.argv[2])
 notice_path = Path(sys.argv[3])
-source_logo_copied = sys.argv[4] == "1"
-default_logo_copied = sys.argv[5] == "1"
+source_path = Path(sys.argv[4])
+source_logo_copied = sys.argv[5] == "1"
+default_logo_copied = sys.argv[6] == "1"
 evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
 if not isinstance(evidence, dict):
     raise ValueError("source-evidence.json must contain an object")
@@ -250,14 +259,17 @@ if not isinstance(evidence, dict):
 if default_logo_copied:
     logo_hash = hashlib.sha256(logo_path.read_bytes()).hexdigest()
     notice_hash = hashlib.sha256(notice_path.read_bytes()).hexdigest()
+    source_hash = hashlib.sha256(source_path.read_bytes()).hexdigest()
     default_notice = "ASSET-LICENSES/default-logo.txt"
+    default_source = "assets/default-logo.svg"
     existing = evidence.get("redistributionEvidence")
     if isinstance(existing, dict):
         redistribution_status = existing.get("status", "unresolved")
         required_files = list(existing.get("requiredFiles", []))
         materials = [
             item for item in existing.get("materials", [])
-            if isinstance(item, dict) and item.get("path") != default_notice
+            if isinstance(item, dict)
+            and item.get("path") not in {default_notice, default_source}
         ]
         assets = [
             item for item in existing.get("assets", [])
@@ -270,17 +282,24 @@ if default_logo_copied:
         assets = []
     if default_notice not in required_files:
         required_files.append(default_notice)
+    if default_source not in required_files:
+        required_files.append(default_source)
     materials.append({
         "path": default_notice,
         "sha256": notice_hash,
         "purpose": "default logo license",
+    })
+    materials.append({
+        "path": default_source,
+        "sha256": source_hash,
+        "purpose": "default logo source",
     })
     assets.append({
         "path": "logo.png",
         "source": "bundled:assets/default-logo.svg",
         "license": "MIT",
         "sha256": logo_hash,
-        "requiredFiles": [default_notice],
+        "requiredFiles": [default_notice, default_source],
     })
     evidence["logoEvidence"] = {
         "source": "bundled:assets/default-logo.svg",
@@ -367,7 +386,7 @@ fi
 "$PYTHON_BIN" "$SCRIPT_DIR/patch_root_data_yml.py" "$APP_DIR/data.yml" "$APP_KEY" "$ARCHES"
 "$PYTHON_BIN" "$SCRIPT_DIR/patch_version_data_yml.py" "$VER_DIR/data.yml"
 "$PYTHON_BIN" "$SCRIPT_DIR/patch_compose_yml.py" "$VER_DIR/docker-compose.yml" "$APP_TYPE"
-"$PYTHON_BIN" "$SCRIPT_DIR/gen_env_sample.py" "$VER_DIR/data.yml" "$VER_DIR/.env.sample" "$VER_DIR/docker-compose.yml"
+"$PYTHON_BIN" "$SCRIPT_DIR/gen_env_sample.py" "$VER_DIR/data.yml" "$VER_DIR/.env.sample" "$VER_DIR/docker-compose.yml" "$APP_KEY-compose-check"
 
 if [[ ! -f "$VER_DIR/scripts/init.sh" ]]; then
   "$PYTHON_BIN" "$SCRIPT_DIR/runtime_script_utils.py" "$VER_DIR/data.yml" "$VER_DIR/scripts/init.sh"

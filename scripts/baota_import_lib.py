@@ -156,6 +156,8 @@ def _generated_output_targets(
         app_dir / "source-evidence.json",
         app_dir / "ASSET-LICENSES",
         app_dir / "ASSET-LICENSES" / "default-logo.txt",
+        app_dir / "assets",
+        app_dir / "assets" / "default-logo.svg",
         version_dir / "data.yml",
         version_dir / "docker-compose.yml",
         version_dir / ".env.sample",
@@ -315,6 +317,7 @@ def evaluate_baota_delivery_readiness(
     redistribution_errors = validate_source_evidence(
         redistribution_payload,
         require_urls=False,
+        artifact_root=app_dir,
     )
     license_review = inspect_redistribution_delivery(
         redistribution_payload,
@@ -1991,7 +1994,11 @@ class ImportRunner:
 
     @staticmethod
     def _build_version_data_yml(appspec: Dict[str, Any]) -> Dict[str, Any]:
-        form_fields = [_normalize_form_field(field) for field in appspec.get("formFields", [])]
+        form_fields = [
+            _normalize_form_field(field)
+            for field in appspec.get("formFields", [])
+            if isinstance(field, dict) and field.get("envKey") != "CONTAINER_NAME"
+        ]
         return {
             "additionalProperties": {
                 "formFields": form_fields,
@@ -2038,9 +2045,15 @@ class ImportRunner:
                     defaults[str(env_key)] = field.get("default", "")
 
         lines = []
+        app_key = (
+            appspec.get("appKey", "adapter")
+            if isinstance(appspec, dict)
+            else "adapter"
+        )
+        container_name = f"{app_key}-compose-check"
         for vn in sorted(var_names):
             if vn == "CONTAINER_NAME":
-                lines.append(f"{vn}=")
+                lines.append(f"{vn}={container_name}")
             elif vn in defaults:
                 lines.append(f"{vn}={_str_default(defaults[vn])}")
             elif vn == "APP_DATA_DIR":

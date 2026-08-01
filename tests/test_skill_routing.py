@@ -219,6 +219,27 @@ class SkillRoutingTests(unittest.TestCase):
             with self.subTest(weakened_rule=weakened_rule):
                 self.assertNotIn(weakened_rule.casefold(), flat_policy.casefold())
 
+    def test_cycle_one_evidence_repairs_are_explicit(self) -> None:
+        policy = (REPO_ROOT / "references" / "source-policy.md").read_text(
+            encoding="utf-8"
+        )
+        for guard in (
+            "platform child digest",
+            "same registry descriptor",
+            "index digest",
+            "assets/default-logo.svg",
+        ):
+            with self.subTest(guard=guard):
+                self.assertIn(guard.casefold(), policy.casefold())
+
+        for guard in (
+            "CONTAINER_NAME=<app-key>-compose-check",
+            "must be non-empty",
+            "platform child digest",
+        ):
+            with self.subTest(guard=guard):
+                self.assertIn(guard.casefold(), self.skill.casefold())
+
     def test_public_url_policy_separates_external_origin_from_internal_listener(self) -> None:
         policy = (REPO_ROOT / "references" / "source-policy.md").read_text(encoding="utf-8")
         for guard in (

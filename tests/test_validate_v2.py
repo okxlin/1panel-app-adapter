@@ -109,7 +109,7 @@ class ValidateV2Tests(unittest.TestCase):
             encoding="utf-8",
         )
         (version / ".env.sample").write_text(
-            "PANEL_DB_TYPE=mysql\nPANEL_DB_HOST=mysql\nPANEL_APP_PORT_HTTP=8080\nCONTAINER_NAME=\n",
+            "PANEL_DB_TYPE=mysql\nPANEL_DB_HOST=mysql\nPANEL_APP_PORT_HTTP=8080\nCONTAINER_NAME=sample-compose-check\n",
             encoding="utf-8",
         )
         (version / "docker-compose.yml").write_text(
@@ -134,6 +134,66 @@ class ValidateV2Tests(unittest.TestCase):
             encoding="utf-8",
         )
         return app
+
+    def test_empty_container_name_sample_fails_before_compose_render(self) -> None:
+        for empty_value in (
+            "",
+            "   ",
+            " # empty",
+            '""',
+            '"" # empty',
+            "''",
+            "'' # empty",
+        ):
+            with self.subTest(empty_value=empty_value), tempfile.TemporaryDirectory() as tmp:
+                app = self._write_sample_app(pathlib.Path(tmp))
+                sample = app / "latest" / ".env.sample"
+                sample.write_text(
+                    sample.read_text(encoding="utf-8").replace(
+                        "CONTAINER_NAME=sample-compose-check",
+                        f"CONTAINER_NAME={empty_value}",
+                    ),
+                    encoding="utf-8",
+                )
+                proc = subprocess.run(
+                    ["bash", str(VALIDATE), "--dir", str(app)],
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                )
+
+            self.assertNotEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+            self.assertIn("CONTAINER_NAME must be non-empty", proc.stdout)
+
+    def test_container_name_must_not_be_an_install_form_field(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            app = self._write_sample_app(pathlib.Path(tmp))
+            version_data = app / "latest" / "data.yml"
+            version_data.write_text(
+                version_data.read_text(encoding="utf-8").replace(
+                    "  formFields:\n",
+                    "  formFields:\n"
+                    "  - default: sample-compose-check\n"
+                    "    edit: true\n"
+                    "    envKey: CONTAINER_NAME\n"
+                    "    labelEn: Container Name\n"
+                    "    labelZh: 容器名称\n"
+                    "    required: false\n"
+                    "    type: text\n",
+                    1,
+                ),
+                encoding="utf-8",
+            )
+
+            proc = subprocess.run(
+                ["bash", str(VALIDATE), "--dir", str(app)],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+
+        self.assertNotEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("CONTAINER_NAME must not be a formFields envKey", proc.stdout)
 
     def test_values_items_are_not_counted_as_form_fields(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

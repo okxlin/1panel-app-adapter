@@ -331,6 +331,10 @@ for item in items:
         print('[A][FAIL] formFields item missing envKey/type/required')
         failures += 1
         continue
+    if env == 'CONTAINER_NAME':
+        print('[A][FAIL] CONTAINER_NAME must not be a formFields envKey')
+        failures += 1
+        continue
     if env.startswith('PANEL_APP_PORT'):
         if typ != 'number':
             print(f'[A][FAIL] {env} must use type:number')
@@ -673,12 +677,22 @@ vars_in_compose = extract_compose_variable_names(compose_text)
 
 env_sample_text = env_sample_path.read_text(encoding='utf-8', errors='ignore')
 vars_in_sample = set()
+sample_values = {}
 for line in env_sample_text.splitlines():
     line = line.strip()
     if line and not line.startswith('#'):
         m = re.match(r'^([A-Za-z_][A-Za-z0-9_]*)=', line)
         if m:
-            vars_in_sample.add(m.group(1))
+            key, value = line.split('=', 1)
+            key = key.strip()
+            vars_in_sample.add(key)
+            sample_values[key] = value
+
+def env_value_is_empty(value):
+    value = value.strip()
+    if not value or value.startswith('#'):
+        return True
+    return re.fullmatch(r'''(?:"\s*"|'\s*')(?:\s+#.*)?''', value) is not None
 
 missing_in_sample = sorted(vars_in_compose - vars_in_sample)
 if missing_in_sample:
@@ -689,6 +703,10 @@ extra_in_sample = sorted(vars_in_sample - vars_in_compose)
 if extra_in_sample:
     for key in extra_in_sample:
         print(f"[C][INFO] .env.sample has extra variable not in compose: {key}")
+
+if 'CONTAINER_NAME' in vars_in_compose and env_value_is_empty(sample_values.get('CONTAINER_NAME', '')):
+    print('[A][FAIL] CONTAINER_NAME must be non-empty in .env.sample')
+    raise SystemExit(1)
 
 print(f"[C][INFO] env sample closure ok: compose_vars={len(vars_in_compose)} sample_vars={len(vars_in_sample)}")
 PY
@@ -834,11 +852,9 @@ fi
 
 set +e
 compose_render_output=$("$PYTHON_BIN" - <<'PY' "$COMPOSE" "$VER_DIR/.env.sample"
-import os
 import shutil
 import subprocess
 import sys
-import tempfile
 from pathlib import Path
 
 compose_path = Path(sys.argv[1])
@@ -847,31 +863,8 @@ if shutil.which('docker') is None:
     print('[B][WARN] docker not available; skipped docker compose config validation')
     raise SystemExit(0)
 
-pairs = {}
-if env_sample.is_file():
-    for line in env_sample.read_text(encoding='utf-8', errors='ignore').splitlines():
-        raw = line.strip()
-        if not raw or raw.startswith('#') or '=' not in raw:
-            continue
-        k, v = raw.split('=', 1)
-        pairs[k.strip()] = v
-pairs.setdefault('CONTAINER_NAME', 'adapter-validate')
-if not pairs.get('CONTAINER_NAME', '').strip():
-    pairs['CONTAINER_NAME'] = 'adapter-validate'
-
-with tempfile.NamedTemporaryFile('w', encoding='utf-8', delete=False) as tf:
-    for k, v in pairs.items():
-        tf.write(f'{k}={v}\n')
-    temp_env = tf.name
-
-cmd = ['docker', 'compose', '--env-file', temp_env, '-f', str(compose_path), 'config']
-try:
-    proc = subprocess.run(cmd, capture_output=True, text=True)
-finally:
-    try:
-        os.unlink(temp_env)
-    except FileNotFoundError:
-        pass
+cmd = ['docker', 'compose', '--env-file', str(env_sample), '-f', str(compose_path), 'config']
+proc = subprocess.run(cmd, capture_output=True, text=True)
 
 if proc.returncode != 0:
     msg = (proc.stderr or proc.stdout or '').strip().replace('\n', ' | ')

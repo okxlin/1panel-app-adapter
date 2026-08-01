@@ -924,6 +924,7 @@ class TestImportRunner(unittest.TestCase):
         self.assertIn("PANEL_APP_PORT_5426=5426", env_sample)
         self.assertIn("APP_DATA_DIR_DATA=./data/data", env_sample)
         self.assertIn("APP_DATA_DIR_MNT=./data/mnt", env_sample)
+        self.assertIn("CONTAINER_NAME=alist-compose-check", env_sample)
         evidence = json.loads((out / "source-evidence.json").read_text(encoding="utf-8"))
         self.assertEqual(evidence["architectureEvidence"], "unverified_default")
         self.assertEqual(root_data["additionalProperties"]["architectures"], ["amd64"])
@@ -1548,7 +1549,16 @@ class TestCliAndGenerator(unittest.TestCase):
         logo_path = app_dir / "logo.png"
         self.assertGreater(logo_path.stat().st_size, 0)
         notice_path = app_dir / "ASSET-LICENSES" / "default-logo.txt"
+        source_path = app_dir / "assets" / "default-logo.svg"
         self.assertTrue(notice_path.is_file())
+        self.assertEqual(
+            source_path.read_bytes(),
+            (self.project_dir / "assets" / "default-logo.svg").read_bytes(),
+        )
+        self.assertIn(
+            "CONTAINER_NAME=minapp-compose-check",
+            (app_dir / "latest" / ".env.sample").read_text(encoding="utf-8"),
+        )
         self.assertIn("Permission is hereby granted", notice_path.read_text(encoding="utf-8"))
         evidence = json.loads((app_dir / "source-evidence.json").read_text(encoding="utf-8"))
         self.assertEqual(evidence["logoEvidence"]["license"], "MIT")
@@ -1559,12 +1569,20 @@ class TestCliAndGenerator(unittest.TestCase):
         redistribution = evidence["redistributionEvidence"]
         self.assertEqual(redistribution["status"], "verified")
         self.assertEqual(
-            redistribution["requiredFiles"],
-            ["ASSET-LICENSES/default-logo.txt"],
+            set(redistribution["requiredFiles"]),
+            {
+                "ASSET-LICENSES/default-logo.txt",
+                "assets/default-logo.svg",
+            },
+        )
+        materials = {item["path"]: item for item in redistribution["materials"]}
+        self.assertEqual(
+            materials["ASSET-LICENSES/default-logo.txt"]["sha256"],
+            hashlib.sha256(notice_path.read_bytes()).hexdigest(),
         )
         self.assertEqual(
-            redistribution["materials"][0]["sha256"],
-            hashlib.sha256(notice_path.read_bytes()).hexdigest(),
+            materials["assets/default-logo.svg"]["sha256"],
+            hashlib.sha256(source_path.read_bytes()).hexdigest(),
         )
         report = json.loads(report_path.read_text(encoding="utf-8"))
         self.assertEqual(report["status"], "generated_candidate")
@@ -1573,6 +1591,55 @@ class TestCliAndGenerator(unittest.TestCase):
             "unverified-application-license",
             {blocker["code"] for blocker in report["delivery"]["blockers"]},
         )
+
+    def test_generate_from_appspec_omits_legacy_container_name_form_field(self):
+        spec_path = pathlib.Path(self.tmpdir) / "legacy-container-name.appspec.json"
+        out_dir = pathlib.Path(self.tmpdir) / "legacy-container-name-output"
+        _write_json(spec_path, {
+            "appKey": "legacy-container-name",
+            "title": "Legacy Container Name",
+            "description": "Legacy implicit container name field",
+            "shortDescZh": "旧版隐式容器名称字段",
+            "type": "Tool",
+            "tag": "Tool",
+            "version": "latest",
+            "image": "nginx:latest",
+            "formFields": [{
+                "envKey": "CONTAINER_NAME",
+                "labelZh": "容器名称",
+                "labelEn": "Container Name",
+                "type": "text",
+                "required": False,
+                "default": "",
+            }],
+        })
+
+        proc = subprocess.run(
+            [
+                sys.executable,
+                str(self.project_dir / "scripts" / "generate-from-appspec.py"),
+                "--spec", str(spec_path),
+                "--out-dir", str(out_dir),
+            ],
+            cwd=str(self.project_dir),
+            text=True,
+            capture_output=True,
+        )
+
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        version_dir = out_dir / "legacy-container-name" / "latest"
+        env_lines = (
+            version_dir / ".env.sample"
+        ).read_text(encoding="utf-8").splitlines()
+        self.assertEqual(
+            [line for line in env_lines if line.startswith("CONTAINER_NAME=")],
+            ["CONTAINER_NAME=legacy-container-name-compose-check"],
+        )
+        version_data = yaml.safe_load(
+            (version_dir / "data.yml").read_text(encoding="utf-8")
+        )
+        fields = version_data.get("additionalProperties", {}).get("formFields", [])
+        self.assertNotIn("CONTAINER_NAME", {field.get("envKey") for field in fields})
 
     def test_default_logo_preserves_application_redistribution_requirements(self):
         spec_path = pathlib.Path(self.tmpdir) / "licensed.appspec.json"
@@ -1635,7 +1702,11 @@ class TestCliAndGenerator(unittest.TestCase):
         self.assertEqual(redistribution["status"], "verified")
         self.assertCountEqual(
             redistribution["requiredFiles"],
-            ["LICENSE", "ASSET-LICENSES/default-logo.txt"],
+            [
+                "LICENSE",
+                "ASSET-LICENSES/default-logo.txt",
+                "assets/default-logo.svg",
+            ],
         )
         materials_by_path = {
             material["path"]: material
@@ -1646,6 +1717,7 @@ class TestCliAndGenerator(unittest.TestCase):
             hashlib.sha256(license_bytes).hexdigest(),
         )
         self.assertIn("ASSET-LICENSES/default-logo.txt", materials_by_path)
+        self.assertIn("assets/default-logo.svg", materials_by_path)
         logo_assets = [
             asset
             for asset in redistribution["assets"]
@@ -1654,7 +1726,7 @@ class TestCliAndGenerator(unittest.TestCase):
         self.assertEqual(len(logo_assets), 1)
         self.assertEqual(
             logo_assets[0]["requiredFiles"],
-            ["ASSET-LICENSES/default-logo.txt"],
+            ["ASSET-LICENSES/default-logo.txt", "assets/default-logo.svg"],
         )
 
     def test_generation_without_validation_cannot_report_delivery_ready(self):

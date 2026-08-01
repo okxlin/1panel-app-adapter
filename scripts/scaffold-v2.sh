@@ -277,14 +277,16 @@ if [[ ! -f "$APP_DIR/logo.png" ]]; then
   ASSET_DIR="$(cd "$(dirname "$0")" && pwd)/../assets"
   DEFAULT_LOGO="$ASSET_DIR/default-logo.png"
   DEFAULT_LOGO_LICENSE="$ASSET_DIR/default-logo.LICENSE.txt"
-  if [[ -f "$DEFAULT_LOGO" && -f "$DEFAULT_LOGO_LICENSE" ]]; then
+  DEFAULT_LOGO_SOURCE="$ASSET_DIR/default-logo.svg"
+  if [[ -f "$DEFAULT_LOGO" && -f "$DEFAULT_LOGO_LICENSE" && -f "$DEFAULT_LOGO_SOURCE" ]]; then
     if [[ -L "$APP_DIR/ASSET-LICENSES" ]]; then
       echo "FAIL: asset license directory must not be a symlink: $APP_DIR/ASSET-LICENSES" >&2
       exit 2
     fi
     cp "$DEFAULT_LOGO" "$APP_DIR/logo.png"
-    mkdir -p "$APP_DIR/ASSET-LICENSES"
+    mkdir -p "$APP_DIR/ASSET-LICENSES" "$APP_DIR/assets"
     cp "$DEFAULT_LOGO_LICENSE" "$APP_DIR/ASSET-LICENSES/default-logo.txt"
+    cp "$DEFAULT_LOGO_SOURCE" "$APP_DIR/assets/default-logo.svg"
     DEFAULT_LOGO_COPIED=1
   else
     echo "[WARN] logo.png not provided or licensed default asset incomplete; add a verified PNG before publishing" >&2
@@ -309,8 +311,12 @@ payload = {
 if logo.is_file():
     logo_hash = hashlib.sha256(logo.read_bytes()).hexdigest()
     if used_default:
-        required_files = ["ASSET-LICENSES/default-logo.txt"]
+        required_files = [
+            "ASSET-LICENSES/default-logo.txt",
+            "assets/default-logo.svg",
+        ]
         notice = app_dir / required_files[0]
+        source = app_dir / required_files[1]
         payload["logoEvidence"] = {
             "source": "bundled:assets/default-logo.svg",
             "license": "MIT",
@@ -319,11 +325,18 @@ if logo.is_file():
         payload["redistributionEvidence"] = {
             "status": "verified",
             "requiredFiles": required_files,
-            "materials": [{
-                "path": required_files[0],
-                "sha256": hashlib.sha256(notice.read_bytes()).hexdigest(),
-                "purpose": "default logo license",
-            }],
+            "materials": [
+                {
+                    "path": required_files[0],
+                    "sha256": hashlib.sha256(notice.read_bytes()).hexdigest(),
+                    "purpose": "default logo license",
+                },
+                {
+                    "path": required_files[1],
+                    "sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+                    "purpose": "default logo source",
+                },
+            ],
             "assets": [{
                 "path": "logo.png",
                 "source": "bundled:assets/default-logo.svg",
@@ -633,7 +646,7 @@ if [[ -n "$VOLUMES" ]]; then
   fi
 fi
 
-"$PYTHON_BIN" "$(dirname "$0")/gen_env_sample.py" "$VER_DIR/data.yml" "$VER_DIR/.env.sample" "$VER_DIR/docker-compose.yml"
+"$PYTHON_BIN" "$(dirname "$0")/gen_env_sample.py" "$VER_DIR/data.yml" "$VER_DIR/.env.sample" "$VER_DIR/docker-compose.yml" "$APP_KEY-compose-check"
 "$PYTHON_BIN" "$(dirname "$0")/runtime_script_utils.py" "$VER_DIR/data.yml" "$VER_DIR/scripts/init.sh"
 
 cat > "$VER_DIR/scripts/upgrade.sh" <<'SH'

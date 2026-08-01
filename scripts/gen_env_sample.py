@@ -5,16 +5,30 @@ from pathlib import Path
 
 
 def usage():
-    print("usage: gen_env_sample.py <version-data.yml> <out-.env.sample> [docker-compose.yml]", file=sys.stderr)
+    print(
+        "usage: gen_env_sample.py <version-data.yml> <out-.env.sample> "
+        "[docker-compose.yml] [container-name]",
+        file=sys.stderr,
+    )
 
 
-if len(sys.argv) not in (3, 4):
+if len(sys.argv) not in (3, 4, 5):
     usage()
     sys.exit(2)
 
 src = Path(sys.argv[1])
 out = Path(sys.argv[2])
 compose_path = Path(sys.argv[3]) if len(sys.argv) > 3 else None
+app_key = out.parent.parent.name
+default_container_name = (
+    f"{app_key}-compose-check"
+    if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", app_key or "")
+    else "adapter-compose-check"
+)
+container_name = sys.argv[4] if len(sys.argv) > 4 else default_container_name
+if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", container_name) is None:
+    print("FAIL: container-name must be a valid non-empty Docker container name", file=sys.stderr)
+    sys.exit(2)
 if not src.is_file():
     print(f"FAIL: not found: {src}", file=sys.stderr)
     sys.exit(1)
@@ -146,7 +160,7 @@ flush()
 if child_cur and child_cur.get("envKey"):
     items.append(child_cur)
 
-out_lines = []
+out_lines = [f"CONTAINER_NAME={container_name}"]
 
 # Read compose variables if compose path provided
 compose_vars = set()
@@ -162,14 +176,9 @@ for it in items:
     env = it.get("envKey", "").strip()
     dft = it.get("default", "")
     ftype = it.get("type", "").strip().lower()
-    if env and ftype not in {"apps"}:
+    if env and env != "CONTAINER_NAME" and ftype not in {"apps"}:
         # If compose provided, only include variables used in compose
         if not compose_vars or env in compose_vars:
             out_lines.append(f"{env}={dft}")
-
-# Add CONTAINER_NAME if not already present (1Panel auto-generates at install time)
-has_container_name = any(it.get("envKey", "").strip() == "CONTAINER_NAME" for it in items)
-if not has_container_name:
-    out_lines.append("CONTAINER_NAME=")
 
 out.write_text("\n".join(out_lines) + "\n", encoding="utf-8")

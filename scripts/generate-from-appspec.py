@@ -292,7 +292,11 @@ class AppSpecGenerator:
                     continue
                 ff.append(vff)
 
-        return [_normalize_form_field(field) for field in ff]
+        return [
+            _normalize_form_field(field)
+            for field in ff
+            if field.get("envKey") != "CONTAINER_NAME"
+        ]
 
     @staticmethod
     def _port_to_formfield(port: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -411,11 +415,11 @@ class AppSpecGenerator:
         compose_path = self.version_dir / "docker-compose.yml"
         compose_text = compose_path.read_text(encoding="utf-8") if compose_path.is_file() else ""
         compose_vars = set(re.findall(r"\$\{([A-Za-z_][A-Za-z0-9_]*)", compose_text))
-        lines = ["CONTAINER_NAME="]
+        lines = [f"CONTAINER_NAME={self.app_key}-compose-check"]
         for f_item in self._build_form_fields():
             env_key = f_item.get("envKey", "")
             default = f_item.get("default", "")
-            if env_key:
+            if env_key and env_key != "CONTAINER_NAME":
                 lines.append(f"{env_key}={default}")
         for port in self.spec.get("ports", []) or []:
             env_key = port.get("envKey", "")
@@ -479,13 +483,14 @@ class AppSpecGenerator:
         source_icon = pathlib.Path(source_path) / "icon.png" if source_path else None
         default_logo = pathlib.Path(__file__).resolve().parent.parent / "assets" / "default-logo.png"
         default_license = default_logo.with_name("default-logo.LICENSE.txt")
+        default_source = default_logo.with_name("default-logo.svg")
         target = self.app_dir / "logo.png"
         used_default = False
         if explicit_logo_path and explicit_logo_path.is_file():
             shutil.copy2(str(explicit_logo_path), str(target))
         elif source_icon and source_icon.is_file():
             shutil.copy2(str(source_icon), str(target))
-        elif default_logo.is_file() and default_license.is_file():
+        elif default_logo.is_file() and default_license.is_file() and default_source.is_file():
             shutil.copy2(str(default_logo), str(target))
             used_default = True
         elif not target.exists():
@@ -494,10 +499,16 @@ class AppSpecGenerator:
         delivered_hash = hashlib.sha256(target.read_bytes()).hexdigest()
         if used_default:
             notice = self.app_dir / "ASSET-LICENSES" / "default-logo.txt"
-            _assert_safe_output_targets(self.out_dir, [notice.parent, notice])
+            source = self.app_dir / "assets" / "default-logo.svg"
+            _assert_safe_output_targets(
+                self.out_dir, [notice.parent, notice, source.parent, source]
+            )
             notice.parent.mkdir(parents=True, exist_ok=True)
+            source.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(str(default_license), str(notice))
+            shutil.copy2(str(default_source), str(source))
             notice_hash = hashlib.sha256(notice.read_bytes()).hexdigest()
+            source_hash = hashlib.sha256(source.read_bytes()).hexdigest()
             self.spec["logoEvidence"] = {
                 "source": "bundled:assets/default-logo.svg",
                 "license": "MIT",
@@ -513,7 +524,11 @@ class AppSpecGenerator:
                     item
                     for item in existing_redistribution.get("materials", [])
                     if isinstance(item, dict)
-                    and item.get("path") != "ASSET-LICENSES/default-logo.txt"
+                    and item.get("path")
+                    not in {
+                        "ASSET-LICENSES/default-logo.txt",
+                        "assets/default-logo.svg",
+                    }
                 ]
                 assets = [
                     item
@@ -527,17 +542,27 @@ class AppSpecGenerator:
                 assets = []
             if "ASSET-LICENSES/default-logo.txt" not in required_files:
                 required_files.append("ASSET-LICENSES/default-logo.txt")
+            if "assets/default-logo.svg" not in required_files:
+                required_files.append("assets/default-logo.svg")
             materials.append({
                 "path": "ASSET-LICENSES/default-logo.txt",
                 "sha256": notice_hash,
                 "purpose": "default logo license",
+            })
+            materials.append({
+                "path": "assets/default-logo.svg",
+                "sha256": source_hash,
+                "purpose": "default logo source",
             })
             assets.append({
                 "path": "logo.png",
                 "source": "bundled:assets/default-logo.svg",
                 "license": "MIT",
                 "sha256": delivered_hash,
-                "requiredFiles": ["ASSET-LICENSES/default-logo.txt"],
+                "requiredFiles": [
+                    "ASSET-LICENSES/default-logo.txt",
+                    "assets/default-logo.svg",
+                ],
             })
             self.spec["redistributionEvidence"] = {
                 "status": redistribution_status,

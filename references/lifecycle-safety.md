@@ -165,6 +165,7 @@ Test custom path logic with a normal direct-child path, a nested path, an absolu
 - Make lifecycle scripts independent of the caller's working directory: resolve the version directory from the script path, then either change to it before Compose commands or pass an equivalent absolute project/Compose path. Preserve bind data and persistent named volumes by default; use `down --volumes` only when the ledger proves every affected volume is package-owned, disposable, and approved for deletion.
 - Exercise an application-specific ready path. A running container, healthy status, open TCP port, or generic HTTP `200` alone is not sufficient.
 - Test the exact delivered files in a real 1Panel development/test instance. Verify the file/directory types, ownership and modes on the host and in the container before and after restart and upgrade.
+- Report an observed owner or mode as an observation tied to the invoking UID/GID and umask. Claim a portable guarantee only when the delivered lifecycle script explicitly enforces that owner or mode and the exact-artifact test verifies it. A host observation alone does not prove behavior under another panel user, filesystem, or umask.
 
 ## 8. Keep topology gates terminal
 

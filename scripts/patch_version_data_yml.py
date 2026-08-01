@@ -22,6 +22,14 @@ def patch(path: Path):
         formfields = top_formfields if isinstance(top_formfields, list) else []
     elif not isinstance(formfields, list):
         formfields = []
+    formfields = [
+        item
+        for item in formfields
+        if not (
+            isinstance(item, dict)
+            and str(item.get("envKey", "")).strip() == "CONTAINER_NAME"
+        )
+    ]
     ap["formFields"] = formfields
 
     if not formfields:
