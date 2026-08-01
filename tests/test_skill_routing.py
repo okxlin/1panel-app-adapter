@@ -180,9 +180,78 @@ class SkillRoutingTests(unittest.TestCase):
                 self.assertIn(field, policy)
                 self.assertIn(field, appspec)
 
+    def test_source_policy_requires_an_authoritative_control_inventory(self) -> None:
+        policy = (REPO_ROOT / "references" / "source-policy.md").read_text(encoding="utf-8")
+        flat_policy = " ".join(policy.split())
+        for guard in (
+            "authoritative control inventory",
+            "environment variables",
+            "healthchecks",
+            "capabilities",
+            "security options",
+            "justify every omission or change",
+            "compare the final Compose",
+        ):
+            with self.subTest(guard=guard):
+                self.assertIn(guard, policy)
+
+        self.assertIn(
+            "compare the final Compose control by control with the inventory. Preserve every "
+            "source-backed control and justify every omission or change",
+            flat_policy,
+        )
+        self.assertIn(
+            "Keep official fixed hardening values fixed in Compose; do not drop one merely "
+            "because it does not need an install form field.",
+            flat_policy,
+        )
+        for weakened_rule in (
+            "fixed hardening values without form fields may be omitted",
+            "drop fixed environment values that do not need user input",
+            "only preserve controls exposed through the install form",
+        ):
+            with self.subTest(weakened_rule=weakened_rule):
+                self.assertNotIn(weakened_rule.casefold(), flat_policy.casefold())
+
+    def test_public_url_policy_separates_external_origin_from_internal_listener(self) -> None:
+        policy = (REPO_ROOT / "references" / "source-policy.md").read_text(encoding="utf-8")
+        for guard in (
+            "full public URL",
+            "current upstream variable",
+            "internal listener",
+            "reverse proxy",
+            "TLS termination",
+            "trusted-proxy",
+            "Do not reconstruct",
+        ):
+            with self.subTest(guard=guard):
+                self.assertIn(guard, policy)
+
+    def test_source_policy_delivers_material_license_restrictions_to_users(self) -> None:
+        policy = (REPO_ROOT / "references" / "source-policy.md").read_text(encoding="utf-8")
+        flat_policy = " ".join(policy.split())
+        for guard in (
+            "material use restrictions",
+            "README",
+            "not only `source-evidence.json`",
+        ):
+            with self.subTest(guard=guard):
+                self.assertIn(guard, flat_policy)
+
     def test_completion_gates_front_load_low_model_quality_guards(self) -> None:
         router = self.skill[self.start : self.rule_priority]
+        flat_router = " ".join(router.split())
         for guard in (
+            "authoritative control inventory",
+            "environment variables",
+            "healthchecks",
+            "capabilities",
+            "security options",
+            "justify every omission or change",
+            "full public URL",
+            "internal listener",
+            "current upstream variable",
+            "material use restrictions",
             "minimal install form",
             "Never `source` or `eval`",
             "every Compose service",
@@ -199,6 +268,24 @@ class SkillRoutingTests(unittest.TestCase):
         ):
             with self.subTest(guard=guard):
                 self.assertIn(guard, router)
+
+        self.assertIn(
+            "Compare the final Compose against that inventory, preserve every source-backed "
+            "control, and justify every omission or change",
+            flat_router,
+        )
+        self.assertIn(
+            "A fixed upstream hardening value is not an optional install-form setting; keep it "
+            "fixed unless evidence supports changing it.",
+            flat_router,
+        )
+        for weakened_rule in (
+            "fixed hardening values without form fields may be omitted",
+            "drop fixed environment values that do not need user input",
+            "only preserve controls exposed through the install form",
+        ):
+            with self.subTest(weakened_rule=weakened_rule):
+                self.assertNotIn(weakened_rule.casefold(), flat_router.casefold())
 
 
 if __name__ == "__main__":
