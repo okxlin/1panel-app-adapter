@@ -207,6 +207,40 @@ class RuntimeScriptGenerationTest(unittest.TestCase):
             self.assertIn("unsafe APP_DATA_DIR path", proc.stderr)
             self.assertFalse((outside / "nested").exists())
 
+    def test_rendered_init_rejects_inside_root_symlink(self):
+        version_data = {
+            "additionalProperties": {
+                "formFields": [{"envKey": "APP_DATA_DIR", "default": "./data"}]
+            }
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp) / "app" / "latest"
+            scripts_dir = root / "scripts"
+            real_data = root / "real-data"
+            scripts_dir.mkdir(parents=True)
+            real_data.mkdir()
+            (root / "data").symlink_to(real_data, target_is_directory=True)
+            init_script = scripts_dir / "init.sh"
+            init_script.write_text(
+                runtime_utils.render_init_script_content(version_data),
+                encoding="utf-8",
+            )
+            init_script.chmod(0o755)
+            (root / ".env").write_text("APP_DATA_DIR=./data/nested\n", encoding="utf-8")
+
+            proc = subprocess.run(
+                ["bash", str(init_script)],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                cwd=tmp,
+            )
+
+            self.assertNotEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+            self.assertIn("unsafe APP_DATA_DIR path", proc.stderr)
+            self.assertFalse((real_data / "nested").exists())
+
     def test_rendered_default_data_directory_rejects_symlink(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = pathlib.Path(tmp)
