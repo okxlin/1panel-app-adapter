@@ -62,7 +62,7 @@ For Baota imports:
 - Public format source: `https://github.com/aaPanel/apphub`
 - Runtime behavior source: `https://github.com/aaPanel/aaPanel`
 - Imported artifacts should include `source-evidence.json.importSource` with `type: "baota"` and the selected source version.
-- `home` and `help` fields from `app.json` are classified as upstream evidence only when they match a recognizable official project or documentation source.
+- Preserve `home` and `help` from `app.json` only as unverified declared hints. A recognizable domain, HTTPS URL, or GitHub repository shape is not identity evidence. Promote either value into official source evidence only after independently matching project ownership and the packaged deployment contract.
 - When `home` is empty but the input app lives in a git checkout, `repository` may fall back to that apphub repository URL as the app definition source. Keep `evidenceStatus` as `third_party_only` unless the target application's own official source is identified.
 - If only Baota/aaPanel metadata is available, keep `evidenceStatus` as `third_party_only` and require manual review before strict-store delivery.
 

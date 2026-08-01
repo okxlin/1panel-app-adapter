@@ -11,8 +11,8 @@ This document defines the complete mapping rules from Baota Docker Store app for
 | `appdesc` | `description` | Short description |
 | `apptype` | `type` | See type mapping table below |
 | `appTypeCN` | Tag candidate | Used to suggest a tag |
-| `home` | `website` / `github` / `repository` | URL classification |
-| `help` | `document` / `dockerDocs` | URL classification |
+| `home` | Declared URL hint | Preserve as `importSource.declaredHome`; independently verify before using as official evidence |
+| `help` | Declared URL hint | Preserve as `importSource.declaredHelp`; independently verify before using as official evidence |
 | `appversion` | Version candidates | Expanded per version rules |
 | `icon.png` | `logo.png` | Copied, optionally normalized |
 
@@ -196,11 +196,10 @@ The following Compose fields are preserved unchanged during transformation:
 - `working_dir`
 - `logging`
 
-## Evidence Level Mapping
+## Evidence and Delivery Status
 
-| Condition | Evidence Level |
-|-----------|---------------|
-| Both `home` and `help` resolve to known official sources | `official_complete` |
-| One of `home` or `help` resolves to known official source | `official_partial` |
-| Neither resolves to recognized official pattern | `third_party_only` |
-| Multi-service, complex config, or scripts requiring manual assessment | `manual_review_required` |
+Baota metadata starts at `evidenceStatus: third_party_only`. `home` and `help` are unverified declarations even when they use HTTPS or a GitHub hostname; URL shape cannot establish project ownership or prove that the packaged image and Compose are official.
+
+Upgrade a reviewed AppSpec to `evidenceStatus: official_complete` only after independently verifying the target application's official repository, Docker documentation, and version-relevant Compose source. Use `architectureEvidence: registry_manifest_verified` only after checking every packaged image/tag and claimed architecture against registry manifests.
+
+The delivery gate remains `manual_review_required` while either evidence field is unverified or any Compose transformation reason is unresolved. Follow `baota-migration-workflow.md`; conversion and basic validation never imply delivery readiness.
