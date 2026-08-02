@@ -172,6 +172,15 @@ def _compose_bound_form_keys(compose_payload: Any, form_keys: set[str]) -> set[s
     return bound
 
 
+def _compose_variable_names(compose_text: str) -> set[str]:
+    script_dir = str(Path(__file__).resolve().parent)
+    if script_dir not in sys.path:
+        sys.path.insert(0, script_dir)
+    from compose_env_vars import extract_compose_variable_names
+
+    return extract_compose_variable_names(compose_text)
+
+
 def _extract_shell_functions(text: str, name: str) -> list[str]:
     return re.findall(
         rf"(?ms)^{re.escape(name)}\(\) \{{\n.*?^\}}\n",
@@ -259,6 +268,14 @@ def _logical_shell_lines(text: str):
         buffer = ""
     if buffer:
         yield start_line, buffer
+
+
+def _executable_shell_text(text: str) -> str:
+    return "\n".join(
+        line
+        for _, line in _logical_shell_lines(text)
+        if line.strip() and not line.lstrip().startswith("#")
+    )
 
 
 def _opaque_tainted_variables(
@@ -438,6 +455,37 @@ def analyze(
     findings: list[Finding] = []
     compose_text = compose_path.read_text(encoding="utf-8", errors="ignore")
     compose_payload = yaml.safe_load(compose_text) or {}
+    compose_keys = _compose_variable_names(compose_text)
+    editable_keys = {
+        str(field.get("envKey"))
+        for field in fields
+        if field.get("envKey") and field.get("edit") is True
+    }
+    if scripts_dir.is_dir():
+        init_path = scripts_dir / "init.sh"
+        upgrade_path = scripts_dir / "upgrade.sh"
+        init_text = (
+            init_path.read_text(encoding="utf-8", errors="ignore")
+            if init_path.is_file()
+            else ""
+        )
+        upgrade_text = (
+            upgrade_path.read_text(encoding="utf-8", errors="ignore")
+            if upgrade_path.is_file()
+            else ""
+        )
+        init_text = _executable_shell_text(init_text)
+        upgrade_text = _executable_shell_text(upgrade_text)
+        for env_key in sorted(editable_keys - compose_keys):
+            if _references_name(init_text, env_key) and not _references_name(
+                upgrade_text, env_key
+            ):
+                findings.append(
+                    Finding(
+                        "A",
+                        f"editable field {env_key} has no post-install consumer; set edit:false or add a reviewed upgrade reconciliation/migration",
+                    )
+                )
     path_keys.update(_compose_bound_form_keys(compose_payload, form_keys))
     for line_number, raw_line in enumerate(compose_text.splitlines(), start=1):
         line = raw_line.strip()

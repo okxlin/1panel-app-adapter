@@ -214,6 +214,192 @@ DATABASE_URL="$(build_url "$APP_DB_PASSWORD")"
 
         self.assertTrue(any(finding.level == "B" for finding in findings), findings)
 
+    def test_editable_init_only_field_requires_post_install_consumer(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            version_data = root / "data.yml"
+            compose = root / "docker-compose.yml"
+            scripts = root / "scripts"
+            scripts.mkdir()
+            version_data.write_text(
+                textwrap.dedent("""\
+                    additionalProperties:
+                      formFields:
+                        - envKey: APP_SERVER_NAME
+                          edit: true
+                          required: true
+                          type: text
+                    """),
+                encoding="utf-8",
+            )
+            compose.write_text(
+                "services:\n  app:\n    image: example/app:latest\n",
+                encoding="utf-8",
+            )
+            (scripts / "init.sh").write_text(
+                'printf \'%s\\n\' "$APP_SERVER_NAME" > config.yaml\n',
+                encoding="utf-8",
+            )
+
+            findings = analyzer.analyze(version_data, compose, scripts)
+
+        self.assertTrue(
+            any(
+                finding.level == "A"
+                and "editable field APP_SERVER_NAME has no post-install consumer"
+                in finding.message
+                for finding in findings
+            ),
+            findings,
+        )
+
+    def test_non_editable_init_only_field_is_allowed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            version_data = root / "data.yml"
+            compose = root / "docker-compose.yml"
+            scripts = root / "scripts"
+            scripts.mkdir()
+            version_data.write_text(
+                textwrap.dedent("""\
+                    additionalProperties:
+                      formFields:
+                        - envKey: APP_SERVER_NAME
+                          edit: false
+                          required: true
+                          type: text
+                    """),
+                encoding="utf-8",
+            )
+            compose.write_text(
+                "services:\n  app:\n    image: example/app:latest\n",
+                encoding="utf-8",
+            )
+            (scripts / "init.sh").write_text(
+                'printf \'%s\\n\' "$APP_SERVER_NAME" > config.yaml\n',
+                encoding="utf-8",
+            )
+
+            findings = analyzer.analyze(version_data, compose, scripts)
+
+        self.assertFalse(
+            any("no post-install consumer" in finding.message for finding in findings),
+            findings,
+        )
+
+    def test_editable_init_field_with_upgrade_consumer_is_allowed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            version_data = root / "data.yml"
+            compose = root / "docker-compose.yml"
+            scripts = root / "scripts"
+            scripts.mkdir()
+            version_data.write_text(
+                textwrap.dedent("""\
+                    additionalProperties:
+                      formFields:
+                        - envKey: APP_SERVER_NAME
+                          edit: true
+                          required: true
+                          type: text
+                    """),
+                encoding="utf-8",
+            )
+            compose.write_text(
+                "services:\n  app:\n    image: example/app:latest\n",
+                encoding="utf-8",
+            )
+            for name in ("init.sh", "upgrade.sh"):
+                (scripts / name).write_text(
+                    'printf \'%s\\n\' "$APP_SERVER_NAME" > config.yaml\n',
+                    encoding="utf-8",
+                )
+
+            findings = analyzer.analyze(version_data, compose, scripts)
+
+        self.assertFalse(
+            any("no post-install consumer" in finding.message for finding in findings),
+            findings,
+        )
+
+    def test_upgrade_comment_does_not_count_as_post_install_consumer(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            version_data = root / "data.yml"
+            compose = root / "docker-compose.yml"
+            scripts = root / "scripts"
+            scripts.mkdir()
+            version_data.write_text(
+                textwrap.dedent("""\
+                    additionalProperties:
+                      formFields:
+                        - envKey: APP_SERVER_NAME
+                          edit: true
+                          required: true
+                          type: text
+                    """),
+                encoding="utf-8",
+            )
+            compose.write_text(
+                "services:\n  app:\n    image: example/app:latest\n",
+                encoding="utf-8",
+            )
+            (scripts / "init.sh").write_text(
+                'printf \'%s\\n\' "$APP_SERVER_NAME" > config.yaml\n',
+                encoding="utf-8",
+            )
+            (scripts / "upgrade.sh").write_text(
+                "# APP_SERVER_NAME is intentionally not migrated\n",
+                encoding="utf-8",
+            )
+
+            findings = analyzer.analyze(version_data, compose, scripts)
+
+        self.assertTrue(
+            any("no post-install consumer" in finding.message for finding in findings),
+            findings,
+        )
+
+    def test_editable_compose_field_has_steady_state_consumer(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            version_data = root / "data.yml"
+            compose = root / "docker-compose.yml"
+            scripts = root / "scripts"
+            scripts.mkdir()
+            version_data.write_text(
+                textwrap.dedent("""\
+                    additionalProperties:
+                      formFields:
+                        - envKey: APP_SERVER_NAME
+                          edit: true
+                          required: true
+                          type: text
+                    """),
+                encoding="utf-8",
+            )
+            compose.write_text(
+                textwrap.dedent("""\
+                    services:
+                      app:
+                        image: example/app:latest
+                        environment:
+                          SERVER_NAME: ${APP_SERVER_NAME}
+                    """),
+                encoding="utf-8",
+            )
+            (scripts / "init.sh").write_text(
+                'printf \'%s\\n\' "$APP_SERVER_NAME" > config.yaml\n',
+                encoding="utf-8",
+            )
+
+            findings = analyzer.analyze(version_data, compose, scripts)
+
+        self.assertFalse(
+            any("no post-install consumer" in finding.message for finding in findings),
+            findings,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

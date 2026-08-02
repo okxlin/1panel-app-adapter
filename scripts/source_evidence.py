@@ -29,6 +29,7 @@ LOGO_SOURCE = re.compile(r"(?:https://[^\s]+|bundled:[^\s]+)")
 ASSET_SOURCE = re.compile(r"(?:https://[^\s]+|bundled:[^\s]+|unverified:[^\s]+)")
 SHA256 = re.compile(r"[0-9a-fA-F]{64}")
 REDISTRIBUTION_STATUSES = {"verified", "unresolved"}
+WRITABLE_BIND_OWNERS = {"host-init", "image-managed", "root-runtime"}
 PLACEHOLDER_LICENSES = {
     "n/a",
     "na",
@@ -82,6 +83,77 @@ def _validate_image_fields(
         errors.append(f"{field}.digest is required")
     elif digest is None and platforms is None:
         errors.append(f"{field} must include digest or platforms")
+
+
+def _validate_runtime_identity(
+    value: Any,
+    field: str,
+    errors: list[str],
+) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict) or not value:
+        errors.append(f"{field} must be a non-empty object when present")
+        return None
+    for key in ("startupUid", "startupGid", "steadyStateUid", "steadyStateGid"):
+        identity = value.get(key)
+        if isinstance(identity, bool) or not isinstance(identity, int) or identity < 0:
+            errors.append(f"{field}.{key} must be a non-negative integer")
+    source = value.get("source")
+    if not isinstance(source, str) or HTTPS_URL.fullmatch(source.strip()) is None:
+        errors.append(f"{field}.source must be an https URL")
+    owner = value.get("writableBindOwner")
+    if owner not in WRITABLE_BIND_OWNERS:
+        errors.append(
+            f"{field}.writableBindOwner must be host-init, image-managed, or root-runtime"
+        )
+    steady_uid = value.get("steadyStateUid")
+    if owner == "root-runtime" and steady_uid != 0:
+        errors.append(f"{field}.root-runtime requires steadyStateUid 0")
+    if owner == "host-init" and steady_uid == 0:
+        errors.append(f"{field}.host-init requires a non-root steadyStateUid")
+    if owner == "image-managed":
+        owner_evidence = value.get("ownerEvidence")
+        if (
+            not isinstance(owner_evidence, str)
+            or HTTPS_URL.fullmatch(owner_evidence.strip()) is None
+        ):
+            errors.append(f"{field}.ownerEvidence must be an https URL for image-managed binds")
+    return value
+
+
+def _validate_host_owner_plans(
+    sources: list[str],
+    runtime: dict[str, Any],
+    init_script_text: str,
+    errors: list[str],
+) -> None:
+    uid = runtime.get("steadyStateUid")
+    gid = runtime.get("steadyStateGid")
+    if not isinstance(uid, int) or not isinstance(gid, int):
+        return
+    for source in sources:
+        fixed = re.fullmatch(r"\./[A-Za-z0-9._-]+", source)
+        form = re.fullmatch(
+            r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?:(?::-|-)[^}]*)?\}", source
+        )
+        if fixed is not None:
+            expected = re.compile(
+                rf'(?m)^[ \t]*ensure_fixed_owned_dir\s+"{re.escape(source)}"\s+"{uid}"\s+"{gid}"\s+"[0-7]{{3,4}}"[ \t]*$'
+            )
+        elif form is not None:
+            expected = re.compile(
+                rf'(?m)^[ \t]*ensure_owned_dir\s+"{re.escape(form.group(1))}"\s+"[^"]+"\s+"{uid}"\s+"{gid}"\s+"[0-7]{{3,4}}"[ \t]*$'
+            )
+        else:
+            errors.append(
+                f"writable bind {source} cannot be matched to a generated host owner plan"
+            )
+            continue
+        if expected.search(init_script_text) is None:
+            errors.append(
+                f"writable bind {source} lacks generated host owner plan for {uid}:{gid}"
+            )
 
 
 def _read_env_file(path: Path) -> dict[str, str]:
@@ -201,6 +273,68 @@ def load_compose_images(compose_path: Path, env_path: Path) -> dict[str, str]:
             raise ValueError(f"Compose service image must be a string: {service}")
         images[str(service)] = _resolve_compose_image(reference, env)
     return images
+
+
+def _split_short_volume(value: str) -> list[str]:
+    parts: list[str] = []
+    start = 0
+    depth = 0
+    cursor = 0
+    while cursor < len(value):
+        if value.startswith("${", cursor):
+            depth += 1
+            cursor += 2
+            continue
+        if value[cursor] == "}" and depth:
+            depth -= 1
+        elif value[cursor] == ":" and depth == 0:
+            parts.append(value[start:cursor])
+            start = cursor + 1
+        cursor += 1
+    parts.append(value[start:])
+    return parts
+
+
+def load_compose_writable_binds(
+    compose_path: Path,
+    env_path: Path | None = None,
+) -> dict[str, list[str]]:
+    payload = yaml.safe_load(compose_path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict) or not isinstance(payload.get("services"), dict):
+        raise ValueError("Compose must contain a services object")
+    env = _read_env_file(env_path) if env_path is not None else None
+    result: dict[str, list[str]] = {}
+    for service, config in payload["services"].items():
+        if not isinstance(config, dict) or not isinstance(config.get("volumes"), list):
+            continue
+        sources: list[str] = []
+        for volume in config["volumes"]:
+            if isinstance(volume, str):
+                parts = _split_short_volume(volume)
+                if len(parts) < 2:
+                    continue
+                source = parts[0]
+                options = parts[2].split(",") if len(parts) > 2 else []
+                resolved_source = (
+                    _resolve_compose_image(source, env)
+                    if env is not None
+                    else source
+                )
+                is_bind = resolved_source.startswith((".", "/")) or (
+                    env is None and source.startswith("$")
+                )
+                read_only = "ro" in options
+            elif isinstance(volume, dict):
+                source = volume.get("source")
+                is_bind = volume.get("type") == "bind"
+                read_only = volume.get("read_only") is True
+            else:
+                continue
+            if isinstance(source, str) and source and is_bind and not read_only:
+                sources.append(source)
+        if sources:
+            result[str(service)] = sources
+    return result
 
 
 def _is_safe_package_path(value: Any) -> bool:
@@ -413,6 +547,8 @@ def validate_source_evidence(
     require_delivery: bool = False,
     compose_images: dict[str, str] | None = None,
     compose_version: str | None = None,
+    compose_writable_binds: dict[str, list[str]] | None = None,
+    init_script_text: str = "",
 ) -> list[str]:
     errors: list[str] = []
     if not isinstance(payload, dict):
@@ -444,6 +580,11 @@ def validate_source_evidence(
     image_evidence = _optional_object(payload, "imageEvidence", errors)
     if image_evidence is not None:
         _validate_image_fields(image_evidence, "imageEvidence", errors)
+        _validate_runtime_identity(
+            image_evidence.get("runtimeIdentity"),
+            "imageEvidence.runtimeIdentity",
+            errors,
+        )
 
     image_entries = payload.get("images")
     images_by_version_service: dict[tuple[str, str], dict[str, Any]] = {}
@@ -489,10 +630,17 @@ def validate_source_evidence(
             ):
                 errors.append(f"{field}.reference must be one non-empty image reference")
             _validate_image_fields(image, field, errors, require_digest=True)
+            _validate_runtime_identity(
+                image.get("runtimeIdentity"),
+                f"{field}.runtimeIdentity",
+                errors,
+            )
 
     if require_delivery and compose_images is not None:
+        selected_evidence: dict[str, dict[str, Any]] = {}
         if image_entries is None and len(compose_images) == 1 and image_evidence is not None:
             service, reference = next(iter(compose_images.items()))
+            selected_evidence[service] = image_evidence
             pinned = PINNED_IMAGE_REFERENCE.fullmatch(reference)
             digest = image_evidence.get("digest")
             if not isinstance(digest, str) or IMAGE_DIGEST.fullmatch(digest.strip()) is None:
@@ -511,6 +659,7 @@ def validate_source_evidence(
                     for (version, service), image in images_by_version_service.items()
                     if version == compose_version
                 }
+                selected_evidence.update(selected_images)
             for service, reference in compose_images.items():
                 image = selected_images.get(service)
                 if image is None:
@@ -533,6 +682,33 @@ def validate_source_evidence(
                     )
             for service in sorted(selected_images.keys() - compose_images.keys()):
                 errors.append(f"images evidence service is absent from Compose: {service}")
+
+        for service, sources in (compose_writable_binds or {}).items():
+            image = selected_evidence.get(service)
+            if image is None:
+                continue
+            runtime = image.get("runtimeIdentity")
+            image_field = (
+                "imageEvidence"
+                if image is image_evidence
+                else next(
+                    (
+                        f"images[{index}]"
+                        for index, candidate in enumerate(image_entries or [])
+                        if candidate is image
+                    ),
+                    f"images[{service}]",
+                )
+            )
+            if not isinstance(runtime, dict):
+                errors.append(
+                    f"{image_field}.runtimeIdentity is required for writable binds"
+                )
+                continue
+            if runtime.get("writableBindOwner") == "host-init":
+                _validate_host_owner_plans(
+                    sources, runtime, init_script_text, errors
+                )
 
     license_evidence = _optional_object(payload, "licenseEvidence", errors)
     if license_evidence is not None:
@@ -754,6 +930,8 @@ def main() -> int:
         return 1
 
     compose_images = None
+    compose_writable_binds = None
+    init_script_text = ""
     if args.compose or args.env_file:
         if not args.compose or not args.env_file:
             print("[A][FAIL] source-evidence.json --compose and --env-file must be used together")
@@ -763,9 +941,23 @@ def main() -> int:
                 Path(args.compose),
                 Path(args.env_file),
             )
+            compose_writable_binds = load_compose_writable_binds(
+                Path(args.compose),
+                Path(args.env_file),
+            )
         except (OSError, ValueError, yaml.YAMLError) as exc:
             print(f"[A][FAIL] source-evidence.json cannot inspect Compose images: {exc}")
             return 1
+
+    if args.artifact_root and args.version_name:
+        init_script = (
+            Path(args.artifact_root)
+            / args.version_name
+            / "scripts"
+            / "init.sh"
+        )
+        if init_script.is_file() and not init_script.is_symlink():
+            init_script_text = init_script.read_text(encoding="utf-8", errors="ignore")
 
     errors = validate_source_evidence(
         payload,
@@ -773,6 +965,8 @@ def main() -> int:
         require_delivery=args.require_delivery,
         compose_images=compose_images,
         compose_version=args.version_name,
+        compose_writable_binds=compose_writable_binds,
+        init_script_text=init_script_text,
     )
     for error in errors:
         print(f"[A][FAIL] source-evidence.json {error}")

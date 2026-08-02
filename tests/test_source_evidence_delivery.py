@@ -11,7 +11,11 @@ SCRIPT_DIR = pathlib.Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPT_DIR))
 
 from baota_import_lib import evaluate_baota_delivery_readiness
-from source_evidence import load_compose_images, validate_source_evidence
+from source_evidence import (
+    load_compose_images,
+    load_compose_writable_binds,
+    validate_source_evidence,
+)
 
 
 class SourceEvidenceDeliveryTests(unittest.TestCase):
@@ -121,6 +125,58 @@ class SourceEvidenceDeliveryTests(unittest.TestCase):
 
         self.assertEqual(images, {"app": "example/app:2.0.0"})
 
+    def test_compose_writable_bind_discovery_excludes_named_and_read_only_mounts(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            compose = pathlib.Path(tmp) / "docker-compose.yml"
+            compose.write_text(
+                "services:\n"
+                "  app:\n"
+                "    image: example/app:latest\n"
+                "    volumes:\n"
+                "      - ./data:/data\n"
+                "      - ./config:/config:ro\n"
+                "      - app-cache:/cache\n"
+                "      - type: bind\n"
+                "        source: ./uploads\n"
+                "        target: /uploads\n"
+                "      - type: bind\n"
+                "        source: ./certs\n"
+                "        target: /certs\n"
+                "        read_only: true\n"
+                "volumes:\n"
+                "  app-cache: {}\n",
+                encoding="utf-8",
+            )
+
+            binds = load_compose_writable_binds(compose)
+
+        self.assertEqual(binds, {"app": ["./data", "./uploads"]})
+
+    def test_compose_writable_bind_discovery_resolves_variable_named_volume(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            compose = root / "docker-compose.yml"
+            env = root / ".env.sample"
+            compose.write_text(
+                "services:\n"
+                "  app:\n"
+                "    image: example/app:latest\n"
+                "    volumes:\n"
+                "      - ${VOLUME_NAME}:/cache\n"
+                "      - ${DATA_PATH}:/data\n",
+                encoding="utf-8",
+            )
+            env.write_text(
+                "VOLUME_NAME=app-cache\nDATA_PATH=./data\n",
+                encoding="utf-8",
+            )
+
+            binds = load_compose_writable_binds(compose, env)
+
+        self.assertEqual(binds, {"app": ["${DATA_PATH}"]})
+
     def test_images_evidence_service_names_are_unique(self) -> None:
         digest = "sha256:" + "a" * 64
         payload = {
@@ -216,6 +272,226 @@ class SourceEvidenceDeliveryTests(unittest.TestCase):
         )
 
         self.assertEqual(errors, [])
+
+    def test_writable_bind_requires_runtime_identity_evidence(self) -> None:
+        digest = "sha256:" + "a" * 64
+        payload = self._minimal_delivery_payload()
+        payload["images"] = [{
+            "version": "latest",
+            "service": "app",
+            "reference": f"example/app@{digest}",
+            "digest": digest,
+        }]
+
+        errors = validate_source_evidence(
+            payload,
+            require_urls=False,
+            require_delivery=True,
+            compose_images={"app": f"example/app@{digest}"},
+            compose_version="latest",
+            compose_writable_binds={"app": ["./data"]},
+            init_script_text='mkdir -p -- "$ROOT_DIR/data"\n',
+        )
+
+        self.assertIn("images[0].runtimeIdentity is required for writable binds", errors)
+
+    def test_non_root_host_init_rejects_missing_fixed_bind_owner_plan(self) -> None:
+        digest = "sha256:" + "a" * 64
+        payload = self._minimal_delivery_payload()
+        payload["images"] = [{
+            "version": "latest",
+            "service": "app",
+            "reference": f"example/app@{digest}",
+            "digest": digest,
+            "runtimeIdentity": {
+                "startupUid": 1000,
+                "startupGid": 1000,
+                "steadyStateUid": 1000,
+                "steadyStateGid": 1000,
+                "source": "https://example.com/Dockerfile",
+                "writableBindOwner": "host-init",
+            },
+        }]
+
+        errors = validate_source_evidence(
+            payload,
+            require_urls=False,
+            require_delivery=True,
+            compose_images={"app": f"example/app@{digest}"},
+            compose_version="latest",
+            compose_writable_binds={"app": ["./data"]},
+            init_script_text='mkdir -p -- "$ROOT_DIR/data"\n',
+        )
+
+        self.assertIn(
+            "writable bind ./data lacks generated host owner plan for 1000:1000",
+            errors,
+        )
+
+    def test_non_root_host_init_rejects_commented_or_echoed_owner_plan(self) -> None:
+        digest = "sha256:" + "a" * 64
+        payload = self._minimal_delivery_payload()
+        payload["images"] = [{
+            "version": "latest",
+            "service": "app",
+            "reference": f"example/app@{digest}",
+            "digest": digest,
+            "runtimeIdentity": {
+                "startupUid": 1000,
+                "startupGid": 1000,
+                "steadyStateUid": 1000,
+                "steadyStateGid": 1000,
+                "source": "https://example.com/Dockerfile",
+                "writableBindOwner": "host-init",
+            },
+        }]
+        fake_plan = (
+            '# ensure_fixed_owned_dir "./data" "1000" "1000" "0750"\n'
+            'echo \'ensure_fixed_owned_dir "./data" "1000" "1000" "0750"\'\n'
+        )
+
+        errors = validate_source_evidence(
+            payload,
+            require_urls=False,
+            require_delivery=True,
+            compose_images={"app": f"example/app@{digest}"},
+            compose_version="latest",
+            compose_writable_binds={"app": ["./data"]},
+            init_script_text=fake_plan,
+        )
+
+        self.assertIn(
+            "writable bind ./data lacks generated host owner plan for 1000:1000",
+            errors,
+        )
+
+    def test_non_root_host_init_accepts_generated_fixed_bind_owner_plan(self) -> None:
+        digest = "sha256:" + "a" * 64
+        payload = self._minimal_delivery_payload()
+        payload["images"] = [{
+            "version": "latest",
+            "service": "app",
+            "reference": f"example/app@{digest}",
+            "digest": digest,
+            "runtimeIdentity": {
+                "startupUid": 1000,
+                "startupGid": 1000,
+                "steadyStateUid": 1000,
+                "steadyStateGid": 1000,
+                "source": "https://example.com/Dockerfile",
+                "writableBindOwner": "host-init",
+            },
+        }]
+
+        errors = validate_source_evidence(
+            payload,
+            require_urls=False,
+            require_delivery=True,
+            compose_images={"app": f"example/app@{digest}"},
+            compose_version="latest",
+            compose_writable_binds={"app": ["./data"]},
+            init_script_text='ensure_fixed_owned_dir "./data" "1000" "1000" "0750"\n',
+        )
+
+        self.assertEqual(errors, [])
+
+    def test_root_runtime_writable_bind_does_not_require_owner_helper(self) -> None:
+        digest = "sha256:" + "a" * 64
+        payload = self._minimal_delivery_payload()
+        payload["images"] = [{
+            "version": "latest",
+            "service": "app",
+            "reference": f"example/app@{digest}",
+            "digest": digest,
+            "runtimeIdentity": {
+                "startupUid": 0,
+                "startupGid": 0,
+                "steadyStateUid": 0,
+                "steadyStateGid": 0,
+                "source": "https://example.com/Dockerfile",
+                "writableBindOwner": "root-runtime",
+            },
+        }]
+
+        errors = validate_source_evidence(
+            payload,
+            require_urls=False,
+            require_delivery=True,
+            compose_images={"app": f"example/app@{digest}"},
+            compose_version="latest",
+            compose_writable_binds={"app": ["./data"]},
+            init_script_text='mkdir -p -- "$ROOT_DIR/data"\n',
+        )
+
+        self.assertEqual(errors, [])
+
+    def test_non_root_host_init_accepts_generated_form_bind_owner_plan(self) -> None:
+        digest = "sha256:" + "a" * 64
+        payload = self._minimal_delivery_payload()
+        payload["images"] = [{
+            "version": "latest",
+            "service": "app",
+            "reference": f"example/app@{digest}",
+            "digest": digest,
+            "runtimeIdentity": {
+                "startupUid": 1000,
+                "startupGid": 1000,
+                "steadyStateUid": 1000,
+                "steadyStateGid": 1000,
+                "source": "https://example.com/Dockerfile",
+                "writableBindOwner": "host-init",
+            },
+        }]
+
+        errors = validate_source_evidence(
+            payload,
+            require_urls=False,
+            require_delivery=True,
+            compose_images={"app": f"example/app@{digest}"},
+            compose_version="latest",
+            compose_writable_binds={"app": ["${APP_DATA_DIR:-./data}"]},
+            init_script_text=(
+                'ensure_owned_dir "APP_DATA_DIR" "./data" "1000" "1000" "0750"\n'
+            ),
+        )
+
+        self.assertEqual(errors, [])
+
+    def test_image_managed_writable_bind_requires_and_accepts_owner_evidence(self) -> None:
+        digest = "sha256:" + "a" * 64
+        payload = self._minimal_delivery_payload()
+        runtime = {
+            "startupUid": 0,
+            "startupGid": 0,
+            "steadyStateUid": 1000,
+            "steadyStateGid": 1000,
+            "source": "https://example.com/entrypoint",
+            "writableBindOwner": "image-managed",
+        }
+        payload["images"] = [{
+            "version": "latest",
+            "service": "app",
+            "reference": f"example/app@{digest}",
+            "digest": digest,
+            "runtimeIdentity": runtime,
+        }]
+        kwargs = {
+            "require_urls": False,
+            "require_delivery": True,
+            "compose_images": {"app": f"example/app@{digest}"},
+            "compose_version": "latest",
+            "compose_writable_binds": {"app": ["./data"]},
+        }
+
+        missing_errors = validate_source_evidence(payload, **kwargs)
+        runtime["ownerEvidence"] = "https://example.com/entrypoint#ownership"
+        accepted_errors = validate_source_evidence(payload, **kwargs)
+
+        self.assertIn(
+            "images[0].runtimeIdentity.ownerEvidence must be an https URL for image-managed binds",
+            missing_errors,
+        )
+        self.assertEqual(accepted_errors, [])
 
     def test_verified_bundled_source_must_be_a_hash_bound_required_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

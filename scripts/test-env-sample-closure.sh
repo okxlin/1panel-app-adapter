@@ -18,8 +18,9 @@ if [[ -z "$PYTHON_BIN" ]]; then
   exit 2
 fi
 
-# Find latest version directory
-VER_DIR=$(find "$APP_DIR" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)
+# Find the latest actual version directory, excluding sibling assets/license folders.
+VER_DIR=$(find "$APP_DIR" -mindepth 1 -maxdepth 1 -type d \
+  -exec test -f '{}/docker-compose.yml' \; -print | sort -V | tail -1)
 if [[ -z "$VER_DIR" ]]; then
   echo "FAIL: no version directory found in $APP_DIR"
   exit 1

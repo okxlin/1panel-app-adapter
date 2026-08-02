@@ -4,6 +4,7 @@ import unittest
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 REFERENCE = REPO_ROOT / "references" / "lifecycle-safety.md"
+SOURCE_POLICY = REPO_ROOT / "references" / "source-policy.md"
 SKILL = REPO_ROOT / "SKILL.md"
 
 
@@ -11,6 +12,7 @@ class LifecycleSafetyReferenceTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.text = REFERENCE.read_text(encoding="utf-8")
+        cls.source_policy_text = SOURCE_POLICY.read_text(encoding="utf-8")
         cls.skill_text = SKILL.read_text(encoding="utf-8")
         cls.flat_text = " ".join(cls.text.split())
         cls.flat_skill_text = " ".join(cls.skill_text.split())
@@ -166,6 +168,20 @@ class LifecycleSafetyReferenceTests(unittest.TestCase):
         self.assertIn("steady-state identity", self.text)
         self.assertIn("entrypoint", self.text)
 
+    def test_writable_bind_identity_evidence_has_machine_checked_owner_policy(self) -> None:
+        for guard in (
+            "runtimeIdentity",
+            "startupUid",
+            "steadyStateUid",
+            "writableBindOwner",
+            "host-init",
+            "image-managed",
+            "root-runtime",
+        ):
+            with self.subTest(guard=guard):
+                self.assertIn(guard, self.skill_text)
+                self.assertIn(guard, self.source_policy_text)
+
     def test_observed_owner_and_mode_are_not_reported_as_portable_guarantees(self) -> None:
         for text in (self.text, self.skill_text):
             with self.subTest(source=text[:32]):
@@ -251,6 +267,18 @@ class LifecycleSafetyReferenceTests(unittest.TestCase):
                     "compose render does not prove that the panel default passes application startup validation",
                     text.casefold(),
                 )
+
+    def test_form_editability_tracks_the_post_install_consumer(self) -> None:
+        for guard in (
+            "steady-state consumer",
+            "generated once",
+            "identity-bearing",
+            "`edit: false`",
+            "idempotent reconciliation or migration",
+        ):
+            with self.subTest(guard=guard):
+                self.assertIn(guard.casefold(), self.flat_startup_text.casefold())
+                self.assertIn(guard.casefold(), self.flat_skill_text.casefold())
 
     def test_custom_path_scripts_preserve_generated_confinement(self) -> None:
         self.assertIn("Do not replace the generated confinement", self.text)
