@@ -31,7 +31,8 @@ Provide a stable `spec -> artifacts` path with explicit source evidence and repr
 - `sourceEvidence.imageEvidence` legacy single-service object with optional immutable `digest` and verified `platforms`
 - `sourceEvidence.images` array with one object per Compose image: exact version-directory
   `version`, `service`, resolved `reference`, matching registry `digest`, and optional verified
-  `platforms`
+  `platforms`; a service with writable binds also needs `runtimeIdentity` with numeric startup and
+  steady-state UID/GID, HTTPS source, and `writableBindOwner` policy as defined in source-policy.md
 - `sourceEvidence.licenseEvidence` object with optional `spdx` and `url`
 - `sourceEvidence.logoEvidence` object with required `source` when present and optional `license` / `sha256`
 - `sourceEvidence.redistributionEvidence` object with `status`, package-relative `requiredFiles`,

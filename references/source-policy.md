@@ -87,7 +87,15 @@ only when their values were verified from official source, registry, license, or
     "service": "app",
     "reference": "example/app@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-    "platforms": ["linux/amd64", "linux/arm64"]
+    "platforms": ["linux/amd64", "linux/arm64"],
+    "runtimeIdentity": {
+      "startupUid": 1000,
+      "startupGid": 1000,
+      "steadyStateUid": 1000,
+      "steadyStateGid": 1000,
+      "source": "https://example.com/project/Dockerfile",
+      "writableBindOwner": "host-init"
+    }
   }],
   "licenseEvidence": {
     "spdx": "MIT",
@@ -136,6 +144,14 @@ only when their values were verified from official source, registry, license, or
   host running the test; the same rule applies to `images[].platforms`. Use the same registry descriptor
   to build every platform-to-child-digest association and require it to name both values. Never assign
   a platform child digest by list position, current host architecture, or a separate registry query.
+- Every selected service with a writable bind requires `runtimeIdentity` on its `images[]` entry or
+  legacy `imageEvidence`. Record numeric `startupUid`, `startupGid`, `steadyStateUid`, and
+  `steadyStateGid` from the exact published image and entrypoint, plus an exact-version HTTPS
+  `source`. Set `writableBindOwner` to `host-init`, `image-managed`, or `root-runtime`:
+  `host-init` requires the generated lifecycle helper to cover every writable bind with the recorded
+  steady-state UID/GID; `image-managed` requires a separate HTTPS `ownerEvidence` proving the
+  entrypoint prepares that bind before privilege drop; `root-runtime` requires `steadyStateUid: 0`.
+  A Dockerfile username without numeric resolution is not sufficient evidence.
 - `licenseEvidence.spdx` records an SPDX expression when known; `licenseEvidence.url` links the
   exact upstream license evidence.
 - `logoEvidence.source` is an HTTPS source URL or `bundled:<package-relative-path>` for a bundled

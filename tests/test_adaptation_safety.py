@@ -322,6 +322,44 @@ DATABASE_URL="$(build_url "$APP_DB_PASSWORD")"
             findings,
         )
 
+    def test_upgrade_comment_does_not_count_as_post_install_consumer(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            version_data = root / "data.yml"
+            compose = root / "docker-compose.yml"
+            scripts = root / "scripts"
+            scripts.mkdir()
+            version_data.write_text(
+                textwrap.dedent("""\
+                    additionalProperties:
+                      formFields:
+                        - envKey: APP_SERVER_NAME
+                          edit: true
+                          required: true
+                          type: text
+                    """),
+                encoding="utf-8",
+            )
+            compose.write_text(
+                "services:\n  app:\n    image: example/app:latest\n",
+                encoding="utf-8",
+            )
+            (scripts / "init.sh").write_text(
+                'printf \'%s\\n\' "$APP_SERVER_NAME" > config.yaml\n',
+                encoding="utf-8",
+            )
+            (scripts / "upgrade.sh").write_text(
+                "# APP_SERVER_NAME is intentionally not migrated\n",
+                encoding="utf-8",
+            )
+
+            findings = analyzer.analyze(version_data, compose, scripts)
+
+        self.assertTrue(
+            any("no post-install consumer" in finding.message for finding in findings),
+            findings,
+        )
+
     def test_editable_compose_field_has_steady_state_consumer(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = pathlib.Path(tmp)

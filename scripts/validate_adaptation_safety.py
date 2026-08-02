@@ -270,6 +270,14 @@ def _logical_shell_lines(text: str):
         yield start_line, buffer
 
 
+def _executable_shell_text(text: str) -> str:
+    return "\n".join(
+        line
+        for _, line in _logical_shell_lines(text)
+        if line.strip() and not line.lstrip().startswith("#")
+    )
+
+
 def _opaque_tainted_variables(
     line: str,
     candidates: set[str],
@@ -466,6 +474,8 @@ def analyze(
             if upgrade_path.is_file()
             else ""
         )
+        init_text = _executable_shell_text(init_text)
+        upgrade_text = _executable_shell_text(upgrade_text)
         for env_key in sorted(editable_keys - compose_keys):
             if _references_name(init_text, env_key) and not _references_name(
                 upgrade_text, env_key
