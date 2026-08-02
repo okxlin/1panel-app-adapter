@@ -144,6 +144,25 @@ class ComposeVariableTests(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         self.assertIn("compose_vars=5", proc.stdout)
 
+    def test_env_sample_closure_ignores_non_version_asset_directories(self) -> None:
+        names = ["PLAIN", "COLON_DEFAULT", "DASH_DEFAULT", "COLON_REQUIRED", "REQUIRED"]
+        with tempfile.TemporaryDirectory() as tmp:
+            app = self._write_app(pathlib.Path(tmp), names)
+            (app / "latest").rename(app / "14.8.0")
+            assets = app / "assets"
+            assets.mkdir()
+            (assets / "default-logo.svg").write_text("<svg/>\n", encoding="utf-8")
+
+            proc = subprocess.run(
+                ["bash", str(CLOSURE), str(app)],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("compose_vars=5", proc.stdout)
+
     def test_env_sample_closure_rejects_empty_container_name(self) -> None:
         for empty_value in (
             "",
