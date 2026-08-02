@@ -47,6 +47,18 @@ If 1Panel or a lifecycle step generates it, prove the generated value satisfies 
 validation rule and is persisted when stability is required. Use an explicit non-secret placeholder
 in `.env.sample` that satisfies static format checks without presenting it as a production secret.
 
+Treat a form schema edit as a contract migration. Whenever `envKey`, `label`, or `type` changes,
+re-review the sibling `default`, `rule`, and `values` instead of carrying them over from the old
+field. For every top-level form field actually consumed by Compose, require a non-empty `data.yml`
+default to match the `.env.sample` value after removing one pair of surrounding quotes and
+normalizing YAML booleans to lowercase `true` or `false`. An empty form default may use a non-empty
+sample placeholder because `.env.sample` supports standalone Compose rather than supplying the
+1Panel install value. Exclude fields with type password, `apps`, `service`, or `random: true` from
+this equality rule because their sample values and panel-generated values intentionally have
+different roles. Still verify each excluded field against its own source-backed startup contract.
+A Compose render does not prove that the panel default passes application startup validation;
+trace the submitted default to the exact application consumer and its validation rule.
+
 `required: true` or a generic `paramComplexity` rule does not prove application-specific validation.
 For user-provided values, use a source-backed panel rule only when it enforces the complete upstream
 contract; otherwise add reviewed generation or validation that rejects invalid input before Compose

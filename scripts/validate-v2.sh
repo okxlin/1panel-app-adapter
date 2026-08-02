@@ -777,15 +777,17 @@ fi
 
 # .env.sample consistency check
 set +e
-env_sample_output=$("$PYTHON_BIN" - <<'PY' "$COMPOSE" "$VER_DIR/.env.sample" "$SCRIPT_DIR"
+env_sample_output=$("$PYTHON_BIN" - <<'PY' "$COMPOSE" "$VER_DIR/.env.sample" "$SCRIPT_DIR" "$VER"
 import re, sys
 from pathlib import Path
+import yaml
 
 sys.path.insert(0, sys.argv[3])
 from compose_env_vars import extract_compose_variable_names
 
 compose_path = Path(sys.argv[1])
 env_sample_path = Path(sys.argv[2])
+version_data_path = Path(sys.argv[4])
 
 if not env_sample_path.is_file():
     print("[A][FAIL] .env.sample missing")
@@ -825,6 +827,53 @@ if extra_in_sample:
 
 if 'CONTAINER_NAME' in vars_in_compose and env_value_is_empty(sample_values.get('CONTAINER_NAME', '')):
     print('[A][FAIL] CONTAINER_NAME must be non-empty in .env.sample')
+    raise SystemExit(1)
+
+try:
+    version_data = yaml.safe_load(version_data_path.read_text(encoding='utf-8')) or {}
+except Exception as exc:
+    print(f'[A][FAIL] cannot compare formFields defaults with .env.sample: {exc}')
+    raise SystemExit(1)
+
+def normalized_form_default(value):
+    if value is None:
+        return ''
+    if isinstance(value, bool):
+        return 'true' if value else 'false'
+    return value if isinstance(value, str) else str(value)
+
+def normalized_sample_value(value):
+    value = value.strip()
+    quoted = re.fullmatch(r'''(["'])(.*)\1(?:[ \t]+#.*)?''', value)
+    if quoted:
+        return quoted.group(2)
+    return re.sub(r'[ \t]+#.*$', '', value).rstrip()
+
+failures = 0
+form_fields = (version_data.get('additionalProperties') or {}).get('formFields') or []
+for item in form_fields:
+    if not isinstance(item, dict):
+        continue
+    env_key = item.get('envKey')
+    field_type = str(item.get('type', '')).strip().lower()
+    if not isinstance(env_key, str) or env_key not in vars_in_compose:
+        continue
+    if field_type in {'password', 'apps', 'service'}:
+        continue
+    if str(item.get('random', '')).strip().lower() == 'true':
+        continue
+    form_default = normalized_form_default(item.get('default'))
+    if not form_default:
+        continue
+    if env_key not in sample_values:
+        print(f'[A][FAIL] formFields default missing from .env.sample: {env_key}')
+        failures += 1
+        continue
+    if form_default != normalized_sample_value(sample_values[env_key]):
+        print(f'[A][FAIL] formFields default differs from .env.sample: {env_key}')
+        failures += 1
+
+if failures:
     raise SystemExit(1)
 
 print(f"[C][INFO] env sample closure ok: compose_vars={len(vars_in_compose)} sample_vars={len(vars_in_sample)}")

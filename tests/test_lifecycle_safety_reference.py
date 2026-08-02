@@ -230,6 +230,28 @@ class LifecycleSafetyReferenceTests(unittest.TestCase):
             with self.subTest(invariant=invariant):
                 self.assertIn(invariant, self.flat_startup_text)
 
+    def test_form_schema_edits_preserve_panel_default_consistency(self) -> None:
+        for guard in (
+            "`envKey`, `label`, or `type`",
+            "`default`, `rule`, and `values`",
+            "top-level form field",
+            "actually consumed by Compose",
+            "surrounding quotes",
+            "YAML booleans",
+            "empty form default",
+            "sample placeholder",
+            "password, `apps`, `service`, or `random: true`",
+        ):
+            with self.subTest(guard=guard):
+                self.assertIn(guard.casefold(), self.flat_startup_text.casefold())
+
+        for text in (self.flat_startup_text, self.flat_skill_text):
+            with self.subTest(text=text[:32]):
+                self.assertIn(
+                    "compose render does not prove that the panel default passes application startup validation",
+                    text.casefold(),
+                )
+
     def test_custom_path_scripts_preserve_generated_confinement(self) -> None:
         self.assertIn("Do not replace the generated confinement", self.text)
         self.assertIn("inside-root symbolic link", self.text)

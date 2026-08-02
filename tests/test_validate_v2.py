@@ -195,6 +195,253 @@ class ValidateV2Tests(unittest.TestCase):
         self.assertNotEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         self.assertIn("CONTAINER_NAME must not be a formFields envKey", proc.stdout)
 
+    def test_non_secret_form_default_must_match_env_sample(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            app = self._write_sample_app(pathlib.Path(tmp))
+            version = app / "latest"
+            with (version / "data.yml").open("a", encoding="utf-8") as handle:
+                handle.write(
+                    "  - default: Asia/Shanghai\n"
+                    "    edit: true\n"
+                    "    envKey: PGADMIN_DEFAULT_EMAIL\n"
+                    "    labelEn: Default email\n"
+                    "    labelZh: Default email\n"
+                    "    required: true\n"
+                    "    type: text\n"
+                )
+            with (version / ".env.sample").open("a", encoding="utf-8") as handle:
+                handle.write("PGADMIN_DEFAULT_EMAIL=admin@example.com\n")
+            compose_path = version / "docker-compose.yml"
+            compose_text = compose_path.read_text(encoding="utf-8")
+            compose_path.write_text(
+                compose_text.replace(
+                    "      - DB_TYPE=${PANEL_DB_TYPE}\n",
+                    "      - DB_TYPE=${PANEL_DB_TYPE}\n"
+                    "      - PGADMIN_DEFAULT_EMAIL=${PGADMIN_DEFAULT_EMAIL}\n",
+                ),
+                encoding="utf-8",
+            )
+
+            proc = subprocess.run(
+                ["bash", str(VALIDATE), "--dir", str(app)],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+
+        self.assertNotEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn(
+            "formFields default differs from .env.sample: PGADMIN_DEFAULT_EMAIL",
+            proc.stdout,
+        )
+
+    def test_non_empty_form_default_requires_env_sample_entry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            app = self._write_sample_app(pathlib.Path(tmp))
+            version = app / "latest"
+            with (version / "data.yml").open("a", encoding="utf-8") as handle:
+                handle.write(
+                    "  - default: admin@example.com\n"
+                    "    edit: true\n"
+                    "    envKey: PGADMIN_DEFAULT_EMAIL\n"
+                    "    labelEn: Default email\n"
+                    "    labelZh: Default email\n"
+                    "    required: true\n"
+                    "    type: text\n"
+                )
+            compose_path = version / "docker-compose.yml"
+            compose_text = compose_path.read_text(encoding="utf-8")
+            compose_path.write_text(
+                compose_text.replace(
+                    "      - DB_TYPE=${PANEL_DB_TYPE}\n",
+                    "      - DB_TYPE=${PANEL_DB_TYPE}\n"
+                    "      - PGADMIN_DEFAULT_EMAIL=${PGADMIN_DEFAULT_EMAIL}\n",
+                ),
+                encoding="utf-8",
+            )
+
+            proc = subprocess.run(
+                ["bash", str(VALIDATE), "--dir", str(app)],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+
+        self.assertNotEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn(
+            "formFields default missing from .env.sample: PGADMIN_DEFAULT_EMAIL",
+            proc.stdout,
+        )
+
+    def test_form_default_comparison_preserves_yaml_string_whitespace(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            app = self._write_sample_app(pathlib.Path(tmp))
+            version = app / "latest"
+            with (version / "data.yml").open("a", encoding="utf-8") as handle:
+                handle.write(
+                    "  - default: ' admin@example.com '\n"
+                    "    edit: true\n"
+                    "    envKey: PGADMIN_DEFAULT_EMAIL\n"
+                    "    labelEn: Default email\n"
+                    "    labelZh: Default email\n"
+                    "    required: true\n"
+                    "    type: text\n"
+                )
+            with (version / ".env.sample").open("a", encoding="utf-8") as handle:
+                handle.write("PGADMIN_DEFAULT_EMAIL=admin@example.com\n")
+            compose_path = version / "docker-compose.yml"
+            compose_text = compose_path.read_text(encoding="utf-8")
+            compose_path.write_text(
+                compose_text.replace(
+                    "      - DB_TYPE=${PANEL_DB_TYPE}\n",
+                    "      - DB_TYPE=${PANEL_DB_TYPE}\n"
+                    "      - PGADMIN_DEFAULT_EMAIL=${PGADMIN_DEFAULT_EMAIL}\n",
+                ),
+                encoding="utf-8",
+            )
+
+            proc = subprocess.run(
+                ["bash", str(VALIDATE), "--dir", str(app)],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+
+        self.assertNotEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn(
+            "formFields default differs from .env.sample: PGADMIN_DEFAULT_EMAIL",
+            proc.stdout,
+        )
+
+    def test_form_default_comparison_normalizes_booleans_and_sample_quotes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            app = self._write_sample_app(pathlib.Path(tmp))
+            version = app / "latest"
+            with (version / "data.yml").open("a", encoding="utf-8") as handle:
+                handle.write(
+                    "  - default: false\n"
+                    "    edit: true\n"
+                    "    envKey: AUTH_ENABLED\n"
+                    "    labelEn: Authentication enabled\n"
+                    "    labelZh: Authentication enabled\n"
+                    "    required: true\n"
+                    "    type: select\n"
+                    "    values:\n"
+                    "    - label: Enabled\n"
+                    "      value: true\n"
+                    "    - label: Disabled\n"
+                    "      value: false\n"
+                    "  - default: ''\n"
+                    "    edit: true\n"
+                    "    envKey: OPTIONAL_ENDPOINT\n"
+                    "    labelEn: Optional endpoint\n"
+                    "    labelZh: Optional endpoint\n"
+                    "    required: false\n"
+                    "    type: text\n"
+                )
+            sample_path = version / ".env.sample"
+            sample_path.write_text(
+                sample_path.read_text(encoding="utf-8")
+                .replace("PANEL_APP_PORT_HTTP=8080", 'PANEL_APP_PORT_HTTP="8080"')
+                + 'AUTH_ENABLED="false" # standalone default\n'
+                + "OPTIONAL_ENDPOINT=replace-with-an-endpoint\n",
+                encoding="utf-8",
+            )
+            compose_path = version / "docker-compose.yml"
+            compose_text = compose_path.read_text(encoding="utf-8")
+            compose_path.write_text(
+                compose_text.replace(
+                    "      - DB_TYPE=${PANEL_DB_TYPE}\n",
+                    "      - DB_TYPE=${PANEL_DB_TYPE}\n"
+                    "      - AUTH_ENABLED=${AUTH_ENABLED}\n"
+                    "      - OPTIONAL_ENDPOINT=${OPTIONAL_ENDPOINT}\n",
+                ),
+                encoding="utf-8",
+            )
+
+            proc = subprocess.run(
+                ["bash", str(VALIDATE), "--dir", str(app)],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+
+    def test_form_default_comparison_excludes_non_plain_runtime_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            app = self._write_sample_app(pathlib.Path(tmp))
+            version = app / "latest"
+            version_data = version / "data.yml"
+            version_text = version_data.read_text(encoding="utf-8")
+            version_text = version_text.replace(
+                "  - default: mysql\n    envKey: PANEL_DB_TYPE\n",
+                "  - default: mariadb\n    envKey: PANEL_DB_TYPE\n",
+            ).replace(
+                "      default: ''\n      envKey: PANEL_DB_HOST\n",
+                "      default: postgres\n      envKey: PANEL_DB_HOST\n",
+            )
+            version_data.write_text(
+                version_text
+                + "  - default: fixed-password\n"
+                + "    edit: true\n"
+                + "    envKey: APP_PASSWORD\n"
+                + "    labelEn: Password\n"
+                + "    labelZh: Password\n"
+                + "    required: true\n"
+                + "    type: password\n"
+                + "  - default: selected-service\n"
+                + "    envKey: APP_SERVICE\n"
+                + "    labelEn: Service\n"
+                + "    labelZh: Service\n"
+                + "    required: true\n"
+                + "    type: service\n"
+                + "  - default: fixed-random-value\n"
+                + "    edit: true\n"
+                + "    envKey: RANDOM_TOKEN\n"
+                + "    labelEn: Random token\n"
+                + "    labelZh: Random token\n"
+                + "    random: true\n"
+                + "    required: true\n"
+                + "    type: text\n"
+                + "  - default: package-only-default\n"
+                + "    edit: true\n"
+                + "    envKey: UNUSED_SETTING\n"
+                + "    labelEn: Unused setting\n"
+                + "    labelZh: Unused setting\n"
+                + "    required: false\n"
+                + "    type: text\n",
+                encoding="utf-8",
+            )
+            with (version / ".env.sample").open("a", encoding="utf-8") as handle:
+                handle.write(
+                    "APP_PASSWORD=sample-password\n"
+                    "APP_SERVICE=sample-service\n"
+                    "RANDOM_TOKEN=sample-random-value\n"
+                    "UNUSED_SETTING=sample-only-value\n"
+                )
+            compose_path = version / "docker-compose.yml"
+            compose_text = compose_path.read_text(encoding="utf-8")
+            compose_path.write_text(
+                compose_text.replace(
+                    "      - DB_TYPE=${PANEL_DB_TYPE}\n",
+                    "      - DB_TYPE=${PANEL_DB_TYPE}\n"
+                    "      - APP_PASSWORD=${APP_PASSWORD}\n"
+                    "      - APP_SERVICE=${APP_SERVICE}\n"
+                    "      - RANDOM_TOKEN=${RANDOM_TOKEN}\n",
+                ),
+                encoding="utf-8",
+            )
+
+            proc = subprocess.run(
+                ["bash", str(VALIDATE), "--dir", str(app)],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+
     def test_host_network_param_port_uses_panel_port_env_key(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = self._write_sample_app(pathlib.Path(tmp))
