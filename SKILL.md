@@ -63,6 +63,7 @@ Use scripts for their named job instead of manually recreating their behavior. R
 - Replace placeholders with real product metadata and meaningful translations in all required locales. English fields must contain English. Record the application and asset licenses; when exact redistribution terms require attribution, copyright or license text, source disclosure, or NOTICE delivery, include that required material in the package instead of relying on a link. When a license has material use restrictions, name and link it in the README instead of keeping it only in machine-readable evidence. Verify an asset's redistribution basis separately from the application code license; for an unresolved asset license or trademark permission, use the neutral placeholder immediately rather than shipping the asset with a future-confirmation note.
 - Render and validate the exact delivered artifact without creating then removing a file it needs. Ensure `init.sh`, `upgrade.sh`, and `uninstall.sh` exist and retain executable mode in the delivered tree. Run baseline validation first, then `bash scripts/validate-v2.sh --dir <app-dir> [--version <version>] --strict-store --i18n-mode strict --source-evidence-mode required --require-delivery-evidence`; unresolved failures block a pass claim.
 - Before finalizing the README or report, build a configuration claim ledger and compare each statement with the exact Compose, `data.yml`, `.env.sample`, and lifecycle scripts. Classify every described value as fixed, defaulted, generated, optional, or user-configurable. If an editable form field controls it, describe it as user-configurable with that default rather than fixed; contradictions block a delivery-ready claim.
+- For every form field, record its install-time and steady-state consumer before choosing `edit`. A value generated once, written into persistent configuration, or identity-bearing must use `edit: false` unless an idempotent reconciliation or migration applies later edits to the real persisted consumer. Do not expose a control that only changes `.env` while the application continues using an older persisted value.
 - Test in a real 1Panel development/test instance: clean install, application-specific readiness, restart, upgrade when applicable, uninstall, and task-owned cleanup. Report artifact paths, evidence, checks, risk-bearing permissions, assumptions, warnings, and every unexecuted runtime gate; static validation or HTTP 200 alone is insufficient. Distinguish files in the delivered AppStore package from run-only evidence caches. Do not claim that a run-only cache path is present in the delivered package.
 
 ## Rule Priority
@@ -160,15 +161,15 @@ Notes:
 
 Treat this as an allowed set, not a requirement to populate `rule`. Normally only externally published port fields use `rule: paramPort`; omit `rule` from secrets, URLs, selectors, domains, and ordinary text unless a demonstrated 1Panel parser or application-format requirement needs it.
 
-### `formFields[].edit` (install form editability)
+### `formFields[].edit` (consumer-backed editability)
 
 Based on official v2 app library `docker-compose.yml` and same-directory version-level `data.yml` actual write:
 - `edit` is bool in DTO (default equivalent to false), but official library explicitly writes `edit: true` for many fields.
-- Our adaptation artifacts suggest (default more "editable"):
-  - **Generally enable `edit: true`** (let users adjust in install interface).
-  - Only for a few "injection/should not manually modify" envKey exceptions (can omit or `edit: false`), typical: `PANEL_DB_*` / `PANEL_REDIS_*` / `PANEL_MINIO_*` etc. panel injection variables.
-  - Dependency selection fields (`type: apps/service`) whether `edit:true` depends on UI interaction, but default can be true.
-- Validation strategy: `validate-v2.sh --strict-store` will **WARN** for "obviously user input and required=true but missing edit:true" entries (not FAIL, to avoid mis-killing official historical write).
+- Choose `edit` from the value lifecycle, not from a blanket editable default:
+  - Use `edit: true` only when the steady-state consumer reads the changed value directly, or an idempotent reconciliation or migration safely applies it to persisted state.
+  - Use `edit: false` for a value generated once, identity-bearing configuration, panel injection, or any value whose persisted consumer is intentionally not regenerated. Typical injection keys include `PANEL_DB_*`, `PANEL_REDIS_*`, and `PANEL_MINIO_*`.
+  - Dependency selection fields (`type: apps/service`) may use `edit: true` only when the linked-resource lifecycle supports changing the selection; enumeration alone is not migration evidence.
+- Validation strategy: `validate-v2.sh --strict-store` will **WARN** when a required non-selector field lacks an explicit `edit` decision (not FAIL, to avoid rejecting official historical output). Resolve the warning from the consumer lifecycle; do not silence it mechanically with `edit: true`.
 
 ## Database / Redis Dependency Injection (Panel Fixed envKey)
 

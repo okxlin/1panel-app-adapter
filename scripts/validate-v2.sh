@@ -352,7 +352,7 @@ for item in items:
             print(f'[A][FAIL] {env} must use rule:paramPort')
             failures += 1
     if str(required).lower() == 'true' and typ not in {'apps', 'service'} and 'edit' not in item:
-        print(f'[B][WARN] {env} is required but missing edit:true')
+        print(f'[B][WARN] {env} is required but lacks explicit edit decision; set edit:true only for a proven steady-state consumer, otherwise use edit:false')
         warnings += 1
     if item.get('labelEn') and item.get('labelZh') and not has_label_map:
         print(f'[B][WARN] {env}: missing label map (expected locales: en, zh, zh-Hant, ja, ko, ru, ms, pt-br)')

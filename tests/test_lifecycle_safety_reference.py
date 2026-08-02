@@ -252,6 +252,18 @@ class LifecycleSafetyReferenceTests(unittest.TestCase):
                     text.casefold(),
                 )
 
+    def test_form_editability_tracks_the_post_install_consumer(self) -> None:
+        for guard in (
+            "steady-state consumer",
+            "generated once",
+            "identity-bearing",
+            "`edit: false`",
+            "idempotent reconciliation or migration",
+        ):
+            with self.subTest(guard=guard):
+                self.assertIn(guard.casefold(), self.flat_startup_text.casefold())
+                self.assertIn(guard.casefold(), self.flat_skill_text.casefold())
+
     def test_custom_path_scripts_preserve_generated_confinement(self) -> None:
         self.assertIn("Do not replace the generated confinement", self.text)
         self.assertIn("inside-root symbolic link", self.text)

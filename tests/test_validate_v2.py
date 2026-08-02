@@ -135,6 +135,49 @@ class ValidateV2Tests(unittest.TestCase):
         )
         return app
 
+    def test_required_field_accepts_explicit_non_editable_lifecycle_decision(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            app = self._write_sample_app(pathlib.Path(tmp))
+            data_file = app / "latest" / "data.yml"
+            data_file.write_text(
+                data_file.read_text(encoding="utf-8").replace(
+                    "- default: 8080\n    edit: true\n",
+                    "- default: 8080\n    edit: false\n",
+                ),
+                encoding="utf-8",
+            )
+
+            proc = subprocess.run(
+                ["bash", str(VALIDATE), "--dir", str(app)],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertNotIn("missing edit:true", proc.stdout)
+        self.assertNotIn("lacks explicit edit decision", proc.stdout)
+
+    def test_required_field_without_edit_reports_missing_lifecycle_decision(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            app = self._write_sample_app(pathlib.Path(tmp))
+            data_file = app / "latest" / "data.yml"
+            data_file.write_text(
+                data_file.read_text(encoding="utf-8").replace("    edit: true\n", ""),
+                encoding="utf-8",
+            )
+
+            proc = subprocess.run(
+                ["bash", str(VALIDATE), "--dir", str(app)],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("lacks explicit edit decision", proc.stdout)
+        self.assertNotIn("missing edit:true", proc.stdout)
+
     def test_empty_container_name_sample_fails_before_compose_render(self) -> None:
         for empty_value in (
             "",

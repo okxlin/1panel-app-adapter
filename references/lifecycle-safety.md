@@ -59,6 +59,13 @@ different roles. Still verify each excluded field against its own source-backed 
 A Compose render does not prove that the panel default passes application startup validation;
 trace the submitted default to the exact application consumer and its validation rule.
 
+For each form field, record both its install-time and steady-state consumer before setting `edit`.
+Use `edit: false` when a value is generated once, identity-bearing, or copied into persistent
+configuration that later starts bypass. Allow edits only when the steady-state consumer reads the
+new value directly or an idempotent reconciliation or migration updates the real persisted state.
+Changing `.env` while leaving an older persisted value active is a broken control and blocks
+delivery; documentation that warns users about the mismatch does not make the field editable.
+
 `required: true` or a generic `paramComplexity` rule does not prove application-specific validation.
 For user-provided values, use a source-backed panel rule only when it enforces the complete upstream
 contract; otherwise add reviewed generation or validation that rejects invalid input before Compose
