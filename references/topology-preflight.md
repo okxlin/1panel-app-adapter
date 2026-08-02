@@ -21,6 +21,24 @@ and companion deployment repositories. For each discovered root, trace its inclu
 and record whether it is selected or rejected and why. A route conclusion that considers only the
 most obvious sample is incomplete.
 
+After the census, evaluate each deployment shape independently in a deployment-shape decision
+ledger. Give every discovered shape one row with its exact release and root, support scope,
+default capability set, external dependency ownership, persistence boundary, migration and upgrade
+boundary, and disposition as selected, conditional, or rejected with a source-backed reason. Treat
+a documented operator-managed database, cache, object store, identity provider, or other service as
+an external-service boundary, not as proof that the shape forgot a required service.
+
+A more complex production topology does not invalidate a smaller official topology. A
+production-ready label is scoped evidence, not an exclusivity claim: record which deployment
+shape, workload, and support promise the label covers. Use only these evidence categories to
+invalidate an otherwise viable smaller shape: officially required, exclusive, deprecated, or
+capability-incomplete. In the first two cases, exact-version official evidence must require the
+larger replacement or declare it the exclusive supported production path; in the latter two, it
+must deprecate the smaller shape or show that it omits the selected default capability set. Assign
+platform_stack_terminal only after every capability-complete official shape has been evaluated and
+none can qualify as `ordinary_candidate` or as `specialized_conditional` with satisfiable named
+prerequisites.
+
 For each viable shape, record:
 
 - Compose services and images;

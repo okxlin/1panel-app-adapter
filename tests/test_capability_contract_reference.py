@@ -33,6 +33,7 @@ class CapabilityContractReferenceTests(unittest.TestCase):
         ):
             with self.subTest(guard=guard):
                 self.assertIn(guard.casefold(), self.flat_topology)
+                self.assertIn(guard.casefold(), self.flat_skill)
 
     def test_reduced_capability_profiles_are_explicit_and_fail_closed(self) -> None:
         for guard in (
@@ -121,6 +122,32 @@ class CapabilityContractReferenceTests(unittest.TestCase):
             "oci config",
             "base, bootstrap, or runtime images",
             "record the unavailable registry fact",
+        ):
+            with self.subTest(guard=guard):
+                self.assertIn(guard.casefold(), self.flat_topology)
+                self.assertIn(guard.casefold(), self.flat_skill)
+
+    def test_complex_shape_does_not_veto_a_supported_smaller_shape(self) -> None:
+        for guard in (
+            "evaluate each deployment shape independently",
+            "a more complex production topology does not invalidate a smaller official topology",
+            "production-ready label is scoped evidence, not an exclusivity claim",
+            "officially required, exclusive, deprecated, or capability-incomplete",
+            "external-service boundary",
+            "platform_stack_terminal only after",
+        ):
+            with self.subTest(guard=guard):
+                self.assertIn(guard.casefold(), self.flat_topology)
+                self.assertIn(guard.casefold(), self.flat_skill)
+
+    def test_shape_selection_uses_an_explicit_decision_ledger(self) -> None:
+        for guard in (
+            "deployment-shape decision ledger",
+            "support scope",
+            "default capability set",
+            "external dependency ownership",
+            "migration and upgrade boundary",
+            "selected, conditional, or rejected",
         ):
             with self.subTest(guard=guard):
                 self.assertIn(guard.casefold(), self.flat_topology)
