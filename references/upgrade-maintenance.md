@@ -38,6 +38,22 @@ If a new version directory is a GPU or CUDA variant with narrower platform cover
 
 Do not silently replace a persisted secret, database password, install path, or public URL during upgrade.
 
+### Preserve Stored Values When Forms Change
+
+Adding a form field does not populate existing installations' `.env` files. Define the backfill in `upgrade.sh` and distinguish these cases before editing:
+
+| Stored input | Migration behavior |
+| --- | --- |
+| Absent optional key | Add the documented, compatible default. |
+| Explicit `0`, `false`, or another supported custom value | Preserve it; presence is different from truthiness. |
+| Empty value | Apply that field's documented empty-value meaning; do not assume every empty value requests a reset. |
+| Conforming stored secret | Preserve it byte-for-byte. |
+| Invalid legacy secret or shipped default | Use an explicitly scoped security migration, disclose effects such as session invalidation, and preserve unrelated settings. |
+
+Derive secret requirements from the exact upstream contract rather than a universal length rule. Define which invalid legacy values may be replaced; do not silently rotate an arbitrary user credential or encryption key. Likewise, a no-auth compatibility option needs an explicit deployment decision, a clear form warning, and preservation of an existing opt-out; one application's accepted default is not a default for other apps.
+
+Exercise the migration with absent, empty, explicit opt-out, custom, invalid-legacy, and conforming-secret fixtures, then run it twice. Check persisted outputs and unchanged unrelated values without printing secrets. Hand off the final migration to a real old-to-new 1Panel test using representative existing settings; fixture success does not establish upgrade readiness.
+
 ## Upgrade Script Rules
 
 Use `scripts/upgrade.sh` only for deterministic local migration work that 1Panel cannot express through compose/env files.

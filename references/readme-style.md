@@ -34,3 +34,5 @@ Do not include the following in app README files:
 These belong to delivery evidence, not end-user README content.
 
 README text should stay valid after image or version-directory updates. When version context matters, refer users to the app store version selector, release directory, or source-evidence/delivery notes instead of embedding a concrete version number in README prose.
+
+For an image-tag or version-directory refresh that leaves the operator contract unchanged, preserve the existing README files. Change them when authentication, required inputs, persistence, dependencies, or upgrade actions actually change. Keep release numbers, scan counts, and temporary test conclusions in PR or delivery evidence instead of adding text that will become stale on the next update.
