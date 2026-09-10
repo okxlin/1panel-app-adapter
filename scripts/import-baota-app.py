@@ -27,6 +27,7 @@ def parse_args():
     mode_group.add_argument("--batch", action="store_true", help="Batch import subdirectories under input / 批量导入输入目录下的应用子目录")
     mode_group.add_argument("--emit-appspec", help="Only generate AppSpec JSON to this path / 仅生成 AppSpec JSON 到该路径")
     parser.add_argument("--precheck-only", action="store_true", help="Validate prepared input without generating app output / 只校验已准备的输入，不生成应用输出")
+    parser.add_argument("--submission-profile", choices=("third-party", "official"), default="third-party")
     parser.add_argument("--validate", action="store_true", help="Run basic validation after import / 导入后执行基础校验")
     parser.add_argument("--strict-store-validate", action="store_true", help="Run strict store validation / 执行严格商店校验")
     parser.add_argument("--require-validate", action="store_true", help="Exit non-zero if validation fails / 校验失败时返回非零退出码")
@@ -184,7 +185,7 @@ def run_single_import(args):
     app_name = input_dir.name
 
     try:
-        runner = ImportRunner()
+        runner = ImportRunner(submission_profile=args.submission_profile)
         result = runner.import_one(
             str(input_dir),
             str(out_dir),
@@ -240,7 +241,7 @@ def run_batch_import(args):
         return EXIT_FAILURE
 
     try:
-        runner = ImportRunner()
+        runner = ImportRunner(submission_profile=args.submission_profile)
         raw_result = runner.import_batch(
             str(input_dir),
             str(out_dir),

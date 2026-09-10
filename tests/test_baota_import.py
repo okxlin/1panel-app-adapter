@@ -358,6 +358,10 @@ def _sample(name: str) -> str:
 #  Version Helpers
 # ═══════════════════════════════════════════════════════════════════════
 
+def run_evidence(app_dir: pathlib.Path) -> pathlib.Path:
+    return app_dir.parent / ".evidence" / app_dir.name / "source-evidence.json"
+
+
 class TestVersionExpansion(unittest.TestCase):
     def test_latest_only(self):
         versions = _expand_versions([{"m_version": "latest", "s_version": []}])
@@ -883,34 +887,26 @@ class TestImportRunner(unittest.TestCase):
         out = pathlib.Path(result["outputPath"])
         self.assertTrue((out / "data.yml").is_file())
         self.assertTrue((out / "logo.png").is_file())
-        self.assertTrue((out / "source-evidence.json").is_file())
+        self.assertTrue((run_evidence(out)).is_file())
         self.assertTrue((out / "latest" / "data.yml").is_file())
         self.assertTrue((out / "latest" / "docker-compose.yml").is_file())
         self.assertTrue((out / "latest" / ".env.sample").is_file())
         self.assertTrue((out / "README.md").is_file())
         readme_text = (out / "README.md").read_text(encoding="utf-8")
         self.assertNotIn("- Version: latest", readme_text)
-        self.assertIn("app store version list", readme_text)
-        for heading in ("## 产品介绍", "## 主要功能", "## 访问说明", "## Introduction", "## Features"):
+        self.assertNotIn("app store version list", readme_text)
+        for heading in ("## 产品介绍", "## 主要功能", "## 访问说明"):
             self.assertIn(heading, readme_text)
         self.assertTrue((out / "latest" / "data").is_dir())
         self.assertTrue((out / "latest" / "scripts" / "init.sh").is_file())
-        self.assertTrue((out / "latest" / "scripts" / "upgrade.sh").is_file())
-        self.assertTrue((out / "latest" / "scripts" / "uninstall.sh").is_file())
-        uninstall_text = (out / "latest" / "scripts" / "uninstall.sh").read_text(
-            encoding="utf-8"
-        )
-        self.assertIn('cd "$ROOT_DIR"', uninstall_text)
-        self.assertIn("docker compose version", uninstall_text)
-        self.assertIn("docker compose down", uninstall_text)
-        self.assertIn("docker-compose version", uninstall_text)
-        self.assertIn("docker-compose down", uninstall_text)
-        self.assertNotIn("--volumes", uninstall_text)
+        self.assertFalse((out / "latest" / "scripts" / "upgrade.sh").exists())
+        self.assertFalse((out / "latest" / "scripts" / "uninstall.sh").exists())
+        self.assertIn("## Introduction", (out / "README_en.md").read_text(encoding="utf-8"))
 
         root_data = yaml.safe_load((out / "data.yml").read_text(encoding="utf-8"))
         desc = root_data.get("additionalProperties", {}).get("description")
         self.assertIsInstance(desc, dict)
-        self.assertIn("zh-Hant", desc)
+        self.assertIn("zh-hant", desc)
 
         ver_data = yaml.safe_load((out / "latest" / "data.yml").read_text(encoding="utf-8"))
         fields = ver_data.get("additionalProperties", {}).get("formFields", [])
@@ -928,7 +924,7 @@ class TestImportRunner(unittest.TestCase):
         self.assertIn("APP_DATA_DIR_DATA=./data/data", env_sample)
         self.assertIn("APP_DATA_DIR_MNT=./data/mnt", env_sample)
         self.assertIn("CONTAINER_NAME=alist-compose-check", env_sample)
-        evidence = json.loads((out / "source-evidence.json").read_text(encoding="utf-8"))
+        evidence = json.loads((run_evidence(out)).read_text(encoding="utf-8"))
         self.assertEqual(evidence["architectureEvidence"], "unverified_default")
         self.assertEqual(root_data["additionalProperties"]["architectures"], ["amd64"])
 
@@ -946,7 +942,7 @@ class TestImportRunner(unittest.TestCase):
         self.assertEqual(result["validation"]["mode"], "strict-store")
         self.assertIn("validate-v2.sh", result["validation"]["validator"])
         evidence = json.loads(
-            (pathlib.Path(result["outputPath"]) / "source-evidence.json").read_text(
+            (run_evidence(pathlib.Path(result["outputPath"]))).read_text(
                 encoding="utf-8"
             )
         )
@@ -989,7 +985,7 @@ class TestImportRunner(unittest.TestCase):
 
         result = self.runner.import_one(str(app_dir), self.tmpdir, "latest")
         self.assertTrue(result["success"], result.get("errors"))
-        evidence = json.loads((pathlib.Path(result["outputPath"]) / "source-evidence.json").read_text(encoding="utf-8"))
+        evidence = json.loads((run_evidence(pathlib.Path(result["outputPath"]))).read_text(encoding="utf-8"))
         self.assertEqual(evidence["repository"], "https://github.com/example/apphub")
         self.assertEqual(
             evidence["composeFile"],
@@ -1011,7 +1007,7 @@ class TestImportRunner(unittest.TestCase):
         self.assertEqual(fixed["selectedVersion"], "3.42.0")
         self.assertEqual(fixed["packagedVersions"], ["latest", "3.42.0"])
         evidence = json.loads(
-            (out_dir / "alist" / "source-evidence.json").read_text(encoding="utf-8")
+            (run_evidence(out_dir / "alist")).read_text(encoding="utf-8")
         )
         self.assertEqual(evidence["importSource"]["versions"], ["latest", "3.42.0"])
         self.assertEqual(set(evidence["versionEvidence"]), {"latest", "3.42.0"})
@@ -1030,7 +1026,7 @@ class TestImportRunner(unittest.TestCase):
         self.assertTrue(first["success"], first.get("errors"))
         self.assertTrue(second["success"], second.get("errors"))
         evidence = json.loads(
-            (out_dir / "alist" / "source-evidence.json").read_text(encoding="utf-8")
+            (run_evidence(out_dir / "alist")).read_text(encoding="utf-8")
         )
         self.assertEqual(evidence["importSource"]["versions"], ["3.42.0"])
         self.assertEqual(
@@ -1049,7 +1045,7 @@ class TestImportRunner(unittest.TestCase):
         out_dir = pathlib.Path(self.tmpdir) / "bad-evidence-out"
         first = self.runner.import_one(str(source), str(out_dir), "latest")
         self.assertTrue(first["success"], first.get("errors"))
-        (out_dir / "alist" / "source-evidence.json").write_text("{", encoding="utf-8")
+        (run_evidence(out_dir / "alist")).write_text("{", encoding="utf-8")
 
         second = self.runner.import_one(str(source), str(out_dir), "3.42.0")
 
@@ -1250,25 +1246,17 @@ class TestCliAndGenerator(unittest.TestCase):
         self.assertTrue((root / "README.md").is_file())
         readme_text = (root / "README.md").read_text(encoding="utf-8")
         self.assertNotIn("- **Version**: latest", readme_text)
-        self.assertIn("source-evidence.json", readme_text)
+        self.assertNotIn("source-evidence.json", readme_text)
         self.assertTrue((root / "logo.png").is_file())
         self.assertTrue((root / "latest" / "data").is_dir())
         self.assertTrue((root / "latest" / "scripts" / "init.sh").is_file())
-        self.assertTrue((root / "latest" / "scripts" / "upgrade.sh").is_file())
-        self.assertTrue((root / "latest" / "scripts" / "uninstall.sh").is_file())
-        uninstall_text = (root / "latest" / "scripts" / "uninstall.sh").read_text(
-            encoding="utf-8"
-        )
-        self.assertIn('cd "$ROOT_DIR"', uninstall_text)
-        self.assertIn("docker compose version", uninstall_text)
-        self.assertIn("docker compose down", uninstall_text)
-        self.assertIn("docker-compose version", uninstall_text)
-        self.assertIn("docker-compose down", uninstall_text)
-        self.assertNotIn("--volumes", uninstall_text)
+        self.assertFalse((root / "latest" / "scripts" / "upgrade.sh").exists())
+        self.assertFalse((root / "latest" / "scripts" / "uninstall.sh").exists())
+        self.assertIn("## Introduction", (root / "README_en.md").read_text(encoding="utf-8"))
 
         root_data = yaml.safe_load((root / "data.yml").read_text(encoding="utf-8"))
         self.assertIsInstance(root_data.get("additionalProperties", {}).get("description"), dict)
-        source_evidence = json.loads((root / "source-evidence.json").read_text(encoding="utf-8"))
+        source_evidence = json.loads((run_evidence(root)).read_text(encoding="utf-8"))
         self.assertEqual(source_evidence["architectures"], ["amd64"])
         self.assertEqual(source_evidence["architectureEvidence"], "unverified_default")
         ver_data = yaml.safe_load((root / "latest" / "data.yml").read_text(encoding="utf-8"))
@@ -1351,7 +1339,7 @@ class TestCliAndGenerator(unittest.TestCase):
             self.assertEqual(gen_proc.returncode, 0, gen_proc.stderr)
 
         evidence = json.loads(
-            (out_dir / "alist" / "source-evidence.json").read_text(encoding="utf-8")
+            (run_evidence(out_dir / "alist")).read_text(encoding="utf-8")
         )
         self.assertEqual(evidence["importSource"]["versions"], ["latest", "3.42.0"])
         self.assertEqual(set(evidence["versionEvidence"]), {"latest", "3.42.0"})
@@ -1479,7 +1467,7 @@ class TestCliAndGenerator(unittest.TestCase):
                     capture_output=True,
                 )
                 self.assertEqual(first.returncode, 0, first.stderr)
-                (out_dir / "alist" / "source-evidence.json").write_text("{", encoding="utf-8")
+                (run_evidence(out_dir / "alist")).write_text("{", encoding="utf-8")
             else:
                 second = subprocess.run(
                     [
@@ -1514,7 +1502,7 @@ class TestCliAndGenerator(unittest.TestCase):
 
         root = out_dir / "demo-app"
         self.assertGreater((root / "logo.png").stat().st_size, 0)
-        evidence = json.loads((root / "source-evidence.json").read_text(encoding="utf-8"))
+        evidence = json.loads((run_evidence(root)).read_text(encoding="utf-8"))
         self.assertEqual(evidence["repository"], "https://github.com/nginx/nginx")
         self.assertEqual(evidence["dockerDocs"], "https://hub.docker.com/_/nginx")
         compose_text = (root / "1.0.0" / "docker-compose.yml").read_text(encoding="utf-8")
@@ -1554,19 +1542,17 @@ class TestCliAndGenerator(unittest.TestCase):
         app_dir = out_dir / "minapp"
         logo_path = app_dir / "logo.png"
         self.assertGreater(logo_path.stat().st_size, 0)
-        notice_path = app_dir / "ASSET-LICENSES" / "default-logo.txt"
+        notice_path = app_dir / "README.md"
         source_path = app_dir / "assets" / "default-logo.svg"
         self.assertTrue(notice_path.is_file())
-        self.assertEqual(
-            source_path.read_bytes(),
-            (self.project_dir / "assets" / "default-logo.svg").read_bytes(),
-        )
+        self.assertFalse(source_path.exists())
+        self.assertFalse((app_dir / "ASSET-LICENSES").exists())
         self.assertIn(
             "CONTAINER_NAME=minapp-compose-check",
             (app_dir / "latest" / ".env.sample").read_text(encoding="utf-8"),
         )
         self.assertIn("Permission is hereby granted", notice_path.read_text(encoding="utf-8"))
-        evidence = json.loads((app_dir / "source-evidence.json").read_text(encoding="utf-8"))
+        evidence = json.loads((run_evidence(app_dir)).read_text(encoding="utf-8"))
         self.assertEqual(evidence["logoEvidence"]["license"], "MIT")
         self.assertEqual(
             evidence["logoEvidence"]["sha256"],
@@ -1576,19 +1562,12 @@ class TestCliAndGenerator(unittest.TestCase):
         self.assertEqual(redistribution["status"], "verified")
         self.assertEqual(
             set(redistribution["requiredFiles"]),
-            {
-                "ASSET-LICENSES/default-logo.txt",
-                "assets/default-logo.svg",
-            },
+            {"README.md"},
         )
         materials = {item["path"]: item for item in redistribution["materials"]}
         self.assertEqual(
-            materials["ASSET-LICENSES/default-logo.txt"]["sha256"],
+            materials["README.md"]["sha256"],
             hashlib.sha256(notice_path.read_bytes()).hexdigest(),
-        )
-        self.assertEqual(
-            materials["assets/default-logo.svg"]["sha256"],
-            hashlib.sha256(source_path.read_bytes()).hexdigest(),
         )
         report = json.loads(report_path.read_text(encoding="utf-8"))
         self.assertEqual(report["status"], "generated_candidate")
@@ -1702,7 +1681,7 @@ class TestCliAndGenerator(unittest.TestCase):
 
         self.assertEqual(proc.returncode, 0, proc.stderr)
         evidence = json.loads(
-            (app_dir / "source-evidence.json").read_text(encoding="utf-8")
+            (run_evidence(app_dir)).read_text(encoding="utf-8")
         )
         redistribution = evidence["redistributionEvidence"]
         self.assertEqual(redistribution["status"], "verified")
@@ -1710,8 +1689,7 @@ class TestCliAndGenerator(unittest.TestCase):
             redistribution["requiredFiles"],
             [
                 "LICENSE",
-                "ASSET-LICENSES/default-logo.txt",
-                "assets/default-logo.svg",
+                "README.md",
             ],
         )
         materials_by_path = {
@@ -1722,8 +1700,7 @@ class TestCliAndGenerator(unittest.TestCase):
             materials_by_path["LICENSE"]["sha256"],
             hashlib.sha256(license_bytes).hexdigest(),
         )
-        self.assertIn("ASSET-LICENSES/default-logo.txt", materials_by_path)
-        self.assertIn("assets/default-logo.svg", materials_by_path)
+        self.assertIn("README.md", materials_by_path)
         logo_assets = [
             asset
             for asset in redistribution["assets"]
@@ -1732,7 +1709,7 @@ class TestCliAndGenerator(unittest.TestCase):
         self.assertEqual(len(logo_assets), 1)
         self.assertEqual(
             logo_assets[0]["requiredFiles"],
-            ["ASSET-LICENSES/default-logo.txt", "assets/default-logo.svg"],
+            ["README.md"],
         )
 
     def test_generation_without_validation_cannot_report_delivery_ready(self):

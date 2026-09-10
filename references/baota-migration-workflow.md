@@ -151,6 +151,6 @@ Then use `1panel-test-targets` to install the exact submitted files through a re
 
 - Keep `converted_candidate`, `manual_review_required`, `delivery_ready`, and runtime-tested states distinct.
 - Assign every batch candidate exactly one final batch disposition: `adapt`, `duplicate`, `unsuitable`, `deferred`, or `blocked`.
-- Do not commit `source-evidence.json` into a target store that keeps process evidence outside `apps/<app-key>`.
+- Deliver only the app directory. The generator writes `source-evidence.json` to the sibling `.evidence/<app-key>/` directory; keep it outside every submitted app package.
 - Do not use importer reports from an earlier source snapshot to approve changed source or generated files.
 - Route publication, CI audit, mergeability checks, and merge verification through the active PR workflow. The importer never authorizes publication.

@@ -16,7 +16,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import os
 import pathlib
 import re
 import shutil
@@ -34,7 +33,6 @@ except ImportError:
 from baota_import_lib import (
     _assert_safe_output_targets,
     _generated_output_targets,
-    _i18n_map,
     _is_safe_app_key,
     _is_safe_version,
     _load_existing_evidence,
@@ -47,13 +45,15 @@ from baota_import_lib import (
     evaluate_baota_delivery_readiness,
     run_strict_store_validation,
 )
-from runtime_script_utils import UNINSTALL_SCRIPT, collect_runtime_path_fields, write_init_script
+from runtime_script_utils import collect_runtime_path_fields, write_init_script
+from gen_env_sample import format_env_value
 from source_evidence import load_source_evidence, validate_source_evidence
+from package_contract import PROFILES, bundled_logo_evidence, check_output_profile, check_profile, ensure_evidence_parent, evidence_path, find_evidence, profile_data, sample_path
 
 EXIT_SUCCESS = 0
 EXIT_FAILURE = 1
 
-I18N_LANGS = ["en", "zh", "zh-Hant", "ja", "ko", "ru", "ms", "pt-br"]
+from appstore_i18n import LOCALES as I18N_LANGS, fill_locales, normalize_locales
 TYPE_ALIASES = {
     "ai": "AI",
     "bi": "BI",
@@ -84,7 +84,7 @@ def _canonical_type(value: Any, fallback: str = "Tool") -> str:
 def _split_volume(value: str) -> Optional[Dict[str, str]]:
     parts = value.split(":")
     if len(parts) < 2:
-        return None
+        return {"source": "", "target": value.strip(), "mode": ""} if value.startswith("/") else None
     host = parts[0].strip()
     target = parts[1].strip()
     mode = ":".join(parts[2:]).strip() if len(parts) > 2 else ""
@@ -155,10 +155,17 @@ def _normalize_appspec(raw_spec: Dict[str, Any]) -> Dict[str, Any]:
             if not parsed:
                 continue
             name = _volume_name(parsed["source"], parsed["target"])
+            source = parsed["source"]
+            if not source:
+                volume_type = "anonymous"
+            elif source.startswith((".", "/", "~/", "$")):
+                volume_type = "path"
+            else:
+                volume_type = "volume"
             env_key = f"APP_DATA_DIR_{_sanitize_env_suffix(name)}" if multiple else "APP_DATA_DIR"
             volume_entries.append({
                 "name": name,
-                "type": "path",
+                "type": volume_type,
                 "desc": f"{name.title()} Directory",
                 "source": parsed["source"],
                 "target": parsed["target"],
@@ -178,8 +185,10 @@ def _normalize_appspec(raw_spec: Dict[str, Any]) -> Dict[str, Any]:
 class AppSpecGenerator:
     """Generates a 1Panel v2 app directory from an AppSpec JSON dict."""
 
-    def __init__(self, spec: Dict[str, Any], out_dir: str, validate: bool = False):
+    def __init__(self, spec: Dict[str, Any], out_dir: str, validate: bool = False, submission_profile: Optional[str] = None):
         self.spec = _normalize_appspec(spec)
+        self.submission_profile = check_profile(submission_profile or self.spec.get("submissionProfile", "third-party"))
+        self.spec["submissionProfile"] = self.submission_profile
         self.app_key = self.spec.get("appKey", "unknown")
         self.version = self.spec.get("version", "latest")
         if not _is_safe_app_key(self.app_key):
@@ -196,8 +205,9 @@ class AppSpecGenerator:
         self.app_dir = _resolve_child(self.out_dir, self.app_key)
         self.version_dir = _resolve_child(self.app_dir, self.version)
         self._existing_source_evidence = _load_existing_evidence(
-            self.app_dir / "source-evidence.json"
+            find_evidence(self.app_dir)
         )
+        check_output_profile(self.app_dir, self.submission_profile, self.version)
 
     def generate(self) -> str:
         """Generate the complete 1Panel v2 app directory. Returns output path."""
@@ -207,14 +217,15 @@ class AppSpecGenerator:
         self._write_version_data_yml()
         self._write_compose()
         self._write_env_sample()
+        self._write_readme()
         self._write_logo()
         self._write_source_evidence()
-        self._write_readme()
         self._write_runtime_files()
         return str(self.app_dir)
 
     def _ensure_dirs(self) -> None:
         self.app_dir.mkdir(parents=True, exist_ok=True)
+        ensure_evidence_parent(self.app_dir)
         self.version_dir.mkdir(parents=True, exist_ok=True)
         (self.version_dir / "data").mkdir(parents=True, exist_ok=True)
 
@@ -237,7 +248,7 @@ class AppSpecGenerator:
                 "github": self.spec.get("repository", ""),
                 "shortDescZh": self.spec.get("shortDescZh", ""),
                 "shortDescEn": self.spec.get("description", ""),
-                "description": _i18n_map(self.spec.get("shortDescZh", ""), self.spec.get("description", "")),
+                "description": fill_locales(self.spec.get("shortDescZh", ""), self.spec.get("description", ""), self.spec.get("descriptionI18n")),
                 "crossVersionUpdate": False,
                 "limit": self.spec.get("limit", 0),
                 "architectures": self.spec.get("architectures", ["amd64"]),
@@ -257,7 +268,7 @@ class AppSpecGenerator:
         }
         if form_fields:
             ver_data["additionalProperties"]["formFields"] = form_fields
-        return ver_data
+        return profile_data(ver_data, self.submission_profile)
 
     def _build_form_fields(self) -> List[Dict[str, Any]]:
         """Build formFields from spec formFields[] + ports[]."""
@@ -319,8 +330,8 @@ class AppSpecGenerator:
     def _volume_to_formfield(vol: Dict[str, Any], total_volumes: int) -> Optional[Dict[str, Any]]:
         name = vol.get("name", "data")
         vtype = vol.get("type", "path")
-        if vtype == "file":
-            return None  # File volumes don't get formFields
+        if vtype != "path":
+            return None  # Fixed files and Docker-managed volumes need no directory input.
         env_key = vol.get("envKey") or (f"APP_DATA_DIR_{_sanitize_env_suffix(name)}" if total_volumes > 1 else "APP_DATA_DIR")
         default = vol.get("source") if str(vol.get("source", "")).startswith(".") else f"./data/{name}"
         return {
@@ -367,24 +378,42 @@ class AppSpecGenerator:
             service["ports"] = ports_list
 
         volumes = self.spec.get("_volumes", [])
+        named_volumes: Dict[str, Any] = {}
         if volumes:
             vol_list = []
             for v in volumes:
-                if isinstance(v, dict) and v.get("type", "path") == "path":
-                    vname = v.get("name", "data")
+                if not isinstance(v, dict):
+                    continue
+                vname = v.get("name", "data")
+                vtype = v.get("type", "path")
+                target = v.get("target") or f"/data/{vname}"
+                mode = f":{v.get('mode')}" if v.get("mode") else ""
+                if vtype == "path":
                     env_key = v.get("envKey") or (f"APP_DATA_DIR_{_sanitize_env_suffix(vname)}" if len(volumes) > 1 else "APP_DATA_DIR")
-                    target = v.get("target") or f"/data/{vname}"
-                    mode = f":{v.get('mode')}" if v.get("mode") else ""
                     vol_list.append(f"${{{env_key}}}:{target}{mode}")
+                elif vtype in {"file", "volume"}:
+                    source = v.get("source")
+                    if not source:
+                        raise ValueError(f"{vtype} mount {vname!r} requires a source")
+                    vol_list.append(f"{source}:{target}{mode}")
+                    if vtype == "volume":
+                        named_volumes[source] = {}
+                elif vtype == "anonymous":
+                    vol_list.append(target)
+                else:
+                    raise ValueError(f"unsupported mount type: {vtype!r}")
             if vol_list:
                 service["volumes"] = vol_list
 
-        return {
+        compose = {
             "services": {self.app_key: service},
             "networks": {
                 "1panel-network": {"external": True},
             },
         }
+        if named_volumes:
+            compose["volumes"] = named_volumes
+        return compose
 
     def _normalize_compose_override(self, compose_data: Dict[str, Any]) -> Dict[str, Any]:
         compose = _strip_internal_metadata(compose_data if isinstance(compose_data, dict) else {})
@@ -421,23 +450,26 @@ class AppSpecGenerator:
             env_key = f_item.get("envKey", "")
             default = f_item.get("default", "")
             if env_key and env_key != "CONTAINER_NAME":
-                lines.append(f"{env_key}={default}")
+                lines.append(f"{env_key}={format_env_value(default)}")
         for port in self.spec.get("ports", []) or []:
             env_key = port.get("envKey", "")
             default = port.get("hostDefault", "")
             if env_key and env_key not in {l.split("=")[0] for l in lines}:
-                lines.append(f"{env_key}={default}")
+                lines.append(f"{env_key}={format_env_value(default)}")
         existing = {line.split("=")[0] for line in lines if "=" in line}
         for env_key in sorted(compose_vars - existing):
             lines.append(f"{env_key}=")
         lines.append("")
-        with open(self.version_dir / ".env.sample", "w", encoding="utf-8") as fh:
+        target = sample_path(self.app_dir, self.version, self.submission_profile)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with open(target, "w", encoding="utf-8") as fh:
             fh.write("\n".join(lines))
 
     # ── source-evidence.json ──────────────────────────────────────────
 
     def _write_source_evidence(self) -> None:
         evidence: Dict[str, Any] = {
+            "submissionProfile": self.submission_profile,
             "repository": self.spec.get("repository", ""),
             "dockerDocs": self.spec.get("dockerDocs", ""),
             "composeFile": self.spec.get("composeFile", "(generated)"),
@@ -468,11 +500,11 @@ class AppSpecGenerator:
         if notes:
             evidence["migrationNotes"] = notes
 
-        evidence_path = self.app_dir / "source-evidence.json"
+        evidence_file = evidence_path(self.app_dir)
         evidence = _merge_baota_source_evidence(
             self._existing_source_evidence, evidence, self.version
         )
-        with open(evidence_path, "w", encoding="utf-8") as fh:
+        with open(evidence_file, "w", encoding="utf-8") as fh:
             json.dump(evidence, fh, ensure_ascii=False, indent=2)
 
     # ── README.md ─────────────────────────────────────────────────────
@@ -502,78 +534,7 @@ class AppSpecGenerator:
 
         delivered_hash = hashlib.sha256(target.read_bytes()).hexdigest()
         if used_default:
-            notice = self.app_dir / "ASSET-LICENSES" / "default-logo.txt"
-            source = self.app_dir / "assets" / "default-logo.svg"
-            _assert_safe_output_targets(
-                self.out_dir, [notice.parent, notice, source.parent, source]
-            )
-            notice.parent.mkdir(parents=True, exist_ok=True)
-            source.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(str(default_license), str(notice))
-            shutil.copy2(str(default_source), str(source))
-            notice_hash = hashlib.sha256(notice.read_bytes()).hexdigest()
-            source_hash = hashlib.sha256(source.read_bytes()).hexdigest()
-            self.spec["logoEvidence"] = {
-                "source": "bundled:assets/default-logo.svg",
-                "license": "MIT",
-                "sha256": delivered_hash,
-            }
-            existing_redistribution = self.spec.get("redistributionEvidence")
-            if isinstance(existing_redistribution, dict):
-                redistribution_status = existing_redistribution.get(
-                    "status", "unresolved"
-                )
-                required_files = list(existing_redistribution.get("requiredFiles", []))
-                materials = [
-                    item
-                    for item in existing_redistribution.get("materials", [])
-                    if isinstance(item, dict)
-                    and item.get("path")
-                    not in {
-                        "ASSET-LICENSES/default-logo.txt",
-                        "assets/default-logo.svg",
-                    }
-                ]
-                assets = [
-                    item
-                    for item in existing_redistribution.get("assets", [])
-                    if isinstance(item, dict) and item.get("path") != "logo.png"
-                ]
-            else:
-                redistribution_status = "verified"
-                required_files = []
-                materials = []
-                assets = []
-            if "ASSET-LICENSES/default-logo.txt" not in required_files:
-                required_files.append("ASSET-LICENSES/default-logo.txt")
-            if "assets/default-logo.svg" not in required_files:
-                required_files.append("assets/default-logo.svg")
-            materials.append({
-                "path": "ASSET-LICENSES/default-logo.txt",
-                "sha256": notice_hash,
-                "purpose": "default logo license",
-            })
-            materials.append({
-                "path": "assets/default-logo.svg",
-                "sha256": source_hash,
-                "purpose": "default logo source",
-            })
-            assets.append({
-                "path": "logo.png",
-                "source": "bundled:assets/default-logo.svg",
-                "license": "MIT",
-                "sha256": delivered_hash,
-                "requiredFiles": [
-                    "ASSET-LICENSES/default-logo.txt",
-                    "assets/default-logo.svg",
-                ],
-            })
-            self.spec["redistributionEvidence"] = {
-                "status": redistribution_status,
-                "requiredFiles": required_files,
-                "materials": materials,
-                "assets": assets,
-            }
+            self.spec = bundled_logo_evidence(self.app_dir, self.spec)
         elif not isinstance(self.spec.get("redistributionEvidence"), dict):
             logo_evidence = self.spec.get("logoEvidence", {})
             logo_evidence = logo_evidence if isinstance(logo_evidence, dict) else {}
@@ -592,17 +553,10 @@ class AppSpecGenerator:
             }
 
     def _write_runtime_files(self) -> None:
-        scripts_dir = self.version_dir / "scripts"
-        scripts_dir.mkdir(parents=True, exist_ok=True)
-        scripts = {
-            "upgrade.sh": "#!/bin/bash\nset -e\n",
-            "uninstall.sh": UNINSTALL_SCRIPT,
-        }
-        write_init_script(self.version_dir / "data.yml", scripts_dir / "init.sh")
-        for name, content in scripts.items():
-            path = scripts_dir / name
-            path.write_text(content, encoding="utf-8")
-            path.chmod(0o755)
+        if collect_runtime_path_fields(self._build_version_data()):
+            scripts_dir = self.version_dir / "scripts"
+            scripts_dir.mkdir(parents=True, exist_ok=True)
+            write_init_script(self.version_dir / "data.yml", scripts_dir / "init.sh")
 
     # ── Helpers ───────────────────────────────────────────────────────
 
@@ -622,6 +576,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--spec", required=True, help="Path to AppSpec JSON file / AppSpec JSON 文件路径")
     parser.add_argument("--out-dir", default="./1panel-apps", help="Output directory / 输出目录")
+    parser.add_argument("--submission-profile", choices=PROFILES, help="Submission target (default: AppSpec submissionProfile or third-party)")
     parser.add_argument("--validate", action="store_true", help="Run basic validation after generation / 生成后执行基础校验")
     parser.add_argument("--strict-store-validate", action="store_true", help="Run strict-store validation after generation / 生成后执行严格商店校验")
     parser.add_argument("--require-validate", action="store_true", help="Exit non-zero if validation fails / 校验失败时返回非零退出码")
@@ -634,22 +589,22 @@ def load_spec(spec_path: str) -> Dict[str, Any]:
         return json.load(fh)
 
 
-def validate_output(app_dir: str) -> Dict[str, Any]:
+def validate_output(app_dir: str, submission_profile: str = "third-party") -> Dict[str, Any]:
     """Basic validation: check required files exist."""
     app_path = pathlib.Path(app_dir)
     errors = []
     nested_app = app_path / app_path.name
     if (
         (nested_app / "data.yml").is_file()
-        and (nested_app / "source-evidence.json").is_file()
-        and any(path.is_dir() for path in nested_app.iterdir())
+        and any(path.is_dir() and (path / "data.yml").is_file() for path in nested_app.iterdir())
     ):
         errors.append(f"Invalid: duplicate nested app root: {nested_app}")
     checks = {
         "data.yml": app_path / "data.yml",
         "README.md": app_path / "README.md",
+        "README_en.md": app_path / "README_en.md",
         "logo.png": app_path / "logo.png",
-        "source-evidence.json": app_path / "source-evidence.json",
+        "source-evidence.json (external)": find_evidence(app_path),
     }
     for label, fp in checks.items():
         if not fp.is_file():
@@ -658,10 +613,10 @@ def validate_output(app_dir: str) -> Dict[str, Any]:
     if logo.is_file() and logo.stat().st_size == 0:
         errors.append("Invalid: logo.png is empty")
 
-    evidence_path = app_path / "source-evidence.json"
-    if evidence_path.is_file():
+    evidence_file = find_evidence(app_path)
+    if evidence_file.is_file():
         try:
-            evidence = load_source_evidence(evidence_path)
+            evidence = load_source_evidence(evidence_file)
             for error in validate_source_evidence(
                 evidence,
                 require_urls=False,
@@ -681,11 +636,8 @@ def validate_output(app_dir: str) -> Dict[str, Any]:
         ver_checks = {
             f"{sd.name}/data.yml": sd / "data.yml",
             f"{sd.name}/docker-compose.yml": sd / "docker-compose.yml",
-            f"{sd.name}/.env.sample": sd / ".env.sample",
+            f"{sd.name}/.env.sample (validation input)": sample_path(app_path, sd.name, submission_profile),
             f"{sd.name}/data": sd / "data",
-            f"{sd.name}/scripts/init.sh": sd / "scripts" / "init.sh",
-            f"{sd.name}/scripts/upgrade.sh": sd / "scripts" / "upgrade.sh",
-            f"{sd.name}/scripts/uninstall.sh": sd / "scripts" / "uninstall.sh",
         }
         for label, fp in ver_checks.items():
             if label.endswith("/data"):
@@ -696,7 +648,7 @@ def validate_output(app_dir: str) -> Dict[str, Any]:
 
         try:
             root_data = yaml.safe_load((app_path / "data.yml").read_text(encoding="utf-8")) or {}
-            desc = root_data.get("additionalProperties", {}).get("description")
+            desc = normalize_locales(root_data.get("additionalProperties", {}).get("description"))
             if not isinstance(desc, dict) or not all(lang in desc for lang in I18N_LANGS):
                 errors.append("Invalid: root additionalProperties.description i18n")
         except (OSError, yaml.YAMLError) as exc:
@@ -715,7 +667,7 @@ def validate_output(app_dir: str) -> Dict[str, Any]:
 
         try:
             compose_text = (sd / "docker-compose.yml").read_text(encoding="utf-8")
-            env_text = (sd / ".env.sample").read_text(encoding="utf-8")
+            env_text = sample_path(app_path, sd.name, submission_profile).read_text(encoding="utf-8")
             env_keys = {line.split("=", 1)[0] for line in env_text.splitlines() if "=" in line}
             compose_vars = set(re.findall(r"\$\{([A-Za-z_][A-Za-z0-9_]*)", compose_text))
             for env_key in sorted(compose_vars - env_keys):
@@ -774,7 +726,7 @@ def main() -> int:
     # Generate
     try:
         report["step"] = "generate"
-        generator = AppSpecGenerator(spec, args.out_dir, args.validate)
+        generator = AppSpecGenerator(spec, args.out_dir, args.validate, args.submission_profile)
         output_path = generator.generate()
     except Exception as exc:
         report["error"] = f"Generation failed: {exc}"
@@ -783,6 +735,8 @@ def main() -> int:
 
     print(f"Generated: {output_path}")
     report["appDir"] = output_path
+    report["submissionProfile"] = generator.submission_profile
+    report["sourceEvidence"] = str(evidence_path(pathlib.Path(output_path)))
     report["delivery"] = evaluate_baota_delivery_readiness(
         generator.spec,
         app_dir=pathlib.Path(output_path),
@@ -792,7 +746,7 @@ def main() -> int:
     # Validate
     if args.validate:
         report["step"] = "validate"
-        validation = validate_output(output_path)
+        validation = validate_output(output_path, generator.submission_profile)
         report["validation"] = {
             "valid": validation.get("valid"),
             "failed": validation.get("failed"),
@@ -810,7 +764,7 @@ def main() -> int:
 
     if args.strict_store_validate:
         report["step"] = "strict_store_validate"
-        strict_validation = run_strict_store_validation(output_path, emit_output=True)
+        strict_validation = run_strict_store_validation(output_path, emit_output=True, submission_profile=generator.submission_profile)
         report["strictValidation"] = {
             "mode": strict_validation.get("mode"),
             "validator": strict_validation.get("validator"),

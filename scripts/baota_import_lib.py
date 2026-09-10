@@ -27,8 +27,10 @@ except ImportError:
     )
     raise SystemExit(1)
 
-from runtime_script_utils import UNINSTALL_SCRIPT, render_init_script_content
+from runtime_script_utils import collect_runtime_path_fields, render_init_script_content
 from source_evidence import inspect_redistribution_delivery, validate_source_evidence
+from package_contract import check_output_profile, check_profile, ensure_evidence_parent, evidence_path, find_evidence, profile_data, sample_path
+from gen_env_sample import format_env_value
 
 # ── Error Codes ───────────────────────────────────────────────────────
 E_BAOTA_REQUIRED_FILES = "E_BAOTA_REQUIRED_FILES"
@@ -53,7 +55,7 @@ VERSION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 # ── Standard Baota platform fields / env keys ─────────────────────────
 STANDARD_FIELD_ATTRS = {"domain", "allow_access", "cpus", "memory_limit"}
 STANDARD_ENV_KEYS = {"app_path", "host_ip", "cpus", "memory_limit"}
-I18N_LANGS = ["en", "zh", "zh-Hant", "ja", "ko", "ru", "ms", "pt-br"]
+from appstore_i18n import LOCALES as I18N_LANGS, fill_locales, normalize_locales
 
 # ── App type mapping ──────────────────────────────────────────────────
 BAOTA_TYPE_TO_1PANEL: Dict[str, str] = {
@@ -152,6 +154,9 @@ def _generated_output_targets(
         scripts_dir,
         app_dir / "data.yml",
         app_dir / "README.md",
+        app_dir / "README_en.md",
+        evidence_path(app_dir),
+        sample_path(app_dir, version_dir.name, "official"),
         app_dir / "logo.png",
         app_dir / "source-evidence.json",
         app_dir / "ASSET-LICENSES",
@@ -213,6 +218,7 @@ def run_strict_store_validation(
     app_dir: str,
     version: Optional[str] = None,
     emit_output: bool = False,
+    submission_profile: str = "third-party",
 ) -> Dict[str, Any]:
     validate_script = pathlib.Path(__file__).resolve().parent / "validate-v2.sh"
     if not validate_script.is_file():
@@ -233,6 +239,8 @@ def run_strict_store_validation(
         "--dir",
         app_dir,
         "--strict-store",
+        "--i18n-mode", "strict",
+        "--submission-profile", check_profile(submission_profile),
         "--source-evidence-mode",
         "required",
         "--require-delivery-evidence",
@@ -534,9 +542,7 @@ def _str_default(value: Any) -> str:
 
 
 def _i18n_map(zh_text: Any, en_text: Any = None) -> Dict[str, str]:
-    zh = str(zh_text or en_text or "")
-    en = str(en_text or zh_text or "")
-    return {lang: (zh if lang in {"zh", "zh-Hant"} else en) for lang in I18N_LANGS}
+    return fill_locales(zh_text, en_text)
 
 
 def _sanitize_env_suffix(value: Any) -> str:
@@ -556,8 +562,14 @@ def _normalize_form_field(field: Dict[str, Any]) -> Dict[str, Any]:
     normalized = copy.deepcopy(field)
     label_zh = normalized.get("labelZh") or normalized.get("envKey") or "配置"
     label_en = normalized.get("labelEn") or str(label_zh)
-    if not isinstance(normalized.get("label"), dict):
-        normalized["label"] = _i18n_map(label_zh, label_en)
+    normalized["label"] = fill_locales(label_zh, label_en, normalized.get("label"))
+    if isinstance(normalized.get("description"), dict):
+        normalized["description"] = normalize_locales(normalized["description"])
+    child = normalized.get("child")
+    if isinstance(child, dict) and any(child.get(key) for key in ("label", "labelZh", "labelEn")):
+        normalized["child"] = _normalize_form_field(child)
+    elif isinstance(child, list):
+        normalized["child"] = [_normalize_form_field(item) if isinstance(item, dict) else item for item in child]
     if str(normalized.get("envKey", "")).startswith("PANEL_APP_PORT_"):
         normalized["required"] = True
         normalized.setdefault("rule", "paramPort")
@@ -566,59 +578,41 @@ def _normalize_form_field(field: Dict[str, Any]) -> Dict[str, Any]:
 
 def _write_default_runtime_files(app_out: pathlib.Path, ver_out: pathlib.Path, version_data: Optional[Dict[str, Any]] = None) -> None:
     (ver_out / "data").mkdir(parents=True, exist_ok=True)
-    scripts_dir = ver_out / "scripts"
-    scripts_dir.mkdir(parents=True, exist_ok=True)
-    scripts = {
-        "init.sh": render_init_script_content(version_data or {}),
-        "upgrade.sh": "#!/bin/bash\nset -e\n",
-        "uninstall.sh": UNINSTALL_SCRIPT,
-    }
-    for name, content in scripts.items():
-        path = scripts_dir / name
-        path.write_text(content, encoding="utf-8")
+    if collect_runtime_path_fields(version_data or {}):
+        scripts_dir = ver_out / "scripts"
+        scripts_dir.mkdir(parents=True, exist_ok=True)
+        path = scripts_dir / "init.sh"
+        path.write_text(render_init_script_content(version_data or {}), encoding="utf-8")
         path.chmod(0o755)
 
 
-def _write_default_readme(app_out: pathlib.Path, appspec: Dict[str, Any], version: str) -> None:
+def _write_default_readme(app_out: pathlib.Path, appspec: Dict[str, Any], version: str, overwrite: bool = True) -> None:
+    """Write product-facing Chinese/English READMEs without release-specific prose."""
     title = appspec.get("title") or appspec.get("appKey", "")
-    desc = appspec.get("description") or appspec.get("shortDescZh") or ""
-    lines = [
-        f"# {title}",
-        "",
-        "## 产品介绍",
-        "",
-        str(desc),
-        "",
-        "## 主要功能",
-        "",
-        "- 具体功能以项目官方文档和当前镜像版本为准。",
-        "",
-        "## 访问说明",
-        "",
-        "- 安装后通过应用配置的端口访问服务。",
-        "",
-        "## Introduction",
-        "",
-        str(desc),
-        "",
-        "## Features",
-        "",
-        "- Refer to the official project documentation for features supported by the selected image version.",
-        "",
-        "## Information",
-        "",
-        f"- App Key: {appspec.get('appKey', '')}",
-        "- Version: select the required version from the app store version list",
-        f"- Type: {appspec.get('type', 'Tool')}",
-        "- Source evidence: source-evidence.json",
-        "",
-    ]
-    notes = appspec.get("migrationNotes") or []
-    if notes:
-        lines.extend(["## Migration Notes", ""])
-        lines.extend(f"- {note}" for note in notes)
-        lines.append("")
-    (app_out / "README.md").write_text("\n".join(lines), encoding="utf-8")
+    readme = appspec.get("readme") or {}
+    if not isinstance(readme, dict):
+        raise ValueError("AppSpec readme must be an object")
+    for language, filename, intro, features, access, links_title in (
+        ("Zh", "README.md", "产品介绍", "主要功能", "访问说明", "相关链接"),
+        ("En", "README_en.md", "Introduction", "Features", "Usage", "Links"),
+    ):
+        target = app_out / filename
+        if target.exists() and not overwrite:
+            continue
+        description = readme.get("introduction" + language) or appspec.get("shortDescZh" if language == "Zh" else "description") or title
+        feature_items = readme.get("features" + language) or []
+        if not isinstance(feature_items, list) or any(not isinstance(item, str) for item in feature_items):
+            raise ValueError(f"readme.features{language} must be a list of strings")
+        placeholder = "请按官方来源补全功能说明。" if language == "Zh" else "Complete the features from official sources (placeholder)."
+        usage = readme.get("usage" + language) or ("请按官方来源补全访问方式、数据目录及首次使用要求。" if language == "Zh" else "Complete access, persistence and first-use instructions from official sources (placeholder).")
+        lines = [f"# {title}", "", f"## {intro}", "", str(description), "", f"## {features}", ""]
+        lines.extend(f"- {item}" for item in (feature_items or [placeholder]))
+        lines.extend(["", f"## {access}", "", str(usage)])
+        links = [("Website", appspec.get("home")), ("Documentation", appspec.get("help")), ("Source", appspec.get("repository"))]
+        if any(url for _, url in links):
+            lines.extend(["", f"## {links_title}", ""])
+            lines.extend(f"- [{label}]({url})" for label, url in links if url)
+        target.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
 
 
 def _detect_port_envkey(port_entry: Tuple[str, str, str, str], index: int, total: int) -> str:
@@ -1584,7 +1578,8 @@ class BaotaToAppSpecMapper:
 class ImportRunner:
     """Orchestrates the full Baota → 1Panel import pipeline."""
 
-    def __init__(self):
+    def __init__(self, submission_profile: str = "third-party"):
+        self.submission_profile = check_profile(submission_profile)
         self.precheck = BaotaPrecheck()
         self.parser = BaotaParser()
         self.mapper = BaotaToAppSpecMapper()
@@ -1683,7 +1678,9 @@ class ImportRunner:
 
         # 4. Build AppSpec
         appspec = self.mapper.build_appspec(app_json, selected_version, compose_data, input_dir)
+        appspec["submissionProfile"] = self.submission_profile
         result["appspec"] = appspec
+        result["submissionProfile"] = self.submission_profile
 
         # 5. Write output
         try:
@@ -1713,7 +1710,7 @@ class ImportRunner:
 
         if strict_store_validate:
             result["stage"] = "strict_store_validate"
-            validation = run_strict_store_validation(output_path, selected_version)
+            validation = run_strict_store_validation(output_path, selected_version, submission_profile=self.submission_profile)
             result["validation"] = validation
             delivery = evaluate_baota_delivery_readiness(
                 appspec,
@@ -1741,7 +1738,7 @@ class ImportRunner:
                 result["success"] = False
         elif validate:
             result["stage"] = "basic_validate"
-            validation = self._validate_output(output_path)
+            validation = self._validate_output(output_path, self.submission_profile)
             validation["mode"] = "basic"
             result["validation"] = validation
             if require_validate and validation.get("failed"):
@@ -1818,8 +1815,10 @@ class ImportRunner:
         )
         app_out = _resolve_child(output_root, app_key)
         ver_out = _resolve_child(app_out, version)
-        evidence_path = app_out / "source-evidence.json"
-        existing_evidence = _load_existing_evidence(evidence_path)
+        evidence_file = evidence_path(app_out)
+        existing_evidence = _load_existing_evidence(find_evidence(app_out))
+        check_output_profile(app_out, self.submission_profile, version)
+        ensure_evidence_parent(app_out)
         ver_out.mkdir(parents=True, exist_ok=True)
         (ver_out / "data").mkdir(parents=True, exist_ok=True)
 
@@ -1829,7 +1828,7 @@ class ImportRunner:
             yaml.dump(root_data, fh, default_flow_style=False, allow_unicode=True)
 
         # Version data.yml
-        ver_data = self._build_version_data_yml(appspec)
+        ver_data = profile_data(self._build_version_data_yml(appspec), self.submission_profile)
         with open(ver_out / "data.yml", "w", encoding="utf-8") as fh:
             yaml.dump(ver_data, fh, default_flow_style=False, allow_unicode=True)
         _write_default_runtime_files(app_out, ver_out, ver_data)
@@ -1866,16 +1865,19 @@ class ImportRunner:
         # source-evidence.json must describe the file that was actually copied.
         evidence = self._build_source_evidence(appspec)
         evidence = _merge_baota_source_evidence(existing_evidence, evidence, version)
-        with open(evidence_path, "w", encoding="utf-8") as fh:
+        evidence["submissionProfile"] = self.submission_profile
+        with open(evidence_file, "w", encoding="utf-8") as fh:
             json.dump(evidence, fh, ensure_ascii=False, indent=2)
 
         return str(app_out)
 
     @staticmethod
-    def _validate_output(app_dir: str) -> Dict[str, Any]:
+    def _validate_output(app_dir: str, submission_profile: str = "third-party") -> Dict[str, Any]:
         app_path = pathlib.Path(app_dir)
         errors: List[str] = []
-        required_root = ["data.yml", "README.md", "logo.png", "source-evidence.json"]
+        required_root = ["data.yml", "README.md", "README_en.md", "logo.png"]
+        if not find_evidence(app_path).is_file():
+            errors.append("Missing: external source-evidence.json")
         for name in required_root:
             fp = app_path / name
             if not fp.is_file():
@@ -1885,7 +1887,7 @@ class ImportRunner:
             errors.append("Invalid: logo.png is empty")
         try:
             root_data = yaml.safe_load((app_path / "data.yml").read_text(encoding="utf-8")) or {}
-            desc = root_data.get("additionalProperties", {}).get("description")
+            desc = normalize_locales(root_data.get("additionalProperties", {}).get("description"))
             if not isinstance(desc, dict) or not all(lang in desc for lang in I18N_LANGS):
                 errors.append("Invalid: root additionalProperties.description i18n")
         except (OSError, yaml.YAMLError) as exc:
@@ -1898,11 +1900,7 @@ class ImportRunner:
             required_version = [
                 "data.yml",
                 "docker-compose.yml",
-                ".env.sample",
                 "data",
-                "scripts/init.sh",
-                "scripts/upgrade.sh",
-                "scripts/uninstall.sh",
             ]
             for rel in required_version:
                 fp = version_dir / rel
@@ -1923,7 +1921,7 @@ class ImportRunner:
                 field_keys = set()
             try:
                 compose_text = (version_dir / "docker-compose.yml").read_text(encoding="utf-8")
-                env_text = (version_dir / ".env.sample").read_text(encoding="utf-8")
+                env_text = sample_path(app_path, version_dir.name, submission_profile).read_text(encoding="utf-8")
                 compose_vars = set(re.findall(r"\$\{([A-Za-z_][A-Za-z0-9_]*)", compose_text))
                 env_keys = {line.split("=", 1)[0] for line in env_text.splitlines() if "=" in line}
                 for env_key in sorted(compose_vars - env_keys):
@@ -2055,7 +2053,7 @@ class ImportRunner:
             if vn == "CONTAINER_NAME":
                 lines.append(f"{vn}={container_name}")
             elif vn in defaults:
-                lines.append(f"{vn}={_str_default(defaults[vn])}")
+                lines.append(f"{vn}={format_env_value(defaults[vn])}")
             elif vn == "APP_DATA_DIR":
                 lines.append(f"{vn}=./data")
             elif vn.startswith("APP_DATA_DIR_"):
@@ -2070,7 +2068,10 @@ class ImportRunner:
             lines.append("# No variables detected")
         lines.append("")
 
-        with open(ver_out / ".env.sample", "w", encoding="utf-8") as fh:
+        profile = (appspec or {}).get("submissionProfile", "third-party")
+        target = sample_path(ver_out.parent, ver_out.name, profile)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with open(target, "w", encoding="utf-8") as fh:
             fh.write("\n".join(lines))
 
 

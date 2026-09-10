@@ -32,6 +32,7 @@ SOURCE_REPOSITORY=""
 SOURCE_DOCKER_DOCS=""
 SOURCE_COMPOSE_FILE=""
 TIMEZONE="Asia/Shanghai"
+SUBMISSION_PROFILE="third-party"
 
 infer_tag() {
   local explicit_tag="$1"
@@ -109,11 +110,13 @@ options:
   --source-repository <url>   official source repository URL (required)
   --source-docker-docs <url>  official docker docs/image URL (required)
   --source-compose-file <url> official compose reference URL (required)
+  --submission-profile <third-party|official>  default: third-party
   --timezone <tz>             default TZ value for version data.yml (default: Asia/Shanghai)
 
 behavior notes:
   - --out-dir is always a parent directory; do not pass a path already ending in <app-key>
-  - the app root directly contains data.yml, source-evidence.json, and the selected version directory
+  - the app root contains data.yml, README.md, README_en.md, logo.png, and the selected version directory
+  - source evidence is written outside the app at <parent>/.evidence/<app-key>/source-evidence.json
   - raw scaffold output contains placeholder README / metadata text by design
   - replace placeholder content before expecting --strict-store to pass
   - --force allows writing into an existing non-empty app directory; it does not clean residual files for you
@@ -141,6 +144,7 @@ while [[ $# -gt 0 ]]; do
     --source-docker-docs) SOURCE_DOCKER_DOCS="$2"; shift 2 ;;
     --source-compose-file) SOURCE_COMPOSE_FILE="$2"; shift 2 ;;
     --timezone) TIMEZONE="$2"; shift 2 ;;
+    --submission-profile) SUBMISSION_PROFILE="$2"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown arg: $1"; usage; exit 2 ;;
   esac
@@ -159,6 +163,8 @@ done
   echo "FAIL: --version must be one safe path component" >&2
   exit 2
 }
+
+case "$SUBMISSION_PROFILE" in third-party|official) ;; *) echo "FAIL: invalid submission profile" >&2; exit 2 ;; esac
 
 OUT_DIR="${OUT_DIR:-./1panel-apps}"
 PORT="${PORT:-8080}"
@@ -186,6 +192,8 @@ if [[ -e "$APP_DIR" ]]; then
     exit 2
   fi
 fi
+"$PYTHON_BIN" "$(dirname "$0")/package_contract.py" "$APP_DIR" --check-output --version "$VERSION" --submission-profile "$SUBMISSION_PROFILE" --allow-existing
+EVIDENCE_FILE="$("$PYTHON_BIN" "$(dirname "$0")/package_contract.py" "$APP_DIR" --prepare-evidence)"
 mkdir -p "$VER_DIR/data" "$VER_DIR/scripts"
 : > "$VER_DIR/data/.gitkeep"
 : > "$VER_DIR/scripts/.gitkeep"
@@ -242,35 +250,13 @@ payload = {
 out.write_text(yaml.safe_dump(payload, allow_unicode=True, sort_keys=False), encoding="utf-8")
 PY
 
-cat > "$APP_DIR/README.md" <<MD
-# ${TITLE}
-
-## 产品介绍
-
-${TITLE} 是由 1panel-app-adapter 生成的 1Panel 应用模板，请按官方来源补全业务说明。
-
-## 主要功能
-
-- 提供基于容器镜像的标准化安装入口
-- 预置 1Panel 所需的基础参数与生命周期脚本
-
-## 访问说明
-
-- 默认通过 PANEL_APP_PORT_HTTP 对外访问
-- 安装后访问地址：http://<server-ip>:<port>
-
-## Introduction
-
-${TITLE} is a generated 1Panel app template produced by 1panel-app-adapter.
-
-## Features
-
-- Standardized container-based installation entry
-- Baseline 1Panel fields and lifecycle scripts
-
-- app key: ${APP_KEY}
-- version: select the required version from the app store version list
-MD
+"$PYTHON_BIN" - "$(dirname "$0")" "$APP_DIR" "$APP_KEY" "$TITLE" "$VERSION" "$WEBSITE" "$DOCUMENT" "$SOURCE_REPOSITORY" <<'PY'
+import sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+from baota_import_lib import _write_default_readme
+_write_default_readme(Path(sys.argv[2]), {"appKey": sys.argv[3], "title": sys.argv[4], "home": sys.argv[6], "help": sys.argv[7], "repository": sys.argv[8]}, sys.argv[5])
+PY
 
 DEFAULT_LOGO_COPIED=0
 if [[ ! -f "$APP_DIR/logo.png" ]]; then
@@ -284,26 +270,29 @@ if [[ ! -f "$APP_DIR/logo.png" ]]; then
       exit 2
     fi
     cp "$DEFAULT_LOGO" "$APP_DIR/logo.png"
-    mkdir -p "$APP_DIR/ASSET-LICENSES" "$APP_DIR/assets"
-    cp "$DEFAULT_LOGO_LICENSE" "$APP_DIR/ASSET-LICENSES/default-logo.txt"
-    cp "$DEFAULT_LOGO_SOURCE" "$APP_DIR/assets/default-logo.svg"
     DEFAULT_LOGO_COPIED=1
   else
     echo "[WARN] logo.png not provided or licensed default asset incomplete; add a verified PNG before publishing" >&2
   fi
 fi
 
-"$PYTHON_BIN" - "$APP_DIR/source-evidence.json" "$SOURCE_REPOSITORY" "$SOURCE_DOCKER_DOCS" "$SOURCE_COMPOSE_FILE" "$DEFAULT_LOGO_COPIED" <<'PY'
+"$PYTHON_BIN" - "$EVIDENCE_FILE" "$SOURCE_REPOSITORY" "$SOURCE_DOCKER_DOCS" "$SOURCE_COMPOSE_FILE" "$DEFAULT_LOGO_COPIED" "$APP_DIR" "$(dirname "$0")" "$SUBMISSION_PROFILE" <<'PY'
 import hashlib
 import json
 import sys
 from pathlib import Path
 
 out = Path(sys.argv[1])
-app_dir = out.parent
+app_dir = Path(sys.argv[6])
+sys.path.insert(0, sys.argv[7])
+from package_contract import bundled_logo_evidence
 logo = app_dir / "logo.png"
 used_default = sys.argv[5] == "1"
+default_logo = Path(sys.argv[7]).resolve().parent / "assets/default-logo.png"
+if not used_default and logo.is_file() and default_logo.is_file():
+    used_default = logo.read_bytes() == default_logo.read_bytes()
 payload = {
+    "submissionProfile": sys.argv[8],
     "repository": sys.argv[2],
     "dockerDocs": sys.argv[3],
     "composeFile": sys.argv[4],
@@ -311,40 +300,7 @@ payload = {
 if logo.is_file():
     logo_hash = hashlib.sha256(logo.read_bytes()).hexdigest()
     if used_default:
-        required_files = [
-            "ASSET-LICENSES/default-logo.txt",
-            "assets/default-logo.svg",
-        ]
-        notice = app_dir / required_files[0]
-        source = app_dir / required_files[1]
-        payload["logoEvidence"] = {
-            "source": "bundled:assets/default-logo.svg",
-            "license": "MIT",
-            "sha256": logo_hash,
-        }
-        payload["redistributionEvidence"] = {
-            "status": "verified",
-            "requiredFiles": required_files,
-            "materials": [
-                {
-                    "path": required_files[0],
-                    "sha256": hashlib.sha256(notice.read_bytes()).hexdigest(),
-                    "purpose": "default logo license",
-                },
-                {
-                    "path": required_files[1],
-                    "sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
-                    "purpose": "default logo source",
-                },
-            ],
-            "assets": [{
-                "path": "logo.png",
-                "source": "bundled:assets/default-logo.svg",
-                "license": "MIT",
-                "sha256": logo_hash,
-                "requiredFiles": required_files,
-            }],
-        }
+        payload = bundled_logo_evidence(app_dir, payload)
     else:
         payload["redistributionEvidence"] = {
             "status": "unresolved",
@@ -646,34 +602,14 @@ if [[ -n "$VOLUMES" ]]; then
   fi
 fi
 
-"$PYTHON_BIN" "$(dirname "$0")/gen_env_sample.py" "$VER_DIR/data.yml" "$VER_DIR/.env.sample" "$VER_DIR/docker-compose.yml" "$APP_KEY-compose-check"
-"$PYTHON_BIN" "$(dirname "$0")/runtime_script_utils.py" "$VER_DIR/data.yml" "$VER_DIR/scripts/init.sh"
-
-cat > "$VER_DIR/scripts/upgrade.sh" <<'SH'
-#!/usr/bin/env bash
-set -euo pipefail
-exit 0
-SH
-chmod +x "$VER_DIR/scripts/upgrade.sh"
-
-cat > "$VER_DIR/scripts/uninstall.sh" <<'SH'
-#!/usr/bin/env bash
-set -euo pipefail
-
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
-cd "$ROOT_DIR"
-if docker compose version >/dev/null 2>&1; then
-  docker compose down
-elif docker-compose version >/dev/null 2>&1; then
-  docker-compose down
-else
-  echo "Docker Compose is not available" >&2
-  exit 1
+"$PYTHON_BIN" "$(dirname "$0")/appstore_i18n.py" "$APP_DIR/data.yml" "$VER_DIR/data.yml" --normalize
+ENV_SAMPLE="$("$PYTHON_BIN" "$(dirname "$0")/package_contract.py" "$APP_DIR" --version "$VERSION" --submission-profile "$SUBMISSION_PROFILE")"
+"$PYTHON_BIN" "$(dirname "$0")/gen_env_sample.py" "$VER_DIR/data.yml" "$ENV_SAMPLE" "$VER_DIR/docker-compose.yml" "$APP_KEY-compose-check"
+if [[ ! -f "$VER_DIR/scripts/init.sh" ]]; then
+  "$PYTHON_BIN" "$(dirname "$0")/runtime_script_utils.py" "$VER_DIR/data.yml" "$VER_DIR/scripts/init.sh" --only-needed
 fi
-SH
-chmod +x "$VER_DIR/scripts/uninstall.sh"
 
-for required_path in "$APP_DIR/data.yml" "$APP_DIR/source-evidence.json" "$VER_DIR"; do
+for required_path in "$APP_DIR/data.yml" "$EVIDENCE_FILE" "$VER_DIR"; do
   if [[ ! -e "$required_path" ]]; then
     echo "FAIL: scaffold postcondition missing direct app-root artifact: $required_path" >&2
     exit 1
@@ -685,4 +621,5 @@ if [[ -s "$APP_DIR/$APP_KEY/data.yml" && -s "$APP_DIR/$APP_KEY/source-evidence.j
 fi
 
 bash "$(dirname "$0")/hint-panel-deps.sh" "$VER_DIR/docker-compose.yml" || true
-echo "OK: scaffolded -> $APP_DIR"
+echo "OK: scaffolded -> $APP_DIR (profile: $SUBMISSION_PROFILE)"
+echo "Evidence: $EVIDENCE_FILE"
