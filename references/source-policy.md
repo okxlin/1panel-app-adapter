@@ -64,7 +64,7 @@ Every generated app must provide source evidence containing at least:
 - `dockerDocs`
 - `composeFile`
 
-These values are written to `<app>/source-evidence.json` and validated by `scripts/validate-v2.sh`.
+These values are written outside the application package to `<out-dir>/.evidence/<app-key>/source-evidence.json` and validated by `scripts/validate-v2.sh`.
 Each evidence value must use `https://` URL format.
 
 ## Optional Evidence
@@ -170,6 +170,8 @@ floating image tag.
 
 ## License Delivery
 
+An image reference is not redistribution of the application source in this package. Do not create application `LICENSE.txt` files, copy a source archive, or add notice directories by default. Review the actual files redistributed (for example a logo or copied configuration); deliver only material their terms require. Required notices may be included in the README when the license permits. Source and review evidence stay in the run-side file, never in the submitted app directory.
+
 Record the exact version's application license in `licenseEvidence`. When the license has material
 use restrictions, also name it, link its official terms, and summarize the deployment-relevant
 restriction in the README, not only `source-evidence.json`. Do not invent an SPDX identifier or add
@@ -269,7 +271,7 @@ For Baota imports:
 
 - Public format source: `https://github.com/aaPanel/apphub`
 - Runtime behavior source: `https://github.com/aaPanel/aaPanel`
-- Imported artifacts should include `source-evidence.json.importSource` with `type: "baota"` and the selected source version.
+- Imported artifact sidecars should include `source-evidence.json.importSource` with `type: "baota"` and the selected source version.
 - Preserve `home` and `help` from `app.json` only as unverified declared hints. A recognizable domain, HTTPS URL, or GitHub repository shape is not identity evidence. Promote either value into official source evidence only after independently matching project ownership and the packaged deployment contract.
 - When `home` is empty but the input app lives in a git checkout, `repository` may fall back to that apphub repository URL as the app definition source. Keep `evidenceStatus` as `third_party_only` unless the target application's own official source is identified.
 - If only Baota/aaPanel metadata is available, keep `evidenceStatus` as `third_party_only` and require manual review before strict-store delivery.

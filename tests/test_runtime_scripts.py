@@ -33,6 +33,10 @@ def load_module(path: pathlib.Path, name: str):
 runtime_utils = load_module(RUNTIME_UTILS, "runtime_script_utils_test")
 
 
+def run_evidence(app_dir: pathlib.Path) -> pathlib.Path:
+    return app_dir.parent / ".evidence" / app_dir.name / "source-evidence.json"
+
+
 class RuntimeScriptGenerationTest(unittest.TestCase):
     def assert_uninstall_runs_from_version_dir(
         self, uninstall_script: pathlib.Path, version_dir: pathlib.Path
@@ -924,7 +928,7 @@ additionalProperties:
                 scripts_dir / "uninstall.sh", ver_dir
             )
 
-    def test_scaffold_generates_context_bound_non_destructive_uninstall(self):
+    def test_scaffold_leaves_uninstall_to_panel_unless_explicitly_finalized(self):
         with tempfile.TemporaryDirectory(prefix="adapter-scaffold-uninstall-") as tmp:
             out_dir = pathlib.Path(tmp) / "out"
             subprocess.run(
@@ -952,7 +956,8 @@ additionalProperties:
                 cwd=ROOT,
             )
             ver_dir = out_dir / "demo" / "1.0"
-
+            self.assertFalse((ver_dir / "scripts" / "uninstall.sh").exists())
+            runtime_utils.finalize_lifecycle_scripts(ver_dir / "data.yml", ver_dir / "scripts" / "init.sh")
             self.assert_uninstall_runs_from_version_dir(
                 ver_dir / "scripts" / "uninstall.sh", ver_dir
             )
@@ -1030,16 +1035,15 @@ additionalProperties:
             )
             app_dir = out_dir / "demo"
             logo = app_dir / "logo.png"
-            notice = app_dir / "ASSET-LICENSES" / "default-logo.txt"
+            notice = app_dir / "README.md"
             source = app_dir / "assets" / "default-logo.svg"
             evidence = json.loads(
-                (app_dir / "source-evidence.json").read_text(encoding="utf-8")
+                (run_evidence(app_dir)).read_text(encoding="utf-8")
             )
 
             self.assertTrue(notice.is_file())
-            self.assertEqual(
-                source.read_bytes(), (ROOT / "assets" / "default-logo.svg").read_bytes()
-            )
+            self.assertFalse(source.exists())
+            self.assertIn("Permission is hereby granted", notice.read_text(encoding="utf-8"))
             self.assertIn(
                 "CONTAINER_NAME=demo-compose-check",
                 (app_dir / "1.0" / ".env.sample").read_text(encoding="utf-8"),
@@ -1052,23 +1056,31 @@ additionalProperties:
             self.assertEqual(evidence["redistributionEvidence"]["status"], "verified")
             self.assertEqual(
                 set(evidence["redistributionEvidence"]["requiredFiles"]),
-                {
-                    "ASSET-LICENSES/default-logo.txt",
-                    "assets/default-logo.svg",
-                },
+                {"README.md"},
             )
             materials = {
                 item["path"]: item
                 for item in evidence["redistributionEvidence"]["materials"]
             }
             self.assertEqual(
-                materials["ASSET-LICENSES/default-logo.txt"]["sha256"],
+                materials["README.md"]["sha256"],
                 hashlib.sha256(notice.read_bytes()).hexdigest(),
             )
-            self.assertEqual(
-                materials["assets/default-logo.svg"]["sha256"],
-                hashlib.sha256(source.read_bytes()).hexdigest(),
+
+            refreshed = subprocess.run(
+                ["bash", str(SCAFFOLD), "--app-key", "demo", "--title", "Demo", "--image", "example/demo:1.0",
+                 "--version", "1.0", "--out-dir", str(out_dir), "--force",
+                 "--source-repository", "https://example.invalid/demo",
+                 "--source-docker-docs", "https://example.invalid/demo/docker",
+                 "--source-compose-file", "https://example.invalid/demo/compose.yml"],
+                text=True, capture_output=True, cwd=ROOT,
             )
+            self.assertEqual(refreshed.returncode, 0, refreshed.stdout + refreshed.stderr)
+            evidence = json.loads(run_evidence(app_dir).read_text(encoding="utf-8"))
+            self.assertEqual(evidence["logoEvidence"]["license"], "MIT")
+            self.assertEqual(notice.read_text(encoding="utf-8").count("Permission is hereby granted"), 1)
+            self.assertEqual(evidence["redistributionEvidence"]["materials"][0]["sha256"],
+                             hashlib.sha256(notice.read_bytes()).hexdigest())
 
     def test_scaffold_force_rejects_symlinked_default_logo_notice(self):
         with tempfile.TemporaryDirectory(prefix="adapter-scaffold-logo-link-") as tmp:
@@ -1162,20 +1174,19 @@ additionalProperties:
             )
             app_dir = out_dir / "demo"
             logo = app_dir / "logo.png"
-            notice = app_dir / "ASSET-LICENSES" / "default-logo.txt"
+            notice = app_dir / "README.md"
             source = app_dir / "assets" / "default-logo.svg"
             evidence = json.loads(
-                (app_dir / "source-evidence.json").read_text(encoding="utf-8")
+                (run_evidence(app_dir)).read_text(encoding="utf-8")
             )
             notice_exists = notice.is_file()
             source_exists = source.is_file()
             delivered_logo_hash = hashlib.sha256(logo.read_bytes()).hexdigest()
             delivered_notice_hash = hashlib.sha256(notice.read_bytes()).hexdigest()
-            delivered_source_hash = hashlib.sha256(source.read_bytes()).hexdigest()
             env_sample = (app_dir / "2.0" / ".env.sample").read_text(encoding="utf-8")
 
         self.assertTrue(notice_exists)
-        self.assertTrue(source_exists)
+        self.assertFalse(source_exists)
         self.assertIn("CONTAINER_NAME=demo-compose-check", env_sample)
         redistribution = evidence["redistributionEvidence"]
         self.assertEqual(redistribution["status"], "verified")
@@ -1187,10 +1198,7 @@ additionalProperties:
             item["path"]: item["sha256"] for item in redistribution["materials"]
         }
         self.assertEqual(
-            material_hashes["ASSET-LICENSES/default-logo.txt"], delivered_notice_hash
-        )
-        self.assertEqual(
-            material_hashes["assets/default-logo.svg"], delivered_source_hash
+            material_hashes["README.md"], delivered_notice_hash
         )
 
     def test_migration_removes_legacy_container_name_form_field(self):
@@ -1536,7 +1544,7 @@ additionalProperties:
             source_app = source_root / "demo"
             app_license = source_app / "LICENSE"
             app_license.write_text("application license\n", encoding="utf-8")
-            evidence_path = source_app / "source-evidence.json"
+            evidence_path = run_evidence(source_app)
             evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
             redistribution = evidence["redistributionEvidence"]
             redistribution["requiredFiles"].append("LICENSE")
@@ -1574,7 +1582,7 @@ additionalProperties:
             self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
             migrated = out_dir / "demo"
             migrated_evidence = json.loads(
-                (migrated / "source-evidence.json").read_text(encoding="utf-8")
+                (run_evidence(migrated)).read_text(encoding="utf-8")
             )
             migrated_redistribution = migrated_evidence["redistributionEvidence"]
             self.assertEqual(
@@ -1668,7 +1676,7 @@ additionalProperties:
             source_app = source_root / "demo"
             license_path = source_app / "LICENSE"
             license_path.write_text("actual license text\n", encoding="utf-8")
-            evidence_path = source_app / "source-evidence.json"
+            evidence_path = run_evidence(source_app)
             evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
             redistribution = evidence["redistributionEvidence"]
             redistribution["requiredFiles"].append("LICENSE")
@@ -1735,7 +1743,7 @@ additionalProperties:
             source_app = source_root / "demo"
             extra_notice = source_app / "EXTRA-NOTICE"
             extra_notice.write_text("additional attribution\n", encoding="utf-8")
-            evidence_path = source_app / "source-evidence.json"
+            evidence_path = run_evidence(source_app)
             evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
             evidence["redistributionEvidence"]["materials"].append({
                 "path": "EXTRA-NOTICE",
@@ -1777,7 +1785,7 @@ additionalProperties:
                 [
                     sys.executable,
                     str(SCRIPTS_DIR / "source_evidence.py"),
-                    str(migrated / "source-evidence.json"),
+                    str(run_evidence(migrated)),
                     "--artifact-root",
                     str(migrated),
                 ],
@@ -2110,7 +2118,7 @@ additionalProperties:
                 cwd=ROOT,
             )
             evidence = json.loads(
-                (out_dir / "demo" / "source-evidence.json").read_text(encoding="utf-8")
+                (run_evidence(out_dir / "demo")).read_text(encoding="utf-8")
             )
 
         for field, value in optional_evidence.items():

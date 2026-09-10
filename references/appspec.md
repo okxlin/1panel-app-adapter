@@ -23,10 +23,13 @@ Provide a stable `spec -> artifacts` path with explicit source evidence and repr
 ## Optional Fields
 
 - `tag` string
-- `withPanelDeps` boolean
-- `volumes` array of `host:container` strings
-- `timezone` string (defaults to `Asia/Shanghai`, wired to `TZ` default in generated version `data.yml`)
-- `outputDir` string
+- `volumes` array of Compose short mount strings: `./data:/data`, `task-data:/data:ro`, or `/cache`; named and anonymous volumes remain Docker-managed
+- `ports` array with `envKey`, `containerPort`, and `hostDefault`
+- `formFields` array for application-specific inputs and defaults
+- `composeOverride` object with `enabled: true` and a `compose` mapping to preserve an existing service graph, fixed file mounts, and environment controls
+- `submissionProfile`: `third-party` (default) or `official`; `--submission-profile` overrides it
+- `descriptionI18n`: translations keyed by the twelve runtime locale codes
+- `readme`: `introductionZh/En`, `featuresZh/En` (string arrays), and `usageZh/En`; see `readme-style.md`
 - `sourceEvidence.sourceRevision` object with optional exact `tag` and full `commit`
 - `sourceEvidence.imageEvidence` legacy single-service object with optional immutable `digest` and verified `platforms`
 - `sourceEvidence.images` array with one object per Compose image: exact version-directory
@@ -39,7 +42,7 @@ Provide a stable `spec -> artifacts` path with explicit source evidence and repr
   hash-bound `materials`, and an `assets` ledger containing delivered path, source, license,
   SHA-256, and asset-specific required files
 
-The optional provenance objects and `images` array are copied into `source-evidence.json` after validation. A selected
+The optional provenance objects and `images` array are copied into the external `.evidence/<app-key>/source-evidence.json` after validation. A selected
 built-in fallback replaces only the `logo.png` ledger entry with the fallback's actual source,
 license, delivered hash, and license material; application-level redistribution requirements and
 materials are preserved. These objects do not replace the three mandatory source URLs.
@@ -51,19 +54,19 @@ materials are preserved. These objects do not replace the three mandatory source
 `<parent>/demo/demo/`.
 
 - root metadata: `<app>/data.yml`
-- app readme: `<app>/README.md`
-- source evidence: `<app>/source-evidence.json`
+- app READMEs: `<app>/README.md` (Chinese), `<app>/README_en.md` (English)
+- source evidence: `<parent>/.evidence/<app-key>/source-evidence.json` (not delivered)
 - version metadata: `<app>/<version>/data.yml`
 - compose: `<app>/<version>/docker-compose.yml`
-- env sample: `<app>/<version>/.env.sample`
-- lifecycle scripts: `<app>/<version>/scripts/*.sh`
+- env sample: `<app>/<version>/.env.sample` for third-party; outside the app for official
+- lifecycle scripts: `<app>/<version>/scripts/init.sh` only when path initialization is needed; add other hooks only for real lifecycle work
 
-The requested app root must directly contain `data.yml`, `source-evidence.json`,
-and the selected version directory. A duplicate `<app-key>/<app-key>/` root is invalid.
+The requested app root must directly contain `data.yml`, both READMEs, `logo.png`,
+and the selected version directory. Source evidence stays outside the app. A duplicate `<app-key>/<app-key>/` root is invalid.
 
 ## Validation Expectations
 
-- `source-evidence.json` must exist and include required keys
+- the external `source-evidence.json` must exist and include required keys; standalone validation accepts `--source-evidence <path>`
 - compose `${VAR}` references should resolve to env keys declared in version `data.yml`, except allowed implicit keys in `references/implicit-envkeys.md`
 
 ## One-command Execution
@@ -87,13 +90,4 @@ redistribution asset and required material against the delivered artifact. Stric
 required source evidence implies the delivery flag for compatibility, but callers should keep the
 explicit flag so the intended gate remains visible.
 
-When validation is enabled, report JSON also includes:
-
-- `validatedAt`
-- `validateSummary.fail`
-- `validateSummary.warn`
-- `validateSummary.info`
-
-And report always includes:
-
-- `qualityGate` (`not_run`, `passed`, `failed`)
+The report records `submissionProfile`, `sourceEvidence`, `appDir`, `validation`, `strictValidation`, and `delivery`. A basic validation pass leaves the result at `generated_candidate` until all delivery gates are satisfied. A profile switch does not waive source, image, capability, or runtime evidence.

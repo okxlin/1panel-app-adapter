@@ -12,6 +12,8 @@ from typing import Any
 
 import yaml
 
+from gen_env_sample import read_env_sample
+
 HTTPS_URL = re.compile(r"https://[^\s]+")
 COMMIT_ID = re.compile(r"(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})")
 IMAGE_DIGEST = re.compile(r"sha256:[0-9a-fA-F]{64}")
@@ -157,20 +159,7 @@ def _validate_host_owner_plans(
 
 
 def _read_env_file(path: Path) -> dict[str, str]:
-    values: dict[str, str] = {}
-    for raw_line in path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        key = key.strip()
-        if ENV_NAME.fullmatch(key) is None:
-            continue
-        value = value.strip()
-        if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
-            value = value[1:-1]
-        values[key] = value
-    return values
+    return read_env_sample(path, allow_interpolation=True)
 
 
 def _split_parameter_expression(expression: str) -> tuple[str, str | None, str]:
