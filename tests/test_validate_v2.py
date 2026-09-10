@@ -1017,7 +1017,10 @@ class ValidateV2Tests(unittest.TestCase):
             delivery_asset = app / "DELIVERY-NOTICE.txt"
             delivery_asset.write_text("delivery evidence\n", encoding="utf-8")
             delivery_hash = hashlib.sha256(delivery_asset.read_bytes()).hexdigest()
-            evidence_path = app / "source-evidence.json"
+            legacy_evidence = app / "source-evidence.json"
+            evidence_path = app.parent / ".evidence" / app.name / "source-evidence.json"
+            evidence_path.parent.mkdir(parents=True)
+            legacy_evidence.rename(evidence_path)
             evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
             evidence.update({
                 "images": [{
@@ -1091,7 +1094,16 @@ class ValidateV2Tests(unittest.TestCase):
                 stderr=subprocess.PIPE,
             )
 
+            legacy_evidence.write_bytes(evidence_path.read_bytes())
+            packaged_checks = [subprocess.run(
+                ["bash", str(VALIDATE), "--dir", str(app), *flags],
+                text=True, capture_output=True,
+            ) for flags in (["--require-delivery-evidence"], ["--strict-store", "--source-evidence-mode", "required"])]
+
         self.assertEqual(covered.returncode, 0, covered.stdout + covered.stderr)
+        for packaged_evidence in packaged_checks:
+            self.assertNotEqual(packaged_evidence.returncode, 0)
+            self.assertIn("delivery package must not contain source-evidence.json", packaged_evidence.stdout)
 
     def test_version_option_validates_selected_version_in_multi_version_app(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

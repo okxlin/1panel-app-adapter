@@ -5,11 +5,9 @@
 
 ## Language Codes (locales)
 
-There are two "evidence sources" that need to be compatible:
-- **AppStore repo data (1Panel-dev/appstore dev/apps)**: Common `zh-Hant` (H uppercase).
-- **1Panel runtime DTO (1Panel-dev/1Panel dev-v2's `agent/app/dto/app.go`)**: Locale field defined as `zh-hant`, and also includes extended language fields like `tr`, `es-es`.
+The current panel supports 12 application locale keys: `en`, `zh`, `zh-hant`, `ja`, `ko`, `ru`, `ms`, `pt-br`, `tr`, `es-es`, `fa`, and `lo`. This skill targets all twelve for new delivery artifacts. The panel's UI language names include `zh-Hant`, `pt-BR`, and `es-ES`, while the application DTO and lookup use lowercase keys. Accept those historical case aliases as input; write canonical lowercase keys. Conflicting values for two aliases are invalid.
 
-Validation strategy: Accept both; but from "skill artifacts aligned with official repo" perspective, recommend eventually unifying to `zh-Hant`. `zh-hant` only as compatible input. For extended languages like `tr`, `es-es`: **allow existence, not mandatory**.
+`--i18n-mode strict` requires non-empty entries for all twelve locales, including nested labelled fields and help descriptions, and rejects recognized placeholder markers and English copies. Translation accuracy still needs review against the application's meaning. Plain inspection retains the historical eight-locale structural baseline and warns about missing newer translations. Identical Chinese words in simplified and traditional Chinese are not inherently invalid. See [1panel-sources.md](1panel-sources.md) for exact source pins.
 
 ## Hierarchy Constraints: Application-level vs Version-level
 
@@ -69,6 +67,8 @@ Location: `additionalProperties.formFields: [ ... ]`
 - `labelZh` / `labelEn` (high-frequency; recommend providing both)
 - `label` (multi-language map, high-frequency)
 - `child` (appears when `type: apps`)
+- `disabled` (bool: locks the install control)
+- `edit` (bool: later editability; independent of `disabled`)
 
 ### `formFields[].type` allowed set (based on official dev/apps real samples)
 - `number`
@@ -93,3 +93,5 @@ Notes:
 ### ports / volumes facts supplement
 - ports: Official most common field is `PANEL_APP_PORT_HTTP`, typically `type: number` + `rule: paramPort`, compose writes as `"${PANEL_APP_PORT_HTTP}:<container_port>"`.
 - volumes: Official compose extensively uses bind mount (`./data:/...`, `./conf/x:/...`), but version-level `data.yml` typically doesn't parameterize paths via `APP_DATA_DIR_*` (prefers fixed relative paths).
+
+Official profile keeps source-backed directory defaults fixed. When a path field already exists, use `disabled: true` and `edit: false`; fixed binds and named volumes need no added path field. These are submission-profile choices, not requirements for all 1Panel applications.

@@ -7,13 +7,23 @@ description: Adapt, generate, migrate, and validate 1Panel App Store (AppStore/a
 
 Adapt Docker applications into reviewable 1Panel AppStore packages, then validate their structure, metadata, Compose configuration, localization, and upgrade behavior against source-backed rules.
 
+## Submission Target and Delivery Defaults
+
+Use **`third-party` by default**. Select **`official`** only for an official 1Panel appstore submission, and pass `--submission-profile official` to generation, migration, import, and validation. Read [references/submission-profiles.md](references/submission-profiles.md) for the exact file and form contract before choosing a route.
+
+- Deliver only `<out-dir>/<app-key>/`. Keep source, license-review, registry, and test evidence outside it at `<out-dir>/.evidence/<app-key>/source-evidence.json`; pass `--source-evidence <path>` when validating a copied package.
+- Third-party packages retain `.env.sample` and reviewed path choices. Official packages omit `.env.sample`; any existing directory form fields keep their source-backed defaults with `disabled: true` and `edit: false`. Neither mode changes the selected service graph or mount mechanism.
+- Write Chinese `README.md` and English `README_en.md` with product features and usage. Follow `references/readme-style.md`. Do not put the selected application version, audit records, or generator diagnostics into product prose; document a necessary upgrade boundary only when it changes a user action.
+- Add a lifecycle hook only for a concrete setup, reconciliation, migration, or cleanup operation. Prefer Compose and upstream entrypoints for ordinary startup. Do not build an extra startup framework, runtime package installer, secret generator, or generic supervisor without an exact upstream requirement. Preserve source-backed ownership and path confinement when they are needed.
+- Do not generate application license text merely because an image is referenced. Ship only notices or sources required by material actually copied into the package. The fallback icon's MIT notice is included in the README, without an extra license text or SVG.
+
 ## Start Here: Choose One Route
 
 Work from the skill directory so every `scripts/...` and `references/...` path resolves. Read this `SKILL.md` through its final line. First classify the input, then follow exactly one route below. Open and read every reference named by that route through its final line before running its command, and state how the references affected the plan or artifact. Every route ends at **Completion Gates**. If official Docker deployment evidence is unavailable, stop and report the missing evidence; do not guess a package. Publishing is outside this skill.
 
-1. **New app from official Docker/Compose**: Read `references/source-policy.md`, `references/topology-preflight.md`, and `references/lifecycle-safety.md`, then record the preflight decision before scaffolding. Stop for `platform_stack_terminal`; stop for `specialized_conditional` until every named prerequisite is proven. `--out-dir` is a parent: for example, run `bash scripts/scaffold-v2.sh --app-key <app-key> --title <title> --image <image> --version <version> --out-dir "$RUN_ROOT/artifact" --source-repository <url> --source-docker-docs <url> --source-compose-file <url>`, then require `"$RUN_ROOT/artifact/<app-key>"` to directly contain `data.yml`, `source-evidence.json`, and `<version>/`; reject `<app-key>/<app-key>`. Review every generated file against the authoritative Compose and replace all placeholders. For callback, origin, or other public URL fields, never synthesize `localhost` or `127.0.0.1`: expose a required public URL as a required form field; leave an optional public URL empty or omit it and document the affected features.
+1. **New app from official Docker/Compose**: Read `references/source-policy.md`, `references/topology-preflight.md`, and `references/lifecycle-safety.md`, then record the preflight decision before scaffolding. Stop for `platform_stack_terminal`; stop for `specialized_conditional` until every named prerequisite is proven. `--out-dir` is a parent: for example, run `bash scripts/scaffold-v2.sh --app-key <app-key> --title <title> --image <image> --version <version> --out-dir "$RUN_ROOT/artifact" --source-repository <url> --source-docker-docs <url> --source-compose-file <url>`, then require `"$RUN_ROOT/artifact/<app-key>"` to directly contain `data.yml`, `README.md`, `README_en.md`, and `<version>/`; external `source-evidence.json` is a sibling sidecar; reject `<app-key>/<app-key>`. Review every generated file against the authoritative Compose and replace all placeholders. For callback, origin, or other public URL fields, never synthesize `localhost` or `127.0.0.1`: expose a required public URL as a required form field; leave an optional public URL empty or omit it and document the affected features.
 2. **AppSpec input**: Read `references/appspec.md`, `references/source-policy.md`, `references/topology-preflight.md`, and `references/lifecycle-safety.md`. Run `python3 scripts/generate-from-appspec.py --spec <appspec.json> --out-dir <out-dir> --validate --require-validate`. Review the generated topology, variables, metadata, translations, lifecycle ledger, and validation report against the AppSpec and official sources.
-3. **Existing v1 or mixed package**: Read `references/source-policy.md`, `references/topology-preflight.md`, `references/upgrade-maintenance.md`, and `references/lifecycle-safety.md`. Run `bash scripts/migrate-v1-to-v2.sh --src <app-dir> --out <out-dir> [--version <source-version>] [--target-version <target-version>] --source-repository <url> --source-docker-docs <url> --source-compose-file <url>`. Review the migrated root/version metadata, Compose, `.env.sample`, lifecycle scripts, and upgrade compatibility; source URL flags may be omitted only when the source package already has valid `source-evidence.json`.
+3. **Existing v1 or mixed package**: Read `references/source-policy.md`, `references/topology-preflight.md`, `references/upgrade-maintenance.md`, and `references/lifecycle-safety.md`. Run `bash scripts/migrate-v1-to-v2.sh --src <app-dir> --out <out-dir> [--version <source-version>] [--target-version <target-version>] --source-repository <url> --source-docker-docs <url> --source-compose-file <url>`. Review the migrated root/version metadata, Compose, `.env.sample`, lifecycle scripts, and upgrade compatibility; source URL flags may be omitted only when the source package has valid external or historical in-package `source-evidence.json`.
 4. **aaPanel/Baota input**: Read `references/baota-migration-workflow.md`, `references/baota-app-format.md`, `references/baota-to-1panel-mapping.md`, `references/source-policy.md`, `references/topology-preflight.md`, and `references/lifecycle-safety.md`. Precheck the complete prepared input with `python3 scripts/import-baota-app.py --input <baota-app-dir> --precheck-only --report <report.json>`; for a batch add `--batch`. Then convert one selected version per invocation with `python3 scripts/import-baota-app.py --input <baota-app-dir> --out-dir <out-dir> --version <exact-version> --validate --require-validate`. Review every output as `converted_candidate` against official upstream evidence; never infer version order from Baota metadata.
 5. **Update an existing v2 app**: Read `references/upgrade-maintenance.md`, `references/source-policy.md`, `references/topology-preflight.md`, and `references/lifecycle-safety.md`. Compare the old and new package before editing; use only the needed helper commands below. Review image lineage, persisted data, changed variables, dependencies, lifecycle scripts, and direct-upgrade behavior, then run final validation.
 6. **Validate only**: Read `references/source-policy.md`, `references/topology-preflight.md`, and `references/lifecycle-safety.md`; also read `references/upgrade-maintenance.md` when several versions or an update are involved. Start with `bash scripts/validate-v2.sh --dir <app-dir>` and review every failure and warning before strict validation. Validation does not authorize guessing or silently patching unknown semantics.
@@ -62,7 +72,7 @@ Use scripts for their named job instead of manually recreating their behavior. R
 - Report an observed owner or mode as an observation tied to the invoking UID/GID and umask. Claim a portable guarantee only when the delivered lifecycle script explicitly enforces that owner or mode and the exact-artifact test verifies it.
 - Create or validate the exact source file for every file bind before Compose starts. Prove each generated secret format against the application contract, keep stable secrets across upgrade, URL-encode URL credentials, and apply the official escaping rules to every other connection-string grammar.
 - Replace placeholders with real product metadata and meaningful translations in all required locales. English fields must contain English. Record the application and asset licenses; when exact redistribution terms require attribution, copyright or license text, source disclosure, or NOTICE delivery, include that required material in the package instead of relying on a link. When a license has material use restrictions, name and link it in the README instead of keeping it only in machine-readable evidence. Verify an asset's redistribution basis separately from the application code license; for an unresolved asset license or trademark permission, use the neutral placeholder immediately rather than shipping the asset with a future-confirmation note.
-- Render and validate the exact delivered artifact without creating then removing a file it needs. Ensure `init.sh`, `upgrade.sh`, and `uninstall.sh` exist and retain executable mode in the delivered tree. Run baseline validation first, then `bash scripts/validate-v2.sh --dir <app-dir> [--version <version>] --strict-store --i18n-mode strict --source-evidence-mode required --require-delivery-evidence`; unresolved failures block a pass claim.
+- Render and validate the exact delivered artifact without creating then removing a file it needs. Keep only lifecycle hooks that perform required work, and retain executable mode for every delivered hook. Missing no-op hooks are valid; preserve any source-backed setup, upgrade, or cleanup operation. Run baseline validation first, then `bash scripts/validate-v2.sh --dir <app-dir> [--version <version>] --strict-store --i18n-mode strict --source-evidence-mode required --require-delivery-evidence`; unresolved failures block a pass claim.
 - Before finalizing the README or report, build a configuration claim ledger and compare each statement with the exact Compose, `data.yml`, `.env.sample`, and lifecycle scripts. Classify every described value as fixed, defaulted, generated, optional, or user-configurable. If an editable form field controls it, describe it as user-configurable with that default rather than fixed; contradictions block a delivery-ready claim.
 - For every form field, record its install-time and steady-state consumer before choosing `edit`. A value generated once, written into persistent configuration, or identity-bearing must use `edit: false` unless an idempotent reconciliation or migration applies later edits to the real persisted consumer. Do not expose a control that only changes `.env` while the application continues using an older persisted value.
 - Test in a real 1Panel development/test instance: clean install, application-specific readiness, restart, upgrade when applicable, uninstall, and task-owned cleanup. Report artifact paths, evidence, checks, risk-bearing permissions, assumptions, warnings, and every unexecuted runtime gate; static validation or HTTP 200 alone is insufficient. Distinguish files in the delivered AppStore package from run-only evidence caches. Do not claim that a run-only cache path is present in the delivered package.
@@ -99,7 +109,7 @@ For PHP runtime work, especially when converting a historical package such as `p
 
 > Note: In the official repository (1Panel-dev/appstore dev branch), the `data.yml` field hierarchy under v2 structure is very stable; this skill's `validate-v2.sh --strict-store` performs strict validation according to this.
 
-> - **Language codes**: Official write as `zh-Hant` (note uppercase H); old write `zh-hant` is only for compatibility, recommend unified replacement.
+> - **Language codes**: Application metadata uses runtime keys `zh-hant`, `pt-br`, and `es-es`. UI locale names such as `zh-Hant` are accepted as historical input aliases, then normalized for generated output. See the pinned source evidence in `references/1panel-sources.md`.
 
 **Application-level**: `apps/<app>/data.yml`
 - Top-level only allows: `name` / `tags` / `title` / `description` / `additionalProperties`
@@ -120,7 +130,7 @@ For PHP runtime work, especially when converting a historical package such as `p
 > Convention supplement (this skill's default artifact style):
 > - root `data.yml` top-level `description` uses single-line string (not map).
 > - root `data.yml` `additionalProperties.shortDesc` uses `shortDescZh/shortDescEn` (not map).
-> - `additionalProperties.description` uses i18n map, **must complete 8 languages**: `en/zh/zh-Hant/ja/ko/ru/ms/pt-br`.
+> - `additionalProperties.description` uses i18n map, **complete all 12 supported languages for delivery**: `en/zh/zh-hant/ja/ko/ru/ms/pt-br/tr/es-es/fa/lo`.
 > - root `data.yml` uses hierarchical structure: top-level `tags` and `additionalProperties.tags` both exist and are semantically consistent (allow redundant expression).
 > - **Content consistency (strong constraint)**: root `data.yml` `title:`, the following top-level `description:`, and `additionalProperties.shortDescZh:` must be the **same short text** (try to be one sentence).
 > - **Translation constraint (strong constraint)**: `additionalProperties.description` must be the multilingual translation of the above `shortDescZh` (not repetition of project name/title).
@@ -193,7 +203,7 @@ If users are expected to choose a reusable 1Panel-managed dependency from the in
 - A package that only accepts manual host input is not equivalent to a package whose UI can actually select a store/local dependency app.
 
 Scaffold supports optional injection template:
-- When running `scripts/scaffold-v2.sh`, add `--with-panel-deps` (or alias `--with-panel-db-redis`), will automatically add above DB/Redis related formFields in generated `<version>/data.yml` (including `labelEn/labelZh` + `label` map, includes `zh-Hant`).
+- When running `scripts/scaffold-v2.sh`, add `--with-panel-deps` (or alias `--with-panel-db-redis`), will automatically add above DB/Redis related formFields in generated `<version>/data.yml` (including `labelEn/labelZh` + a `label` map using runtime locale keys).
 
 Key points for adaptation:
 - Treat store-runtime discovery as an adaptation preflight step: search existing app definitions for the dependency key, query the panel store metadata, and verify that an installed instance appears in `/apps/services/<key>` before deciding the final service topology.
@@ -395,7 +405,7 @@ To avoid "format compliant but translation lazy", `validate-v2.sh` adds configur
 - `--source-evidence-mode warn|required|off`
   - `warn`: warn but continue when `source-evidence.json` is missing or invalid (default)
   - `required`: require `source-evidence.json`; with `--strict-store`, also require application-license evidence plus hash-bound asset and redistribution-material delivery evidence
-  - `off`: skip source evidence checks
+  - `off`: skip source evidence checks for inspection only; it cannot satisfy final delivery
 - `--i18n-mode off|warn|strict`
   - `off`: disable translation quality check (only structure validation)
   - `warn`: only warning (default)
@@ -406,13 +416,13 @@ To avoid "format compliant but translation lazy", `validate-v2.sh` adds configur
   - `all`: both (default)
 - `--i18n-allow-english-labels <CSV>`
   - Short label English whitelist (e.g., `API,URL,ID,OAuth,JWT`), avoid mis-killing technical words.
-- `labels` scope supplement: If `formFields[]` only has `labelEn/labelZh` and missing `label:` multi-language map, `validate-v2.sh` will now give **WARN**, and clarify version `formFields.label` expected to complete 8 languages: `en/zh/zh-Hant/ja/ko/ru/ms/pt-br`.
+- `labels` scope supplement: If `formFields[]` only has `labelEn/labelZh` and is missing the multilingual `label:` map, default inspection warns; strict i18n validation rejects it. Complete all 12 languages: `en/zh/zh-hant/ja/ko/ru/ms/pt-br/tr/es-es/fa/lo`.
 
 Default strategy:
 - `description` more strict (prevent whole sentence English pseudo-translation)
 - `formFields.label` hierarchical processing (short words allow whitelist)
 
-**Placeholder translation policy**: `scaffold-v2.sh` generates 8-language `description` using the app title as placeholder. This is intentional — the scaffold provides a valid structure, and users should replace placeholders with real translations before submission. The i18n check flags these as warnings (not errors) to remind users to complete translations.
+**Placeholder translation policy**: `scaffold-v2.sh` generates a 12-language `description` using the app title as placeholder. Replace these entries with real translations before submission. Default inspection warns about placeholders; `--i18n-mode strict` rejects them. AppSpec and Baota strict-store validation enable strict i18n checks.
 
 ## Output Contract
 
@@ -439,7 +449,7 @@ Delivery should at least clarify:
 - Default logo:
   - This repository's project-authored source is `assets/default-logo.svg`; its terms are in `assets/default-logo.LICENSE.txt` (MIT, copyright 2026 okxlin).
   - The deterministically rendered `assets/default-logo.png` is 180x180 and has SHA-256 `a8f604f27c3451536301f1a4ca7ac5ae8c479312a225c42c4dc0edda2a20bf76`.
-  - `scaffold-v2.sh` and `generate-from-appspec.py` copy the PNG, the source SVG at `<app>/assets/default-logo.svg`, its required license text, and hash-bound redistribution evidence only when they actually select this fallback. They never label a pre-existing or imported logo as the default asset.
+  - `scaffold-v2.sh` and `generate-from-appspec.py` copy only the PNG, include its MIT notice in `README.md`, and write hash-bound redistribution evidence outside the package when they select this fallback. A forced scaffold refresh recognizes an existing fallback only by exact file identity; it never assigns the fallback's license to an unrelated logo.
 - **Logo normalization suggestion**: Before delivery, prioritize unifying `<app>/logo.png` to **180x180 PNG**; processing should **maintain original logo ratio, don't stretch, don't compress, don't deform**. If original exceeds `180x180`, only do **proportional shrink**; if original is smaller, don't force enlarge. Finally **center overlay logo onto `180x180` transparent canvas**. If want to balance repository size and store loading efficiency, recommend compressing to **no more than 10KB**. Can directly use: `bash scripts/normalize-logo.sh <logo.png>`.
 - **Compose top-level `version` handling**: Delivered to 1Panel `docker-compose.yml` should **remove top-level `version:` field** (e.g., `version: '3.8'`), avoid deprecated/ignored warnings in 1Panel / Docker Compose logs. Adaptation should directly start from `services:` organizing compose content, unless encountering special scenarios requiring old parser.
 - **Service-level `createdBy` label convention**: Delivered to 1Panel compose, **each application's each service should by default carry**:
@@ -461,35 +471,31 @@ Delivery should at least clarify:
   ```
   The hard requirement here is "**bridge-type application must connect to external network**", not network name must be fixed as `1panel-network`. `1panel-network` is just default common/recommended name; if use other external network, should not be considered error. Validation script should prioritize checking "whether external network exists", not checking network name equals `1panel-network`.
 - **Multi-service DNS collision guard**: If the primary service joins both `1panel-network` and an internal network, do not leave dependency hostnames as generic `redis`, `mongo`, `mysql`, `postgres`, or `db` when those services are defined in the same compose. Use app-prefixed service names or explicit internal aliases. `validate-v2.sh` warns on this pattern because Docker DNS can resolve same-name services from the shared network before the intended internal service.
-- **README store-style (default suggestion)**: Root `README.md` should by default organize into 1Panel store style description, not directly retain upstream technical README. Recommend at least clarify: installation method (source build/image), access port, data persistence, key environment variables, version differences and usage suggestions. Unless user explicitly indicates not needed, should be default delivery item.
+- **README store-style (default suggestion)**: Root `README.md` should by default organize into 1Panel store style description, not directly retain upstream technical README. Recommend at least clarify: installation method (source build/image), access port, data persistence, key environment variables and necessary usage guidance. Unless user explicitly indicates not needed, should be default delivery item.
 - **Update README safety note**: For non-trivial updates, include backup scope, direct-upgrade support, required intermediate versions, migration wait/log hints, and any changed image/database/cache dependency. For a version-only image or directory refresh with unchanged operator behavior, leave README/README_en unchanged; apply `references/readme-style.md` when a real documentation change is needed.
 
 ## Output shape
 
-The scaffold command produces a directory in this shape:
+The scaffold command produces the app directory below, with run evidence in the sibling `.evidence/<app-key>/` directory:
 
 ```text
 <app-key>/
-├── ASSET-LICENSES/default-logo.txt  # neutral fallback only
-├── assets/default-logo.svg          # neutral fallback only
 ├── data.yml
 ├── README.md
+├── README_en.md
 ├── logo.png
 └── <version>/
     ├── data.yml
     ├── docker-compose.yml
-    ├── .env.sample
+    ├── .env.sample             # third-party profile only
     ├── data/
-    └── scripts/
-        ├── init.sh
-        ├── upgrade.sh
-        └── uninstall.sh
+    └── scripts/init.sh         # only when initialization is needed
 ```
 
 
 ## .env.sample Consistency Rules
 
-**Scope**: Version-level `<app>/<version>/.env.sample`
+**Scope**: Third-party profile `<app>/<version>/.env.sample`. Official packages omit this file; their validation environment is derived from panel form defaults outside the package.
 
 **Core principle**: `.env.sample` must list **all** environment variables used in `docker-compose.yml`, including those not declared in `data.yml` formFields.
 

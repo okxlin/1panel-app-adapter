@@ -5,22 +5,28 @@ from pathlib import Path
 
 import yaml
 
+from appstore_i18n import LOCALES, normalize_locales
+
 
 class NoAliasDumper(yaml.SafeDumper):
     def ignore_aliases(self, data):
         return True
 
 
-REQ_DESC_LOCALES = ["en", "zh", "zh-Hant", "ja", "ko", "ru", "ms", "pt-br"]
+REQ_DESC_LOCALES = LOCALES
 
 # Language-specific placeholder suffixes (same as scaffold-v2.sh)
 _LOCALE_PLACEHOLDER = {
-    "zh-Hant": "（佔位）",
+    "zh-hant": "（佔位）",
     "ja": "（プレースホルダー）",
     "ko": "（플레이스홀더）",
     "ru": "（заполнитель）",
     "ms": "（ruang letak）",
     "pt-br": "(preenchimento)",
+    "tr": " (translation required)",
+    "es-es": " (translation required)",
+    "fa": " (translation required)",
+    "lo": " (translation required)",
 }
 
 
@@ -148,7 +154,7 @@ def patch(path: Path, app_key_hint: str = "", architectures: str = ""):
         except ValueError:
             limit = 0
     arches = normalize_arches(architectures) if architectures else (ap.get("architectures") if isinstance(ap.get("architectures"), list) else parse_ap_arches(lines) or ["amd64"])
-    description_map = ap.get("description") if isinstance(ap.get("description"), dict) else parse_description_map(lines)
+    description_map = normalize_locales(ap.get("description") if isinstance(ap.get("description"), dict) else parse_description_map(lines))
     for locale in REQ_DESC_LOCALES:
         existing = description_map.get(locale, "")
         if not existing:
@@ -167,6 +173,7 @@ def patch(path: Path, app_key_hint: str = "", architectures: str = ""):
         "title": title,
         "description": description,
         "additionalProperties": {
+            **ap,
             "key": app_key,
             "name": name,
             "tags": tags,
@@ -179,7 +186,7 @@ def patch(path: Path, app_key_hint: str = "", architectures: str = ""):
             "crossVersionUpdate": cross_version,
             "limit": limit,
             "architectures": arches,
-            "description": {locale: description_map[locale] for locale in REQ_DESC_LOCALES},
+            "description": description_map,
         },
     }
 

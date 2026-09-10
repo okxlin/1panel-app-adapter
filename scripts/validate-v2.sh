@@ -9,6 +9,8 @@ I18N_MODE="warn"
 I18N_SCOPE="all"
 I18N_ALLOW_EN_LABELS="API,URL,ID,OAuth,JWT,CPU,GPU,RAM,HTTP,HTTPS,TCP,UDP,SSH,DNS"
 SOURCE_EVIDENCE_MODE="warn"
+SOURCE_EVIDENCE=""
+SUBMISSION_PROFILE="third-party"
 REQUIRE_DELIVERY_EVIDENCE=0
 FAILURES=0
 WARNINGS=0
@@ -28,7 +30,7 @@ fi
 
 usage() {
   cat <<'USAGE'
-usage: validate-v2.sh --dir <app-dir> [--version <version-dir>] [--strict-c] [--strict-store] [--source-evidence-mode warn|required|off] [--require-delivery-evidence] [--i18n-mode off|warn|strict] [--i18n-scope description|labels|all] [--i18n-allow-english-labels CSV]
+usage: validate-v2.sh --dir <app-dir> [--version <version-dir>] [--strict-c] [--strict-store] [--source-evidence-mode warn|required|off] [--require-delivery-evidence] [--source-evidence <path>] [--submission-profile third-party|official] [--i18n-mode off|warn|strict] [--i18n-scope description|labels|all] [--i18n-allow-english-labels CSV]
 
 behavior notes:
   - multi-version app directories require --version <version-dir> so validation targets one release explicitly
@@ -63,6 +65,8 @@ while [[ $# -gt 0 ]]; do
     --strict-c) STRICT_C=1; shift ;;
     --strict-store) STRICT_STORE=1; shift ;;
     --source-evidence-mode) SOURCE_EVIDENCE_MODE="$2"; shift 2 ;;
+    --source-evidence) SOURCE_EVIDENCE="$2"; shift 2 ;;
+    --submission-profile) SUBMISSION_PROFILE="$2"; shift 2 ;;
     --require-delivery-evidence) REQUIRE_DELIVERY_EVIDENCE=1; shift ;;
     --i18n-mode) I18N_MODE="$2"; shift 2 ;;
     --i18n-scope) I18N_SCOPE="$2"; shift 2 ;;
@@ -74,23 +78,29 @@ done
 
 [[ -n "$DIR" ]] || { usage; exit 2; }
 [[ -d "$DIR" ]] || { echo "[A][FAIL] app dir not found: $DIR"; exit 1; }
+case "$SUBMISSION_PROFILE" in third-party|official) ;; *) echo "invalid --submission-profile: $SUBMISSION_PROFILE"; exit 2 ;; esac
 case "$I18N_MODE" in off|warn|strict) ;; *) echo "invalid --i18n-mode: $I18N_MODE"; exit 2 ;; esac
 case "$I18N_SCOPE" in description|labels|all) ;; *) echo "invalid --i18n-scope: $I18N_SCOPE"; exit 2 ;; esac
 case "$SOURCE_EVIDENCE_MODE" in required|warn|off) ;; *) echo "invalid --source-evidence-mode: $SOURCE_EVIDENCE_MODE"; exit 2 ;; esac
+if [[ "$STRICT_STORE" -eq 1 && "$SOURCE_EVIDENCE_MODE" == "required" ]]; then
+  REQUIRE_DELIVERY_EVIDENCE=1
+fi
 if [[ "$REQUIRE_DELIVERY_EVIDENCE" -eq 1 ]]; then
   SOURCE_EVIDENCE_MODE="required"
 fi
 
 ROOT="$DIR/data.yml"
-SOURCE_EVIDENCE="$DIR/source-evidence.json"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+if [[ -z "$SOURCE_EVIDENCE" ]]; then
+  SOURCE_EVIDENCE="$("$PYTHON_BIN" "$SCRIPT_DIR/package_contract.py" "$DIR" --find-evidence)"
+fi
 IMPLICIT_ENVKEYS_FILE="$SCRIPT_DIR/../references/implicit-envkeys.md"
 APP_KEY="$(basename "${DIR%/}")"
 NESTED_APP_ROOT="$DIR/$APP_KEY"
-if [[ -s "$NESTED_APP_ROOT/data.yml" && -s "$NESTED_APP_ROOT/source-evidence.json" ]]; then
+if [[ -s "$NESTED_APP_ROOT/data.yml" ]]; then
   mapfile -t nested_versions < <(find "$NESTED_APP_ROOT" -mindepth 1 -maxdepth 1 -type d ! -name '.*')
   if [[ ${#nested_versions[@]} -gt 0 ]]; then
-    echo "[A][FAIL] duplicate nested app root detected: $NESTED_APP_ROOT (pass the parent output directory to the generator, then validate $DIR only after data.yml and source-evidence.json exist directly there)"
+    echo "[A][FAIL] duplicate nested app root detected: $NESTED_APP_ROOT (pass the parent output directory to the generator, then validate $DIR only after data.yml exists directly there)"
     exit 1
   fi
 fi
@@ -189,20 +199,20 @@ if [[ $yaml_sanity_status -ne 0 && $FAILURES -eq 0 ]]; then
   FAILURES=$((FAILURES + 1))
 fi
 
-if [[ "$STRICT_STORE" -eq 1 ]]; then
-  set +e
-  placeholder_output=$(grep -RInE '请按官方来源补全|generated 1Panel app template|1panel-app-adapter 生成的|\(placeholder\)|（佔位）|（プレースホルダー）|（플레이스홀더）' "$ROOT" "$DIR/README.md" 2>/dev/null)
-  placeholder_status=$?
-  set -e
-  if [[ $placeholder_status -eq 0 && -n "$placeholder_output" ]]; then
-    fail "placeholder template text detected in delivery artifact"
-    echo "$placeholder_output"
-  fi
-fi
 
 if [[ $FAILURES -gt 0 ]]; then
   echo "SUMMARY: fail=$FAILURES warn=$WARNINGS info=$INFOS"
   exit 1
+fi
+
+ENV_SAMPLE="$VER_DIR/.env.sample"
+TEMP_ENV_SAMPLE=""
+if [[ "$SUBMISSION_PROFILE" == "official" && ! -f "$ENV_SAMPLE" ]]; then
+  TEMP_ENV_SAMPLE="$(mktemp)"
+  trap '[[ -z "$TEMP_ENV_SAMPLE" ]] || rm -f -- "$TEMP_ENV_SAMPLE"' EXIT
+  "$PYTHON_BIN" "$SCRIPT_DIR/gen_env_sample.py" "$VER" "$TEMP_ENV_SAMPLE" "$COMPOSE" "$APP_KEY-compose-check"
+  ENV_SAMPLE="$TEMP_ENV_SAMPLE"
+  info "official profile: Compose environment derived from panel form defaults"
 fi
 
 set +e
@@ -237,10 +247,10 @@ if [[ -s "$SOURCE_EVIDENCE" && "$SOURCE_EVIDENCE_MODE" != "off" ]]; then
     "$SOURCE_EVIDENCE"
     --artifact-root "$DIR"
     --compose "$COMPOSE"
-    --env-file "$VER_DIR/.env.sample"
+    --env-file "$ENV_SAMPLE"
     --version-name "$(basename "$VER_DIR")"
   )
-  if [[ "$REQUIRE_DELIVERY_EVIDENCE" -eq 1 || ("$STRICT_STORE" -eq 1 && "$SOURCE_EVIDENCE_MODE" == "required") ]]; then
+  if [[ "$REQUIRE_DELIVERY_EVIDENCE" -eq 1 ]]; then
     source_ev_args+=(--require-delivery)
   fi
   set +e
@@ -278,10 +288,6 @@ for key in key name tags type website document architectures github shortDescZh 
   grep -qE "^\s+${key}:" "$ROOT" || fail "root additionalProperties missing ${key}"
 done
 
-for locale in en zh zh-Hant ja ko ru ms pt-br; do
-  grep -qE "^\s+${locale}:" "$ROOT" || fail "root additionalProperties.description missing locale ${locale}"
-done
-
 root_title=$(grep -m1 -E '^title:\s*' "$ROOT" || true)
 root_desc=$(grep -m1 -E '^description:\s*' "$ROOT" || true)
 short_desc=$(grep -m1 -E '^\s+shortDescZh:\s*' "$ROOT" || true)
@@ -303,10 +309,12 @@ if grep -qE '^\s*architectures:\s*$' "$VER"; then
 fi
 
 set +e
-py_output=$("$PYTHON_BIN" - <<'PY' "$VER"
+py_output=$("$PYTHON_BIN" - <<'PY' "$VER" "$SCRIPT_DIR"
 import sys
 from pathlib import Path
 import yaml
+sys.path.insert(0, sys.argv[2])
+from appstore_i18n import LOCALES, normalize_locales
 path = Path(sys.argv[1])
 try:
     data = yaml.safe_load(path.read_text(encoding='utf-8', errors='ignore')) or {}
@@ -330,7 +338,12 @@ for item in items:
     env = item.get('envKey', '')
     typ = item.get('type', '')
     required = item.get('required', '')
-    label = item.get('label')
+    try:
+        label = normalize_locales(item.get('label'))
+    except ValueError as exc:
+        print(f'[A][FAIL] {env}: {exc}')
+        failures += 1
+        label = {}
     label_keys = set(label.keys()) if isinstance(label, dict) else set()
     has_label_map = isinstance(label, dict) and bool(label)
     if not env or not typ or required == '':
@@ -355,18 +368,13 @@ for item in items:
         print(f'[B][WARN] {env} is required but lacks explicit edit decision; set edit:true only for a proven steady-state consumer, otherwise use edit:false')
         warnings += 1
     if item.get('labelEn') and item.get('labelZh') and not has_label_map:
-        print(f'[B][WARN] {env}: missing label map (expected locales: en, zh, zh-Hant, ja, ko, ru, ms, pt-br)')
+        print(f'[B][WARN] {env}: missing label map (expected locales: en, zh, zh-hant, ja, ko, ru, ms, pt-br, tr, es-es, fa, lo)')
         warnings += 1
     if has_label_map:
         missing = []
-        if 'zh-hant' in label_keys and 'zh-Hant' not in label_keys:
-            print(f"[B][WARN] {env}: label map uses legacy 'zh-hant'; canonical skill output prefers 'zh-Hant'. Recommend renaming.")
-            warnings += 1
-        for locale in ['en', 'zh', 'ja', 'ko', 'ru', 'ms', 'pt-br']:
+        for locale in LOCALES:
             if locale not in label_keys:
                 missing.append(locale)
-        if 'zh-Hant' not in label_keys and 'zh-hant' not in label_keys:
-            missing.append('zh-Hant(or zh-hant)')
         if missing:
             print(f"[B][WARN] {env}: label map missing locale(s): {', '.join(missing)}")
             warnings += 1
@@ -777,7 +785,7 @@ fi
 
 # .env.sample consistency check
 set +e
-env_sample_output=$("$PYTHON_BIN" - <<'PY' "$COMPOSE" "$VER_DIR/.env.sample" "$SCRIPT_DIR" "$VER"
+env_sample_output=$("$PYTHON_BIN" - <<'PY' "$COMPOSE" "$ENV_SAMPLE" "$SCRIPT_DIR" "$VER"
 import re, sys
 from pathlib import Path
 import yaml
@@ -788,6 +796,7 @@ from compose_env_vars import extract_compose_variable_names
 compose_path = Path(sys.argv[1])
 env_sample_path = Path(sys.argv[2])
 version_data_path = Path(sys.argv[4])
+from gen_env_sample import normalize_env_default, read_env_sample
 
 if not env_sample_path.is_file():
     print("[A][FAIL] .env.sample missing")
@@ -796,18 +805,12 @@ if not env_sample_path.is_file():
 compose_text = compose_path.read_text(encoding='utf-8', errors='ignore')
 vars_in_compose = extract_compose_variable_names(compose_text)
 
-env_sample_text = env_sample_path.read_text(encoding='utf-8', errors='ignore')
-vars_in_sample = set()
-sample_values = {}
-for line in env_sample_text.splitlines():
-    line = line.strip()
-    if line and not line.startswith('#'):
-        m = re.match(r'^([A-Za-z_][A-Za-z0-9_]*)=', line)
-        if m:
-            key, value = line.split('=', 1)
-            key = key.strip()
-            vars_in_sample.add(key)
-            sample_values[key] = value
+try:
+    sample_values = read_env_sample(env_sample_path, allow_interpolation=True)
+except (OSError, ValueError) as exc:
+    print(f'[A][FAIL] cannot parse literal .env.sample values: {exc}')
+    raise SystemExit(1)
+vars_in_sample = set(sample_values)
 
 def env_value_is_empty(value):
     value = value.strip()
@@ -835,20 +838,6 @@ except Exception as exc:
     print(f'[A][FAIL] cannot compare formFields defaults with .env.sample: {exc}')
     raise SystemExit(1)
 
-def normalized_form_default(value):
-    if value is None:
-        return ''
-    if isinstance(value, bool):
-        return 'true' if value else 'false'
-    return value if isinstance(value, str) else str(value)
-
-def normalized_sample_value(value):
-    value = value.strip()
-    quoted = re.fullmatch(r'''(["'])(.*)\1(?:[ \t]+#.*)?''', value)
-    if quoted:
-        return quoted.group(2)
-    return re.sub(r'[ \t]+#.*$', '', value).rstrip()
-
 failures = 0
 form_fields = (version_data.get('additionalProperties') or {}).get('formFields') or []
 for item in form_fields:
@@ -862,14 +851,14 @@ for item in form_fields:
         continue
     if str(item.get('random', '')).strip().lower() == 'true':
         continue
-    form_default = normalized_form_default(item.get('default'))
+    form_default = normalize_env_default(item.get('default'))
     if not form_default:
         continue
     if env_key not in sample_values:
         print(f'[A][FAIL] formFields default missing from .env.sample: {env_key}')
         failures += 1
         continue
-    if form_default != normalized_sample_value(sample_values[env_key]):
+    if form_default != sample_values[env_key]:
         print(f'[A][FAIL] formFields default differs from .env.sample: {env_key}')
         failures += 1
 
@@ -899,108 +888,8 @@ if [[ $env_sample_status -ne 0 && $FAILURES -eq 0 ]]; then
 fi
 
 set +e
-i18n_output=$("$PYTHON_BIN" - <<'PY' "$ROOT" "$VER" "$I18N_MODE" "$I18N_SCOPE" "$I18N_ALLOW_EN_LABELS"
-import re, sys
-from pathlib import Path
-
-root, ver, mode, scope, allow_csv = sys.argv[1:6]
-if mode == 'off':
-    raise SystemExit(0)
-
-allow = {x.strip().lower() for x in allow_csv.split(',') if x.strip()}
-
-
-def emit(level, msg):
-    print(f'[{level}] {msg}')
-
-
-def should_fail(msg):
-    if mode == 'strict':
-        emit('A][FAIL', msg)
-        return True
-    emit('B][WARN', msg)
-    return False
-
-
-def ascii_ratio(s):
-    if not s:
-        return 1.0
-    return sum(1 for ch in s if ord(ch) < 128) / len(s)
-
-
-def has_japanese(s):
-    return bool(re.search(r'[\u3040-\u30ff]', s))
-
-
-def has_korean(s):
-    return bool(re.search(r'[\uac00-\ud7af]', s))
-
-
-def has_cyrillic(s):
-    return bool(re.search(r'[\u0400-\u04FF]', s))
-
-
-def read_yaml(path):
-    try:
-        return yaml.safe_load(Path(path).read_text(encoding='utf-8', errors='ignore')) or {}
-    except Exception:
-        return {}
-
-
-def read_desc_map(data):
-    desc = (data.get('additionalProperties') or {}).get('description') or {}
-    return desc if isinstance(desc, dict) else {}
-
-
-def read_label_items(data):
-    fields = (data.get('additionalProperties') or {}).get('formFields') or []
-    items = []
-    for field in fields:
-        if not isinstance(field, dict):
-            continue
-        label = field.get('label') or {}
-        if not isinstance(label, dict):
-            label = {}
-        items.append({'env': field.get('envKey') or 'UNKNOWN', 'label': label})
-    return items
-
-root_data = read_yaml(root)
-ver_data = read_yaml(ver)
-
-if scope in ('description', 'all'):
-    vals = {k: str(read_desc_map(root_data).get(k, '')).strip() for k in ['en', 'zh', 'zh-Hant', 'ja', 'ko', 'ru', 'ms', 'pt-br']}
-    if all(vals.values()):
-        en = vals['en'].lower().strip()
-        for key in ['ja', 'ko', 'ru', 'ms', 'pt-br']:
-            if vals[key].lower().strip() == en and should_fail(f'additionalProperties.description.{key} equals English text exactly'):
-                raise SystemExit(1)
-        if vals['zh'] == vals['zh-Hant'] and should_fail('additionalProperties.description.zh-Hant equals zh exactly'):
-            raise SystemExit(1)
-        for key in ['ja', 'ko', 'ru']:
-            if ascii_ratio(vals[key]) > 0.75 and should_fail(f'additionalProperties.description.{key} looks mostly ASCII/English'):
-                raise SystemExit(1)
-        if vals['ja'] and not has_japanese(vals['ja']) and should_fail('additionalProperties.description.ja missing Japanese script'):
-            raise SystemExit(1)
-        if vals['ko'] and not has_korean(vals['ko']) and should_fail('additionalProperties.description.ko missing Korean script'):
-            raise SystemExit(1)
-        if vals['ru'] and not has_cyrillic(vals['ru']) and should_fail('additionalProperties.description.ru missing Cyrillic script'):
-            raise SystemExit(1)
-
-if scope in ('labels', 'all'):
-    for item in read_label_items(ver_data):
-        en = str(item['label'].get('en') or '').strip()
-        if not en:
-            continue
-        same = sum(1 for key, value in item['label'].items() if key != 'en' and str(value).strip().lower() == en.lower())
-        if same >= 5 and should_fail(f"formFields[{item['env']}] label map has too many locales identical to English ({same})"):
-            raise SystemExit(1)
-        for key in ['ja', 'ko', 'ru']:
-            value = str(item['label'].get(key) or '').strip()
-            if value and value.lower() == en.lower() and en.lower() not in allow:
-                if should_fail(f"formFields[{item['env']}] label.{key} equals English without whitelist term"):
-                    raise SystemExit(1)
-PY
-)
+i18n_output=$("$PYTHON_BIN" "$SCRIPT_DIR/appstore_i18n.py" "$ROOT" "$VER" \
+  --mode "$I18N_MODE" --scope "$I18N_SCOPE" --allow-english-labels "$I18N_ALLOW_EN_LABELS" --require-baseline)
 i18n_status=$?
 set -e
 if [[ -n "$i18n_output" ]]; then
@@ -1019,7 +908,7 @@ if [[ $i18n_status -ne 0 && $FAILURES -eq 0 && "$I18N_MODE" == "strict" ]]; then
 fi
 
 set +e
-compose_render_output=$("$PYTHON_BIN" - <<'PY' "$COMPOSE" "$VER_DIR/.env.sample"
+compose_render_output=$("$PYTHON_BIN" - <<'PY' "$COMPOSE" "$ENV_SAMPLE"
 import shutil
 import subprocess
 import sys
@@ -1062,24 +951,74 @@ if [[ $compose_render_status -ne 0 && $FAILURES -eq 0 ]]; then
 fi
 
 if [[ "$STRICT_STORE" -eq 1 ]]; then
+  set +e
+  placeholder_output=$(grep -RInE '请按官方来源补全|generated 1Panel app template|1panel-app-adapter 生成的|\(placeholder\)|（佔位）|（プレースホルダー）|（플레이스홀더）' "$ROOT" "$DIR/README.md" "$DIR/README_en.md" 2>/dev/null)
+  placeholder_status=$?
+  set -e
+  if [[ -n "$placeholder_output" ]]; then
+    fail "placeholder template text detected in delivery artifact"
+    echo "$placeholder_output"
+  fi
+fi
+
+if [[ "$SUBMISSION_PROFILE" == "official" ]]; then
+  set +e
+  profile_output=$("$PYTHON_BIN" - "$SCRIPT_DIR" "$VER" <<'PY'
+import sys
+from pathlib import Path
+import yaml
+sys.path.insert(0, sys.argv[1])
+from package_contract import profile_data
+original = yaml.safe_load(Path(sys.argv[2]).read_text(encoding="utf-8")) or {}
+if profile_data(original, "official") != original:
+    print("[A][FAIL] official profile directory fields require disabled:true and edit:false")
+    raise SystemExit(1)
+PY
+)
+  profile_status=$?
+  set -e
+  if [[ $profile_status -ne 0 ]]; then
+    fail "official submission profile does not match version data"
+    [[ -z "$profile_output" ]] || echo "$profile_output"
+  fi
+fi
+
+if [[ "$STRICT_STORE" -eq 1 ]]; then
   [[ -f "$DIR/README.md" ]] || fail "root README.md missing"
   [[ -f "$DIR/logo.png" ]] || fail "root logo.png missing"
   [[ ! -L "$VER_DIR/scripts" ]] || fail "version scripts directory is a symbolic link"
-  [[ -d "$VER_DIR/scripts" ]] || fail "version scripts directory missing"
   [[ ! -L "$VER_DIR/scripts/init.sh" ]] || fail "version init.sh is a symbolic link"
   [[ ! -L "$VER_DIR/scripts/upgrade.sh" ]] || fail "version upgrade.sh is a symbolic link"
   [[ ! -L "$VER_DIR/scripts/uninstall.sh" ]] || fail "version uninstall.sh is a symbolic link"
-  [[ -f "$VER_DIR/scripts/init.sh" ]] || fail "version init.sh missing"
-  [[ -f "$VER_DIR/scripts/upgrade.sh" ]] || fail "version upgrade.sh missing"
-  [[ -f "$VER_DIR/scripts/uninstall.sh" ]] || fail "version uninstall.sh missing"
   [[ ! -f "$VER_DIR/scripts/init.sh" || -x "$VER_DIR/scripts/init.sh" ]] || fail "version init.sh is not executable"
   [[ ! -f "$VER_DIR/scripts/upgrade.sh" || -x "$VER_DIR/scripts/upgrade.sh" ]] || fail "version upgrade.sh is not executable"
   [[ ! -f "$VER_DIR/scripts/uninstall.sh" || -x "$VER_DIR/scripts/uninstall.sh" ]] || fail "version uninstall.sh is not executable"
   grep -qE '^## 产品介绍\s*$' "$DIR/README.md" || fail "README.md missing section: ## 产品介绍"
   grep -qE '^## 主要功能\s*$' "$DIR/README.md" || fail "README.md missing section: ## 主要功能"
-  grep -qE '^## 访问说明\s*$' "$DIR/README.md" || fail "README.md missing section: ## 访问说明"
-  grep -qE '^## Introduction\s*$' "$DIR/README.md" || fail "README.md missing section: ## Introduction"
-  grep -qE '^## Features\s*$' "$DIR/README.md" || fail "README.md missing section: ## Features"
+  EN_README="$DIR/README_en.md"
+  if [[ ! -f "$EN_README" && "$SUBMISSION_PROFILE" == "third-party" ]]; then
+    EN_README="$DIR/README.md"  # Historical combined README remains a supported input.
+  fi
+  [[ -f "$EN_README" ]] || fail "README_en.md missing"
+  grep -qE '^## Introduction\s*$' "$EN_README" || fail "English README missing section: ## Introduction"
+  grep -qE '^## Features\s*$' "$EN_README" || fail "English README missing section: ## Features"
+  [[ ! -f "$DIR/source-evidence.json" ]] || warn "source-evidence.json is run-only evidence; move it outside the delivered app"
+  if [[ "$SUBMISSION_PROFILE" == "official" && -f "$VER_DIR/.env.sample" ]]; then
+    fail "official delivery must omit .env.sample from the app package"
+  fi
+  readme_findings=$("$PYTHON_BIN" - "$SCRIPT_DIR" "$DIR" <<'PY'
+import sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+from package_contract import readme_version_findings
+print("\n".join(readme_version_findings(Path(sys.argv[2]))))
+PY
+)
+  [[ -z "$readme_findings" ]] || fail "$readme_findings"
+fi
+
+if [[ "$REQUIRE_DELIVERY_EVIDENCE" -eq 1 ]]; then
+  [[ ! -e "$DIR/source-evidence.json" ]] || fail "delivery package must not contain source-evidence.json; keep evidence outside the app and use --source-evidence"
 fi
 
 if grep -qE '^[[:space:]]*healthcheck:\s*$' "$COMPOSE"; then

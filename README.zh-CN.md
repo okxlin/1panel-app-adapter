@@ -48,10 +48,19 @@ bash scripts/validate-v2.sh \
   --dir ./1panel-apps/demo \
   --strict-store \
   --i18n-mode strict \
-  --i18n-scope all
+  --i18n-scope all \
+  --source-evidence-mode required --require-delivery-evidence
 ```
 
 脚手架产物只是起点。应用专属元数据、翻译、拓扑、镜像来源和运行行为完成复核后，才能视为可提交应用商店的产物。
+
+## 提交模式
+
+默认使用 `third-party`。为 1Panel 官方应用库准备包时，在脚手架、AppSpec 生成、宝塔导入、迁移和校验命令中统一增加 `--submission-profile official`。官方模式保留原有 Compose 拓扑，将已有目录表单设为 `disabled: true`、`edit: false`，并省略应用包内的 `.env.sample`。AppSpec 也支持 `submissionProfile`，命令行参数优先。
+
+只交付 `<out-dir>/<app-key>/`。来源证据写入同级 `<out-dir>/.evidence/<app-key>/source-evidence.json`；校验复制到其他位置的包时，用 `--source-evidence <path>` 指定证据。两种模式默认分别生成中文 `README.md` 和英文 `README_en.md`，仅在确有初始化工作时生成生命周期脚本。默认图标的必要 MIT 声明放在 README 中，不再额外复制许可证文本和 SVG；其他实际再分发材料所需的声明仍须保留。
+
+具体约定见[提交模式](./references/submission-profiles.md)和[固定提交的官方源码依据](./references/1panel-sources.md)。模式选择不会减免应用来源、功能、许可和运行时验证要求。
 
 ## 工作流
 
@@ -115,7 +124,7 @@ bash scripts/finalize_runtime_scripts.sh <app-dir> <version-dir> \
   --dir-owner APP_DATA_DIR=<uid>:<gid>:0750 --replace-init
 ```
 
-该命令会补齐缺失的 `init.sh`、`upgrade.sh` 和 `uninstall.sh`，并使用基于应用根目录的路径处理方式。`--dir-owner` 只有在显式给出 `--replace-init` 后才会重新生成 `init.sh`，并仅对可信版本目录的直接子目录做非递归权限设置；执行时必须是 root。不要根据应用名称猜测 UID/GID，也不要把某个镜像的示例值复用于其他镜像。
+默认生成只添加必要的初始化脚本。仅在应用确实需要这些钩子时，使用此命令补齐缺失的 `init.sh`、`upgrade.sh` 和 `uninstall.sh`；脚本使用基于应用根目录的路径处理方式。`--dir-owner` 只有在显式给出 `--replace-init` 后才会重新生成 `init.sh`，并仅对可信版本目录的直接子目录做非递归权限设置；执行时必须是 root。不要根据应用名称猜测 UID/GID，也不要把某个镜像的示例值复用于其他镜像。
 
 ### 校验应用包
 
@@ -144,7 +153,7 @@ bash scripts/validate-v2.sh --dir <app-dir> --source-evidence-mode required \
 - 根目录与版本级 `data.yml` 的结构、必填字段、重复 YAML key 和标签；
 - Compose 渲染、变量闭环、`.env.sample`、服务标签、端口、存储卷和网络拓扑；
 - 占位内容残留和 AppStore README 结构；
-- `en`、`zh`、`zh-Hant`、`ja`、`ko`、`ru`、`ms`、`pt-br` 的描述与表单标签；
+- `en`、`zh`、`zh-hant`、`ja`、`ko`、`ru`、`ms`、`pt-br`、`tr`、`es-es`、`fa`、`lo` 的描述与表单标签；
 - 可选来源证据和 strict-store 交付规则。
 
 完整 Compose 渲染依赖 `docker compose` CLI。来源证据默认只告警，只有显式传入 `--source-evidence-mode required` 时才会成为必需项；该历史模式负责溯源校验，需要把许可证和再分发交付作为发布门禁时，再加 `--require-delivery-evidence`。

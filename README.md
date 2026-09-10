@@ -48,10 +48,19 @@ bash scripts/validate-v2.sh \
   --dir ./1panel-apps/demo \
   --strict-store \
   --i18n-mode strict \
-  --i18n-scope all
+  --i18n-scope all \
+  --source-evidence-mode required --require-delivery-evidence
 ```
 
 Scaffold output is a starting point. It is not store-ready until application-specific metadata, translations, topology, image provenance, and runtime behavior have been reviewed.
+
+## Submission Profiles
+
+Generation defaults to `third-party`. Add `--submission-profile official` to scaffold, AppSpec generation, Baota import, migration, and validation when preparing an official store submission. Official mode locks existing directory form fields with `disabled: true` and `edit: false`, keeps the same Compose topology, and omits `.env.sample` from the app. AppSpec also accepts `submissionProfile`; the CLI flag overrides it.
+
+Deliver only `<out-dir>/<app-key>/`. Source evidence is written to the sibling `<out-dir>/.evidence/<app-key>/source-evidence.json`; pass `--source-evidence <path>` when validating a package copied elsewhere. Both profiles generate Chinese `README.md` and English `README_en.md`, and create lifecycle hooks only when there is actual setup work. The fallback icon keeps its MIT notice inside the README without extra license text or source files. Required notices for other redistributed material remain mandatory.
+
+See [submission profiles](./references/submission-profiles.md) and the [pinned 1Panel source facts](./references/1panel-sources.md). Neither profile waives application-specific source or runtime evidence.
 
 ## Workflows
 
@@ -126,7 +135,7 @@ bash scripts/finalize_runtime_scripts.sh <app-dir> <version-dir> \
   --dir-owner APP_DATA_DIR=<uid>:<gid>:0750 --replace-init
 ```
 
-This adds missing `init.sh`, `upgrade.sh`, and `uninstall.sh` files with app-root-aware path handling. `--dir-owner` regenerates `init.sh` only after the explicit `--replace-init` acknowledgement and applies non-recursive ownership to a direct child of a trusted version directory. It must run as root. Never infer the UID/GID from the application name or reuse the example values for another image.
+Use this explicit backfill helper only when the package needs those hooks. Default generation adds only needed initialization. This helper adds missing `init.sh`, `upgrade.sh`, and `uninstall.sh` files with app-root-aware path handling. `--dir-owner` regenerates `init.sh` only after the explicit `--replace-init` acknowledgement and applies non-recursive ownership to a direct child of a trusted version directory. It must run as root. Never infer the UID/GID from the application name or reuse the example values for another image.
 
 ### Validate a Package
 
@@ -155,7 +164,7 @@ Validation covers:
 - root and version `data.yml` structure, required fields, duplicate YAML keys, and allowed tags;
 - Compose rendering, variable closure, `.env.sample`, service labels, ports, volumes, and network topology;
 - placeholder residue and AppStore README structure;
-- localized descriptions and form labels for `en`, `zh`, `zh-Hant`, `ja`, `ko`, `ru`, `ms`, and `pt-br`;
+- localized descriptions and form labels for `en`, `zh`, `zh-hant`, `ja`, `ko`, `ru`, `ms`, `pt-br`, `tr`, `es-es`, `fa`, and `lo`;
 - optional source provenance and strict-store delivery rules.
 
 Full Compose rendering requires the `docker compose` CLI. Source evidence defaults to warning mode and becomes mandatory only with `--source-evidence-mode required`. That historical mode validates provenance; add `--require-delivery-evidence` when license and redistribution delivery must be release-gating.
