@@ -38,74 +38,6 @@ def run_evidence(app_dir: pathlib.Path) -> pathlib.Path:
 
 
 class RuntimeScriptGenerationTest(unittest.TestCase):
-    def assert_uninstall_runs_from_version_dir(
-        self, uninstall_script: pathlib.Path, version_dir: pathlib.Path
-    ) -> None:
-        unrelated_cwd = version_dir.parent / "unrelated"
-        unrelated_cwd.mkdir()
-        for case, docker_version_status, legacy_version_status, expected_command in (
-            ("compose-v2", 0, 0, "docker:compose down"),
-            ("legacy-fallback", 1, 0, "docker-compose:down"),
-            ("compose-unavailable", 1, 1, None),
-        ):
-            with self.subTest(case=case):
-                capture_dir = version_dir.parent / f"capture-{case}"
-                fake_bin = version_dir.parent / f"fake-bin-{case}"
-                capture_dir.mkdir()
-                fake_bin.mkdir()
-
-                fake_docker = fake_bin / "docker"
-                fake_docker.write_text(
-                    "#!/bin/sh\n"
-                    "if [ \"$*\" = 'compose version' ]; then\n"
-                    f"  exit {docker_version_status}\n"
-                    "fi\n"
-                    "printf '%s\\n' \"$PWD\" > \"$CAPTURE_DIR/pwd\"\n"
-                    "printf 'docker:%s\\n' \"$*\" > \"$CAPTURE_DIR/command\"\n",
-                    encoding="utf-8",
-                )
-                fake_docker.chmod(0o755)
-
-                legacy_compose = fake_bin / "docker-compose"
-                legacy_compose.write_text(
-                    "#!/bin/sh\n"
-                    "if [ \"$*\" = 'version' ]; then\n"
-                    f"  exit {legacy_version_status}\n"
-                    "fi\n"
-                    "printf '%s\\n' \"$PWD\" > \"$CAPTURE_DIR/pwd\"\n"
-                    "printf 'docker-compose:%s\\n' \"$*\" > \"$CAPTURE_DIR/command\"\n",
-                    encoding="utf-8",
-                )
-                legacy_compose.chmod(0o755)
-
-                env = os.environ.copy()
-                env["CAPTURE_DIR"] = str(capture_dir)
-                env["PATH"] = f"{fake_bin}:{env['PATH']}"
-
-                proc = subprocess.run(
-                    ["bash", str(uninstall_script)],
-                    cwd=unrelated_cwd,
-                    env=env,
-                    text=True,
-                    capture_output=True,
-                )
-
-                if expected_command is None:
-                    self.assertNotEqual(proc.returncode, 0)
-                    self.assertIn("Docker Compose is not available", proc.stderr)
-                    self.assertFalse((capture_dir / "command").exists())
-                    continue
-
-                self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
-                self.assertEqual(
-                    (capture_dir / "pwd").read_text(encoding="utf-8").strip(),
-                    str(version_dir.resolve()),
-                )
-                self.assertEqual(
-                    (capture_dir / "command").read_text(encoding="utf-8").strip(),
-                    expected_command,
-                )
-
     def test_collect_runtime_paths_rejects_unsafe_defaults(self):
         for default in (
             "/srv/demo",
@@ -779,6 +711,29 @@ additionalProperties:
             self.assertIn('ensure_dir "CONFIG_DIR" "./data/config"', init_text)
             self.assertNotIn("ensure_file_parent", init_text)
             self.assertNotIn("mkdir -p ./data\n", init_text)
+            self.assertFalse((ver_dir / "scripts" / "upgrade.sh").exists())
+            self.assertFalse((ver_dir / "scripts" / "uninstall.sh").exists())
+
+    def test_finalize_runtime_scripts_skips_named_volume_only_package(self):
+        with tempfile.TemporaryDirectory(prefix="adapter-finalize-named-volume-") as tmp:
+            app_dir = pathlib.Path(tmp) / "demo"
+            ver_dir = app_dir / "1.0"
+            ver_dir.mkdir(parents=True)
+            (ver_dir / "data.yml").write_text(
+                "additionalProperties:\n  formFields: []\n", encoding="utf-8"
+            )
+            (ver_dir / "docker-compose.yml").write_text(
+                "services:\n  app:\n    image: example/app:1.0\n"
+                "    volumes:\n      - app-data:/data\nvolumes:\n  app-data:\n",
+                encoding="utf-8",
+            )
+            result = subprocess.run(
+                ["bash", str(FINALIZE), str(app_dir), str(ver_dir)],
+                text=True, capture_output=True, cwd=ROOT,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertFalse((ver_dir / "scripts").exists())
+            self.assertFalse((ver_dir / "data").exists())
 
     def test_finalize_runtime_scripts_fails_closed_for_file_like_path(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -899,7 +854,8 @@ additionalProperties:
             scripts_dir.mkdir(parents=True)
             data_yml = ver_dir / "data.yml"
             data_yml.write_text(
-                "additionalProperties:\n  formFields: []\n", encoding="utf-8"
+                "additionalProperties:\n  formFields:\n"
+                "    - envKey: APP_DATA_DIR\n      default: ./data\n", encoding="utf-8"
             )
             init_script = scripts_dir / "init.sh"
             init_script.write_text("#!/bin/sh\nexit 7\n", encoding="utf-8")
@@ -910,8 +866,8 @@ additionalProperties:
 
             self.assertNotIn("exit 7", init_script.read_text(encoding="utf-8"))
 
-    def test_finalize_lifecycle_generates_context_bound_non_destructive_uninstall(self):
-        with tempfile.TemporaryDirectory(prefix="adapter-finalize-uninstall-") as tmp:
+    def test_finalize_lifecycle_preserves_existing_custom_hooks(self):
+        with tempfile.TemporaryDirectory(prefix="adapter-finalize-preserve-") as tmp:
             ver_dir = pathlib.Path(tmp) / "demo" / "latest"
             scripts_dir = ver_dir / "scripts"
             scripts_dir.mkdir(parents=True)
@@ -920,15 +876,35 @@ additionalProperties:
                 "additionalProperties:\n  formFields: []\n", encoding="utf-8"
             )
 
-            runtime_utils.finalize_lifecycle_scripts(
-                data_yml, scripts_dir / "init.sh"
-            )
+            for name in ("init.sh", "upgrade.sh", "uninstall.sh"):
+                path = scripts_dir / name
+                path.write_text(f"#!/bin/sh\n# reviewed {name}\nprintf '%s\\n' 'custom hook'\n", encoding="utf-8")
+                path.chmod(0o750)
+            before = {path.name: (path.read_bytes(), path.stat().st_mode) for path in scripts_dir.iterdir()}
+            runtime_utils.finalize_lifecycle_scripts(data_yml, scripts_dir / "init.sh")
+            after = {path.name: (path.read_bytes(), path.stat().st_mode) for path in scripts_dir.iterdir()}
+            self.assertEqual(after, before)
 
-            self.assert_uninstall_runs_from_version_dir(
-                scripts_dir / "uninstall.sh", ver_dir
-            )
+    def test_finalizer_creates_needed_init_and_preserves_other_custom_hooks(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            version = pathlib.Path(tmp) / "1.0"
+            scripts = version / "scripts"
+            scripts.mkdir(parents=True)
+            data = version / "data.yml"
+            data.write_text("additionalProperties:\n  formFields:\n"
+                            "    - envKey: APP_DATA_DIR\n      default: ./data\n", encoding="utf-8")
+            for name in ("upgrade.sh", "uninstall.sh"):
+                path = scripts / name
+                path.write_text("#!/bin/sh\ntest -d ./data\n", encoding="utf-8")
+                path.chmod(0o750)
+            before = {path.name: (path.read_bytes(), path.stat().st_mode) for path in scripts.iterdir()}
+            runtime_utils.finalize_lifecycle_scripts(data, scripts / "init.sh")
+            self.assertIn('ensure_dir "APP_DATA_DIR" "./data"', (scripts / "init.sh").read_text(encoding="utf-8"))
+            for name, expected in before.items():
+                path = scripts / name
+                self.assertEqual((path.read_bytes(), path.stat().st_mode), expected)
 
-    def test_scaffold_leaves_uninstall_to_panel_unless_explicitly_finalized(self):
+    def test_scaffold_and_finalizer_leave_uninstall_to_panel(self):
         with tempfile.TemporaryDirectory(prefix="adapter-scaffold-uninstall-") as tmp:
             out_dir = pathlib.Path(tmp) / "out"
             subprocess.run(
@@ -958,9 +934,8 @@ additionalProperties:
             ver_dir = out_dir / "demo" / "1.0"
             self.assertFalse((ver_dir / "scripts" / "uninstall.sh").exists())
             runtime_utils.finalize_lifecycle_scripts(ver_dir / "data.yml", ver_dir / "scripts" / "init.sh")
-            self.assert_uninstall_runs_from_version_dir(
-                ver_dir / "scripts" / "uninstall.sh", ver_dir
-            )
+            self.assertFalse((ver_dir / "scripts" / "uninstall.sh").exists())
+            self.assertFalse((ver_dir / "scripts" / "upgrade.sh").exists())
 
     def test_env_sample_helper_replaces_legacy_container_name_form_field(self):
         with tempfile.TemporaryDirectory(prefix="adapter-env-container-name-") as tmp:
@@ -1874,21 +1849,22 @@ additionalProperties:
             scripts_dir.mkdir(parents=True)
             outside.mkdir()
             (version_dir / "data.yml").write_text(
-                "additionalProperties:\n  formFields: []\n", encoding="utf-8"
+                "additionalProperties:\n  formFields:\n"
+                "    - envKey: APP_DATA_DIR\n      default: ./data\n", encoding="utf-8"
             )
-            real_replace = os.replace
+            real_link = os.link
             swapped = False
 
-            def swap_before_replace(*args, **kwargs):
+            def swap_before_link(*args, **kwargs):
                 nonlocal swapped
                 if not swapped:
                     scripts_dir.rename(moved_scripts)
                     scripts_dir.symlink_to(outside, target_is_directory=True)
                     swapped = True
-                return real_replace(*args, **kwargs)
+                return real_link(*args, **kwargs)
 
             with mock.patch.object(
-                runtime_utils.os, "replace", side_effect=swap_before_replace
+                runtime_utils.os, "link", side_effect=swap_before_link
             ), self.assertRaisesRegex(ValueError, "changed during finalization"):
                 runtime_utils.finalize_lifecycle_scripts(
                     version_dir / "data.yml",
@@ -1906,7 +1882,8 @@ additionalProperties:
             scripts_dir = version_dir / "scripts"
             scripts_dir.mkdir(parents=True)
             (version_dir / "data.yml").write_text(
-                "additionalProperties:\n  formFields: []\n", encoding="utf-8"
+                "additionalProperties:\n  formFields:\n"
+                "    - envKey: APP_DATA_DIR\n      default: ./data\n", encoding="utf-8"
             )
             init_script = scripts_dir / "init.sh"
             init_script.write_text("old init\n", encoding="utf-8")
@@ -1937,6 +1914,63 @@ additionalProperties:
             self.assertEqual(
                 outside_init.read_text(encoding="utf-8"), "do not replace\n"
             )
+
+    def test_finalizer_preserves_init_that_appears_during_creation(self):
+        for with_owner in (False, True):
+            with self.subTest(owner=with_owner), tempfile.TemporaryDirectory() as tmp:
+                version_dir = pathlib.Path(tmp) / "1.0"
+                scripts_dir = version_dir / "scripts"
+                scripts_dir.mkdir(parents=True)
+                data_yml = version_dir / "data.yml"
+                data_yml.write_text(
+                    "additionalProperties:\n  formFields:\n"
+                    "    - envKey: APP_DATA_DIR\n      default: ./data\n", encoding="utf-8"
+                )
+                init_script = scripts_dir / "init.sh"
+                original = "#!/bin/sh\nprintf '%s\\n' 'concurrent custom init'\n"
+                real_link = os.link
+
+                def add_custom_init(*args, **kwargs):
+                    init_script.write_text(original, encoding="utf-8")
+                    return real_link(*args, **kwargs)
+
+                owners = [f"APP_DATA_DIR={os.getuid()}:{os.getgid()}:0750"] if with_owner else []
+                with mock.patch.object(runtime_utils.os, "link", side_effect=add_custom_init):
+                    if with_owner:
+                        with self.assertRaisesRegex(ValueError, "appeared during finalization"):
+                            runtime_utils.finalize_lifecycle_scripts(data_yml, init_script, owners)
+                    else:
+                        runtime_utils.finalize_lifecycle_scripts(data_yml, init_script)
+                self.assertEqual(init_script.read_text(encoding="utf-8"), original)
+                self.assertEqual({path.name for path in scripts_dir.iterdir()}, {"init.sh"})
+
+    def test_finalizer_rechecks_hooks_after_init_creation(self):
+        for name in ("init.sh", "upgrade.sh", "uninstall.sh"):
+            with self.subTest(hook=name), tempfile.TemporaryDirectory() as tmp:
+                version_dir = pathlib.Path(tmp) / "1.0"
+                version_dir.mkdir()
+                data_yml = version_dir / "data.yml"
+                data_yml.write_text(
+                    "additionalProperties:\n  formFields:\n"
+                    "    - envKey: APP_DATA_DIR\n      default: ./data\n", encoding="utf-8"
+                )
+                init_script = version_dir / "scripts/init.sh"
+                outside = pathlib.Path(tmp) / "outside.sh"
+                outside.write_text("do not replace\n", encoding="utf-8")
+                real_create = runtime_utils._atomic_create_file
+
+                def swap_after_create(*args):
+                    created = real_create(*args)
+                    hook = version_dir / "scripts" / name
+                    if hook.exists():
+                        hook.unlink()
+                    hook.symlink_to(outside)
+                    return created
+
+                with mock.patch.object(runtime_utils, "_atomic_create_file", side_effect=swap_after_create):
+                    with self.assertRaisesRegex(ValueError, "regular non-symlink file"):
+                        runtime_utils.finalize_lifecycle_scripts(data_yml, init_script)
+                self.assertEqual(outside.read_text(encoding="utf-8"), "do not replace\n")
 
     def test_generate_from_appspec_runtime_files_follow_volume_defaults(self):
         with tempfile.TemporaryDirectory() as tmp:

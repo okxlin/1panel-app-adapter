@@ -9,6 +9,7 @@ import hashlib
 import json
 from pathlib import Path
 import re
+import shlex
 
 import yaml
 
@@ -27,6 +28,45 @@ def readme_version_findings(app_dir: Path) -> list[str]:
         path = app_dir / name
         if path.is_file() and SELECTED_VERSION.search(path.read_text(encoding="utf-8")):
             findings.append(f"{name} contains a fixed selected-version line; keep version selection in package metadata")
+    return findings
+
+
+def noop_lifecycle_findings(version_dir: Path) -> list[str]:
+    """Flag comments, simple no-op statements, and literal echo-only hooks."""
+    scripts = version_dir / "scripts"
+    if scripts.is_symlink():
+        return []  # The validator reports unsafe paths separately; do not follow them.
+    findings = []
+    for name in ("init.sh", "upgrade.sh", "uninstall.sh"):
+        path = scripts / name
+        if path.is_symlink() or not path.is_file():
+            continue
+        commands = []
+        try:
+            for line in path.read_text(encoding="utf-8").splitlines():
+                literal_line = not re.search(r"[$`\\<>|&()]", line)
+                lexer = shlex.shlex(line, posix=True, punctuation_chars=";")
+                lexer.whitespace_split = True
+                command = []
+                for token in lexer:
+                    if token == ";":
+                        commands.append((command, literal_line))
+                        command = []
+                    else:
+                        command.append(token)
+                commands.append((command, literal_line))
+        except ValueError:
+            continue  # Unknown shell syntax is outside this deliberately narrow lint.
+        for command, literal_line in commands:
+            if not command or tuple(command) in {(':',), ('true',), ('exit',), ('exit', '0')}:
+                continue
+            if command[0] == "set" and re.fullmatch(r"-[efu]+|-[efu]*o pipefail", " ".join(command[1:])):
+                continue
+            if command[0] == "echo" and literal_line:
+                continue
+            break
+        else:
+            findings.append(f"scripts/{name} contains no lifecycle operation; omit unused hooks")
     return findings
 
 

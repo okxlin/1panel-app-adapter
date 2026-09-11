@@ -4,7 +4,7 @@ from pathlib import Path
 
 import yaml
 
-from appstore_i18n import fill_locales, iter_fields, normalize_locales
+from appstore_i18n import fill_locales, iter_fields, normalize_locales, normalize_port_label
 
 
 def patch(path: Path):
@@ -102,6 +102,7 @@ def patch(path: Path):
     for item in iter_fields(formfields):
         if any(item.get(key) for key in ("label", "labelZh", "labelEn")):
             item["label"] = fill_locales(item.get("labelZh"), item.get("labelEn"), item.get("label"))
+            normalize_port_label(item)
         if isinstance(item.get("description"), dict):
             item["description"] = normalize_locales(item["description"])
     new_text = yaml.safe_dump(loaded, allow_unicode=True, sort_keys=False)

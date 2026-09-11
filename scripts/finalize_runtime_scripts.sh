@@ -83,4 +83,4 @@ if [[ "$REPLACE_INIT" -eq 1 ]]; then
 fi
 "$python_bin" "$script_dir/runtime_script_utils.py" "${python_args[@]}"
 
-echo "OK: finalized runtime scripts -> $SCRIPTS_DIR"
+echo "OK: checked required initialization; existing lifecycle hooks preserved -> $SCRIPTS_DIR"

@@ -40,7 +40,7 @@ The validator discovers the sibling `.evidence/<app-key>/source-evidence.json`. 
 
 Generate into a new output directory when changing profiles. Generators reject a profile that conflicts with existing output before writing files. AppSpec generation, Baota import, and migration also reject replacing a nonempty version directory; adding a new version under the same profile remains supported. Scaffold's explicit `--force` can refresh an existing package under the same profile and preserves existing lifecycle hooks for review.
 
-For an official package without `.env.sample`, validation derives a temporary environment from the panel form defaults and deletes it after the check. This proves Compose rendering, not application startup or secret correctness. Required operator inputs still need the source-backed startup contract.
+For an official package without `.env.sample`, validation derives a temporary environment from the panel form defaults and deletes it after the check. For `random: true`, it appends a deterministic `_` plus six-character suffix, matching the panel's value shape even when the default is empty. This simulation is only a Compose validation input; it is not a password generator, a delivered default, or evidence of application startup or secret correctness. Ordinary required fields with empty defaults remain empty and must be resolved through the source-backed startup contract. Direct `gen_env_sample.py` calls opt in with `--simulate-panel-random`; normal sample generation is unchanged.
 
 ## Final checks
 
