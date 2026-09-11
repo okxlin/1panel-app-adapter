@@ -12,7 +12,7 @@ import yaml
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from package_contract import ensure_evidence_parent, find_evidence, profile_data, readme_version_findings, sample_path
+from package_contract import ensure_evidence_parent, find_evidence, noop_lifecycle_findings, profile_data, readme_version_findings, sample_path
 
 
 class SubmissionProfileTests(unittest.TestCase):
@@ -101,6 +101,45 @@ class SubmissionProfileTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertEqual({str(path.relative_to(app)): path.read_bytes() for path in app.rglob("*") if path.is_file()}, before)
 
+    def test_official_validator_supplies_random_fields_but_not_missing_user_inputs(self):
+        import os
+        import test_validate_v2
+        if shutil.which("docker") is None:
+            self.skipTest("Docker Compose CLI is unavailable")
+        for random_field in (True, False):
+            with self.subTest(random=random_field), tempfile.TemporaryDirectory() as tmp:
+                app = test_validate_v2.ValidateV2Tests()._write_sample_app(pathlib.Path(tmp))
+                version = app / "latest"
+                data_path = version / "data.yml"
+                data = yaml.safe_load(data_path.read_text(encoding="utf-8"))
+                data["additionalProperties"]["formFields"].append({
+                    "envKey": "ADAPTER_REQUIRED_TOKEN", "type": "password", "required": True,
+                    "default": "", "random": random_field, "edit": False,
+                    "labelEn": "Access token", "labelZh": "访问令牌",
+                })
+                data_path.write_text(yaml.safe_dump(data, allow_unicode=True, sort_keys=False), encoding="utf-8")
+                compose_path = version / "docker-compose.yml"
+                compose = yaml.safe_load(compose_path.read_text(encoding="utf-8"))
+                compose["services"]["sample"]["environment"].append(
+                    "ACCESS_TOKEN=${ADAPTER_REQUIRED_TOKEN:?An access token is required}"
+                )
+                compose_path.write_text(yaml.safe_dump(compose, sort_keys=False), encoding="utf-8")
+                (version / ".env.sample").unlink()
+                before = {str(path.relative_to(app)): path.read_bytes() for path in app.rglob("*") if path.is_file()}
+                environment = os.environ.copy()
+                environment.pop("ADAPTER_REQUIRED_TOKEN", None)
+                result = subprocess.run(
+                    ["bash", str(ROOT / "scripts/validate-v2.sh"), "--dir", str(app),
+                     "--submission-profile", "official"], text=True, capture_output=True, env=environment,
+                )
+                if random_field:
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertIn("docker compose config ok", result.stdout)
+                else:
+                    self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertIn("An access token is required", result.stdout)
+                self.assertEqual({str(path.relative_to(app)): path.read_bytes() for path in app.rglob("*") if path.is_file()}, before)
+
     def test_profile_does_not_change_other_fields(self):
         data = {"additionalProperties": {"formFields": [{"envKey": "API_KEY", "default": "", "edit": False}, {"envKey": "APP_DATA_DIR", "default": "./data", "edit": True}]}}
         transformed = profile_data(data, "official")
@@ -133,6 +172,36 @@ class SubmissionProfileTests(unittest.TestCase):
             self.assertEqual(readme_version_findings(app), [])
             (app / "README_en.md").write_text("**Version**: `v1.2.3`\n", encoding="utf-8")
             self.assertEqual(len(readme_version_findings(app)), 1)
+
+    def test_noop_hook_lint_is_conservative_and_does_not_execute_scripts(self):
+        cases = [
+            ("", True),
+            ("#!/bin/sh\n# No migration needed\n", True),
+            ("#!/bin/bash\nset -eu; set -o pipefail; :; true; exit 0 # Done\n", True),
+            ("#!/bin/sh\necho 'Upgrade complete'\nexit 0\n", True),
+            ("#!/bin/sh\necho ready > state.txt\n", False),
+            ("#!/bin/sh\necho header#data > state.txt\n", False),
+            ("#!/bin/sh\necho $(touch state.txt)\n", False),
+            ("#!/bin/sh\necho ready && touch state.txt\n", False),
+            ("#!/bin/sh\n: > state.txt\n", False),
+            ("#!/bin/sh\nset -- changed\n", False),
+            ("#!/bin/sh\ntrue $(touch state.txt)\n", False),
+            ("#!/bin/sh\nprintf '%s\\n' updated > state.txt\n", False),
+            ("#!/bin/sh\nexit 1\n", False),
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            version = pathlib.Path(tmp)
+            scripts = version / "scripts"
+            scripts.mkdir()
+            hook = scripts / "init.sh"
+            for content, is_noop in cases:
+                with self.subTest(content=content):
+                    hook.write_text(content, encoding="utf-8")
+                    self.assertEqual(bool(noop_lifecycle_findings(version)), is_noop)
+                    self.assertFalse((version / "state.txt").exists())
+            hook.unlink()
+            hook.symlink_to(version / "missing.sh")
+            self.assertEqual(noop_lifecycle_findings(version), [])
 
     def test_sidecar_symlinks_and_conflicting_legacy_evidence_are_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:

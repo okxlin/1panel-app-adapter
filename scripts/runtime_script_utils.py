@@ -550,7 +550,7 @@ def _atomic_replace_file(directory_fd: int, name: str, content: str) -> None:
         raise
 
 
-def _atomic_create_file(directory_fd: int, name: str, content: str) -> None:
+def _atomic_create_file(directory_fd: int, name: str, content: str) -> bool:
     temporary_name = _write_temporary_file(directory_fd, name, content)
     try:
         try:
@@ -562,8 +562,10 @@ def _atomic_create_file(directory_fd: int, name: str, content: str) -> None:
                 follow_symlinks=False,
             )
             os.fsync(directory_fd)
+            return True
         except FileExistsError:
             _existing_regular_file(directory_fd, name)
+            return False
     finally:
         os.unlink(temporary_name, dir_fd=directory_fd)
 
@@ -576,23 +578,6 @@ def _validate_scripts_anchor(version_fd: int, scripts_fd: int) -> None:
         anchored.st_ino,
     ):
         raise ValueError("scripts directory changed during finalization")
-
-
-UPGRADE_SCRIPT = "#!/usr/bin/env bash\nset -euo pipefail\nexit 0\n"
-UNINSTALL_SCRIPT = """#!/usr/bin/env bash
-set -euo pipefail
-
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
-cd "$ROOT_DIR"
-if docker compose version >/dev/null 2>&1; then
-  docker compose down
-elif docker-compose version >/dev/null 2>&1; then
-  docker-compose down
-else
-  echo "Docker Compose is not available" >&2
-  exit 1
-fi
-"""
 
 
 def write_init_script(
@@ -651,25 +636,35 @@ def finalize_lifecycle_scripts(
         path_fields = collect_runtime_path_fields(version_data)
         permissions = parse_directory_permissions(owner_specs, path_fields)
         fixed_permissions = parse_fixed_directory_permissions(fixed_owner_specs)
+        needs_init = bool(path_fields or fixed_permissions)
+        if replace_init and not needs_init:
+            raise ValueError("no directory or ownership setup requires an init.sh replacement")
+        try:
+            os.stat("scripts", dir_fd=version_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            if not needs_init:
+                return
         content = render_init_script_content(
             version_data,
             directory_permissions=permissions,
             fixed_directory_permissions=fixed_permissions,
-        )
+        ) if needs_init else None
         scripts_fd = _open_scripts_directory(version_fd)
         try:
             init_exists = _existing_regular_file(scripts_fd, "init.sh")
+            for name in ("upgrade.sh", "uninstall.sh"):
+                _existing_regular_file(scripts_fd, name)
             if (owner_specs or fixed_owner_specs) and init_exists and not replace_init:
                 raise ValueError(
                     "init.sh already exists; review it, then add --replace-init to "
                     "regenerate it with the explicit owner plan"
                 )
-            if not init_exists or replace_init:
+            if replace_init:
                 _atomic_replace_file(scripts_fd, "init.sh", content)
-            if not _existing_regular_file(scripts_fd, "upgrade.sh"):
-                _atomic_create_file(scripts_fd, "upgrade.sh", UPGRADE_SCRIPT)
-            if not _existing_regular_file(scripts_fd, "uninstall.sh"):
-                _atomic_create_file(scripts_fd, "uninstall.sh", UNINSTALL_SCRIPT)
+            elif needs_init and not init_exists:
+                created = _atomic_create_file(scripts_fd, "init.sh", content)
+                if not created and (owner_specs or fixed_owner_specs):
+                    raise ValueError("init.sh appeared during finalization; review it before applying the owner plan")
             for name in ("init.sh", "upgrade.sh", "uninstall.sh"):
                 _existing_regular_file(scripts_fd, name)
             _validate_scripts_anchor(version_fd, scripts_fd)
@@ -702,7 +697,7 @@ def main(argv: list[str]) -> int:
     parser.add_argument(
         "--finalize-lifecycle",
         action="store_true",
-        help="atomically add all missing lifecycle scripts",
+        help="atomically add needed initialization and preserve existing lifecycle hooks",
     )
     parser.add_argument(
         "--replace-init",

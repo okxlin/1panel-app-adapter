@@ -132,12 +132,16 @@ def write_env_sample(
     output_path: Path,
     compose_path: Path | None = None,
     container_name: str | None = None,
+    *,
+    simulate_panel_random: bool = False,
 ) -> dict[str, str]:
     """Write selected scalar form defaults and return their literal values.
 
     With Compose supplied, emit only referenced form keys. An apps selector is
     included only when Compose references it; without Compose, omit selectors.
     Undeclared keys stay unset so Compose's own default operators retain meaning.
+    simulate_panel_random is for disposable official validation environments,
+    never for packaged samples or installation credentials.
     """
     output_path = Path(output_path)
     app_key = output_path.parent.parent.name
@@ -163,7 +167,12 @@ def write_env_sample(
             continue
         if str(field.get("type", "")).lower() == "apps" and (referenced is None or key not in referenced):
             continue
-        values[key] = normalize_env_default(field.get("default"))
+        value = normalize_env_default(field.get("default"))
+        if simulate_panel_random and field.get("random") is True:
+            # The panel appends '_' and six generated characters to the default.
+            # A deterministic stand-in makes Compose inspection reproducible.
+            value += "_aB3dE5"
+        values[key] = value
     output = "".join(f"{key}={format_env_value(value)}\n" for key, value in values.items())
     output_path.write_text(output, encoding="utf-8")
     return values
@@ -175,11 +184,16 @@ def main() -> int:
     parser.add_argument("output", type=Path)
     parser.add_argument("compose", nargs="?", type=Path)
     parser.add_argument("container_name", nargs="?")
+    parser.add_argument(
+        "--simulate-panel-random", action="store_true",
+        help="supply deterministic random-field stand-ins for a disposable validation env only",
+    )
     args = parser.parse_args()
     if args.container_name is not None and CONTAINER_NAME.fullmatch(args.container_name) is None:
         parser.error("container-name must be a valid non-empty Docker container name")
     try:
-        write_env_sample(args.version_data, args.output, args.compose, args.container_name)
+        write_env_sample(args.version_data, args.output, args.compose, args.container_name,
+                         simulate_panel_random=args.simulate_panel_random)
     except (OSError, ValueError, TypeError, yaml.YAMLError) as exc:
         parser.exit(1, f"FAIL: {exc}\n")
     return 0

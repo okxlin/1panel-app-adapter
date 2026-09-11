@@ -114,7 +114,7 @@ bash scripts/migrate-v1-to-v2.sh \
 
 更新已经发布的应用时，在调整镜像、变量、依赖、存储卷或生命周期脚本前，应先检查[升级与维护安全规则](./references/upgrade-maintenance.md)。
 
-### 补齐生命周期脚本
+### 补齐必要的初始化脚本
 
 ```bash
 bash scripts/finalize_runtime_scripts.sh <app-dir> <version-dir>
@@ -124,7 +124,7 @@ bash scripts/finalize_runtime_scripts.sh <app-dir> <version-dir> \
   --dir-owner APP_DATA_DIR=<uid>:<gid>:0750 --replace-init
 ```
 
-默认生成只添加必要的初始化脚本。仅在应用确实需要这些钩子时，使用此命令补齐缺失的 `init.sh`、`upgrade.sh` 和 `uninstall.sh`；脚本使用基于应用根目录的路径处理方式。`--dir-owner` 只有在显式给出 `--replace-init` 后才会重新生成 `init.sh`，并仅对可信版本目录的直接子目录做非递归权限设置；执行时必须是 root。不要根据应用名称猜测 UID/GID，也不要把某个镜像的示例值复用于其他镜像。
+helper 仅在存在目录字段或显式目录权限计划时创建 `init.sh`，并以版本目录解析路径。它保留已有自定义 hooks；无初始化工作的包保持原样，升级和卸载脚本由实际应用操作决定。覆盖已有 `init.sh` 必须传入 `--replace-init`。权限计划只对可信版本目录的直接子目录做非递归操作，执行时必须是 root。除了核实精确镜像的 UID/GID，还要证明宿主权限修改确有必要；镜像入口脚本可能已经负责初始化权限。
 
 ### 校验应用包
 
@@ -152,7 +152,7 @@ bash scripts/validate-v2.sh --dir <app-dir> --source-evidence-mode required \
 
 - 根目录与版本级 `data.yml` 的结构、必填字段、重复 YAML key 和标签；
 - Compose 渲染、变量闭环、`.env.sample`、服务标签、端口、存储卷和网络拓扑；
-- 占位内容残留和 AppStore README 结构；
+- 占位内容残留、有效应用简介、空或无操作 hooks，以及 AppStore README 结构；
 - `en`、`zh`、`zh-hant`、`ja`、`ko`、`ru`、`ms`、`pt-br`、`tr`、`es-es`、`fa`、`lo` 的描述与表单标签；
 - 可选来源证据和 strict-store 交付规则。
 

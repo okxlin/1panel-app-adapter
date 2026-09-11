@@ -187,6 +187,30 @@ class GenEnvSampleTests(unittest.TestCase):
                 write_env_sample(version, sample, container_name="")
             self.assertEqual(format_env_value(True), "true")
 
+    def test_random_field_simulation_is_opt_in_and_preserves_literal_prefixes(self):
+        with tempfile.TemporaryDirectory(prefix="adapter-env-random-") as tmp:
+            fields = [
+                {"envKey": "PASSWORD", "default": "", "random": True},
+                {"envKey": "PREFIXED", "default": "literal $HOME #prefix", "random": True},
+                {"envKey": "USER_INPUT", "default": "", "required": True},
+                {"envKey": "DISABLED", "default": "", "random": False},
+                {"envKey": "STRING_FALSE", "default": "", "random": "false"},
+            ]
+            version, compose, sample = self._write_metadata(
+                Path(tmp), fields, {field["envKey"]: "${" + field["envKey"] + "}" for field in fields},
+            )
+            normal = write_env_sample(version, sample, compose)
+            original_sample = sample.read_bytes()
+            temporary = Path(tmp) / "official-check.env"
+            simulated = write_env_sample(version, temporary, compose, simulate_panel_random=True)
+            self.assertEqual(normal["PASSWORD"], "")
+            self.assertRegex(simulated["PASSWORD"], r"^_[A-Za-z0-9]{6}$")
+            self.assertRegex(simulated["PREFIXED"], r"^literal \$HOME #prefix_[A-Za-z0-9]{6}$")
+            for key in ("USER_INPUT", "DISABLED", "STRING_FALSE"):
+                self.assertEqual(simulated[key], "")
+            self.assertEqual(read_env_sample(temporary), simulated)
+            self.assertEqual(sample.read_bytes(), original_sample)
+
     def test_cli_preserves_positional_arguments_and_implicit_container_name(self):
         with tempfile.TemporaryDirectory(prefix="adapter-env-cli-") as tmp:
             directory = Path(tmp) / "demo" / "1.0"

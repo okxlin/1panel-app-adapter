@@ -135,7 +135,7 @@ bash scripts/finalize_runtime_scripts.sh <app-dir> <version-dir> \
   --dir-owner APP_DATA_DIR=<uid>:<gid>:0750 --replace-init
 ```
 
-Use this explicit backfill helper only when the package needs those hooks. Default generation adds only needed initialization. This helper adds missing `init.sh`, `upgrade.sh`, and `uninstall.sh` files with app-root-aware path handling. `--dir-owner` regenerates `init.sh` only after the explicit `--replace-init` acknowledgement and applies non-recursive ownership to a direct child of a trusted version directory. It must run as root. Never infer the UID/GID from the application name or reuse the example values for another image.
+The helper creates `init.sh` only for directory fields or an explicit directory ownership plan, resolving paths from the version directory. It preserves custom hooks and leaves packages without initialization work unchanged; add upgrade or uninstall hooks only for required application operations. Replacing an existing `init.sh` requires `--replace-init`. An ownership plan applies non-recursive changes to a direct child of a trusted version directory and must run as root. Prove that host ownership changes are needed as well as the exact image's UID/GID; an image entrypoint may already handle them.
 
 ### Validate a Package
 
@@ -163,7 +163,7 @@ Validation covers:
 
 - root and version `data.yml` structure, required fields, duplicate YAML keys, and allowed tags;
 - Compose rendering, variable closure, `.env.sample`, service labels, ports, volumes, and network topology;
-- placeholder residue and AppStore README structure;
+- placeholder residue, descriptive summaries, empty/no-op hooks, and AppStore README structure;
 - localized descriptions and form labels for `en`, `zh`, `zh-hant`, `ja`, `ko`, `ru`, `ms`, `pt-br`, `tr`, `es-es`, `fa`, and `lo`;
 - optional source provenance and strict-store delivery rules.
 
