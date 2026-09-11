@@ -128,7 +128,8 @@ gate before changing the mount mechanism.
 - Treat an empty OCI `Config.User` with no Compose override as root startup identity. An official entrypoint may later initialize ownership and drop privileges, but prove that from the exact entrypoint and runtime process. Do not claim a non-root steady-state identity merely because a Dockerfile creates a user, changes ownership, or describes an intended UID/GID.
 - When Compose overrides `user`, verify that the selected UID/GID can execute the image entrypoint, read required configuration, and write every writable mount.
 - Do not add `chown` for a guessed identity. If the image is intentionally root, preserve that upstream behavior unless verified hardening proves the full application workflow still works.
-- For every non-root writable bind mount, create the host directory with a source-backed ownership/permission plan before startup. A root-created `0755` directory is not writable by an arbitrary non-root container user.
+- Prove the need for host permission changes separately from the UID/GID. Check whether the exact image entrypoint already prepares writable paths, and whether a configuration mount only needs read access. Require an upstream access requirement or a failed access probe before adding host `chown`/`chmod`; a known UID alone is insufficient.
+- For every non-root writable bind mount, establish a source-backed ownership/permission plan before startup. A root-created `0755` directory is not writable by an arbitrary non-root container user. Verified image-managed initialization can satisfy the plan without a host owner hook.
 
 ### Non-root writable bind decision procedure
 
@@ -138,9 +139,10 @@ proven UID/GID directly to `mkdir -p`.
 1. When the selected authoritative deployment uses a named volume, preserve its mechanism,
    name/target, operator-access contract, and lifecycle semantics; do not add an `APP_DATA_DIR`
    form merely to replace it with a bind mount.
-2. When the selected authoritative deployment uses a bind, record the exact source-backed numeric UID, GID, and narrowest
-   usable directory mode. Regenerate the confined init script explicitly after reviewing any
-   existing customization:
+2. When the selected authoritative deployment uses a bind, first check for verified image-managed
+   ownership initialization. If host initialization is required, record that requirement, the exact
+   source-backed numeric UID, GID, and narrowest usable directory mode. Regenerate the confined init
+   script explicitly after reviewing any existing customization:
 
    ```bash
    bash scripts/finalize_runtime_scripts.sh <app-dir> <version-dir> \
@@ -161,7 +163,7 @@ proven UID/GID directly to `mkdir -p`.
 3. Run the exact `init.sh`, inspect the resulting directory with `stat`, and run a write probe as
    the delivered runtime UID/GID (for example with `setpriv` on a disposable clean directory).
    A root-only write test is insufficient. Record the commands and results, not an intended mode.
-4. If neither a source-backed named volume nor a verified bind ownership plan is available, the
+4. If neither a source-backed named volume nor a verified host- or image-managed bind ownership plan is available, the
    unresolved writable mount blocks delivery. Do not claim that a mode or owner was applied when
    the exact delivered script does not apply and verify it.
 
@@ -234,6 +236,7 @@ Test custom path logic with a normal direct-child path, a nested path, an absolu
 
 ## 8. Preserve lifecycle behavior
 
+- Deliver hooks only for required initialization, migration, or cleanup beyond the panel's own lifecycle. `finalize_runtime_scripts.sh` adds necessary directory initialization and preserves existing custom hooks; it does not add generic upgrade or uninstall scripts. Strict-store validation rejects empty hooks, simple comment/`set`/`exit 0` stubs, and literal `echo`-only hooks. This narrow lint leaves expansions, redirections, and unknown shell operations for review. Review existing hooks explicitly before removing or replacing them.
 - Make initialization idempotent. Do not overwrite user state, rotate stable secrets, or replace user-modified configuration on restart or upgrade.
 - Define clean-install, restart, direct-upgrade, backup/restore, and uninstall behavior for every ledger row. Treat unknown database major-version transitions and irreversible migrations as blockers until tested.
 - Make lifecycle scripts independent of the caller's working directory: resolve the version directory from the script path, then either change to it before Compose commands or pass an equivalent absolute project/Compose path. Preserve bind data and persistent named volumes by default; use `down --volumes` only when the ledger proves every affected volume is package-owned, disposable, and approved for deletion.
@@ -277,7 +280,7 @@ a delivery-ready claim even when the artifact itself is structurally valid.
 Before a pass claim, answer all items with evidence:
 
 1. Does every required startup value have a complete startup configuration contract row and a verified final-artifact mapping?
-2. Do `init.sh`, `upgrade.sh`, and `uninstall.sh` exist and retain executable mode in the delivered tree?
+2. Are all required hooks delivered with executable mode, existing custom behavior preserved, and unused hooks omitted?
 3. Does every mount have a complete path and mount ledger row?
 4. Are startup and steady-state runtime UID/GID separately proven from OCI/Compose and verified entrypoint/process behavior?
 5. Are all mutable host paths package-local, confined, non-symlink, and rechecked before mutation?

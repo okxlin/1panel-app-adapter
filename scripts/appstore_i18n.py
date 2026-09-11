@@ -20,6 +20,7 @@ PLACEHOLDER = re.compile(
     r"[（(]\s*(?:placeholder|translation required|佔位|占位|プレースホルダー|플레이스홀더|заполнитель|ruang letak|preenchimento)\s*[）)]"
     r"|^\s*(?:placeholder|translation required)\s*$", re.I,
 )
+MALAY_HARBOUR = re.compile(r"\bpelabuhan\b", re.I)
 
 
 def normalize_locales(value: Any) -> dict[str, Any]:
@@ -56,6 +57,60 @@ def iter_fields(fields: Any):
         yield from iter_fields(field.get("child"))
 
 
+def _summary_placeholders(root: dict) -> set[str]:
+    properties = root.get("additionalProperties") or {}
+    names = {str(name).strip().casefold() for name in
+             (root.get("name"), properties.get("name"), properties.get("key")) if name}
+    # A title can be useful prose, but copying it to both language summaries is a scaffold placeholder.
+    title = root.get("title")
+    if isinstance(title, str) and title.strip() and all(
+        isinstance(properties.get(key), str) and properties[key].strip().casefold() == title.strip().casefold()
+        for key in ("shortDescZh", "shortDescEn")
+    ):
+        names.add(title.strip().casefold())
+    return names
+
+
+def _descriptive_text(value: Any, placeholders: set[str]) -> bool:
+    return (isinstance(value, str) and bool(value.strip())
+            and value.strip().casefold() not in placeholders and not PLACEHOLDER.search(value))
+
+
+def normalize_short_descriptions(root: dict) -> None:
+    """Repair missing/name-only summaries from supplied translations, preserving prose."""
+    properties = root.setdefault("additionalProperties", {})
+    descriptions = normalize_locales(properties.get("description"))
+    placeholders = _summary_placeholders(root)
+    for key, locale in (("shortDescZh", "zh"), ("shortDescEn", "en")):
+        candidate = descriptions.get(locale)
+        if not _descriptive_text(properties.get(key), placeholders) and _descriptive_text(candidate, placeholders):
+            properties[key] = candidate
+    if not _descriptive_text(root.get("description"), placeholders):
+        for key in ("shortDescZh", "shortDescEn"):
+            if _descriptive_text(properties.get(key), placeholders):
+                root["description"] = properties[key]
+                break
+
+
+def short_description_findings(root: dict) -> list[str]:
+    properties = root.get("additionalProperties") or {}
+    placeholders = _summary_placeholders(root)
+    values = [("root description", root.get("description"))]
+    values.extend((f"additionalProperties.{key}", properties.get(key)) for key in ("shortDescZh", "shortDescEn"))
+    return [f"{label} must describe the application, not just repeat its name or a placeholder"
+            for label, value in values if not _descriptive_text(value, placeholders)]
+
+
+def is_network_port(field: dict) -> bool:
+    return str(field.get("envKey", "")).startswith("PANEL_APP_PORT") or field.get("rule") == "paramPort"
+
+
+def normalize_port_label(field: dict) -> None:
+    labels = field.get("label")
+    if is_network_port(field) and isinstance(labels, dict) and isinstance(labels.get("ms"), str):
+        labels["ms"] = MALAY_HARBOUR.sub("Port", labels["ms"])
+
+
 def normalize_metadata(root_path: Path, version_path: Path) -> None:
     for path, is_root in ((root_path, True), (version_path, False)):
         data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
@@ -66,13 +121,17 @@ def normalize_metadata(root_path: Path, version_path: Path) -> None:
             for field in iter_fields(properties.get("formFields")):
                 if any(field.get(key) for key in ("label", "labelZh", "labelEn")):
                     field["label"] = fill_locales(field.get("labelZh"), field.get("labelEn"), field.get("label"))
+                    normalize_port_label(field)
                 if isinstance(field.get("description"), dict):
                     field["description"] = normalize_locales(field["description"])
         data["additionalProperties"] = properties
+        if is_root:
+            normalize_short_descriptions(data)
         path.write_text(yaml.safe_dump(data, allow_unicode=True, sort_keys=False), encoding="utf-8")
 
 
-def translation_findings(value: Any, label: str, *, allow_english: set[str] | None = None) -> list[str]:
+def translation_findings(value: Any, label: str, *, allow_english: set[str] | None = None,
+                         allow_english_by_locale: dict[str, set[str]] | None = None) -> list[str]:
     try:
         values = normalize_locales(value)
     except ValueError as exc:
@@ -86,7 +145,9 @@ def translation_findings(value: Any, label: str, *, allow_english: set[str] | No
             continue
         if PLACEHOLDER.search(text):
             findings.append(f"{label}.{locale} contains a translation placeholder")
-        elif locale != "en" and text.strip().casefold() == english and english not in (allow_english or set()):
+        elif (locale != "en" and text.strip().casefold() == english
+              and english not in (allow_english or set())
+              and english not in (allow_english_by_locale or {}).get(locale, set())):
             findings.append(f"{label}.{locale} equals English text exactly")
     return findings
 
@@ -129,7 +190,19 @@ def main() -> int:
                 # Unlabelled service children inherit their parent's visible label.
                 if field.get("type") == "service" and not any(field.get(key) for key in ("label", "labelEn", "labelZh")):
                     continue
-                findings.extend(translation_findings(field.get("label"), f"formFields[{field.get('envKey', '?')}].label", allow_english=allow))
+                label = f"formFields[{field.get('envKey', '?')}].label"
+                port_field = is_network_port(field)
+                findings.extend(translation_findings(
+                    field.get("label"), label, allow_english=allow,
+                    allow_english_by_locale={"ms": {"port"}} if port_field else None,
+                ))
+                if port_field:
+                    try:
+                        malay = normalize_locales(field.get("label")).get("ms")
+                    except ValueError:
+                        malay = None  # Alias conflicts are already reported by translation_findings.
+                    if isinstance(malay, str) and MALAY_HARBOUR.search(malay):
+                        findings.append(f"{label}.ms: network port must use Port, not Pelabuhan (harbour)")
                 if field.get("description") is not None:
                     findings.extend(translation_findings(field["description"], f"formFields[{field.get('envKey', '?')}].description"))
     except (OSError, ValueError, TypeError, yaml.YAMLError) as exc:

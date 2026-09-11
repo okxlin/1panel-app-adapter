@@ -210,9 +210,9 @@ TEMP_ENV_SAMPLE=""
 if [[ "$SUBMISSION_PROFILE" == "official" && ! -f "$ENV_SAMPLE" ]]; then
   TEMP_ENV_SAMPLE="$(mktemp)"
   trap '[[ -z "$TEMP_ENV_SAMPLE" ]] || rm -f -- "$TEMP_ENV_SAMPLE"' EXIT
-  "$PYTHON_BIN" "$SCRIPT_DIR/gen_env_sample.py" "$VER" "$TEMP_ENV_SAMPLE" "$COMPOSE" "$APP_KEY-compose-check"
+  "$PYTHON_BIN" "$SCRIPT_DIR/gen_env_sample.py" "$VER" "$TEMP_ENV_SAMPLE" "$COMPOSE" "$APP_KEY-compose-check" --simulate-panel-random
   ENV_SAMPLE="$TEMP_ENV_SAMPLE"
-  info "official profile: Compose environment derived from panel form defaults"
+  info "official profile: Compose environment derived from panel form defaults; random fields simulated for validation only"
 fi
 
 set +e
@@ -287,17 +287,6 @@ grep -qE '^additionalProperties:\s*$' "$ROOT" || fail "root data.yml missing add
 for key in key name tags type website document architectures github shortDescZh shortDescEn crossVersionUpdate limit; do
   grep -qE "^\s+${key}:" "$ROOT" || fail "root additionalProperties missing ${key}"
 done
-
-root_title=$(grep -m1 -E '^title:\s*' "$ROOT" || true)
-root_desc=$(grep -m1 -E '^description:\s*' "$ROOT" || true)
-short_desc=$(grep -m1 -E '^\s+shortDescZh:\s*' "$ROOT" || true)
-if [[ -n "$root_title" && -n "$root_desc" && -n "$short_desc" ]]; then
-  title_val=${root_title#title: }
-  desc_val=${root_desc#description: }
-  short_val=${short_desc#  shortDescZh: }
-  [[ "$title_val" == "$desc_val" ]] || warn "root title and description differ"
-  [[ "$title_val" == "$short_val" ]] || warn "root title and shortDescZh differ"
-fi
 
 grep -qE '^additionalProperties:\s*$' "$VER" || fail "version data.yml missing additionalProperties"
 grep -qE '^\s+formFields:\s*$' "$VER" || fail "version additionalProperties.formFields missing"
@@ -1006,15 +995,21 @@ if [[ "$STRICT_STORE" -eq 1 ]]; then
   if [[ "$SUBMISSION_PROFILE" == "official" && -f "$VER_DIR/.env.sample" ]]; then
     fail "official delivery must omit .env.sample from the app package"
   fi
-  readme_findings=$("$PYTHON_BIN" - "$SCRIPT_DIR" "$DIR" <<'PY'
+  package_findings=$("$PYTHON_BIN" - "$SCRIPT_DIR" "$DIR" "$VER_DIR" <<'PY'
 import sys
 from pathlib import Path
 sys.path.insert(0, sys.argv[1])
-from package_contract import readme_version_findings
-print("\n".join(readme_version_findings(Path(sys.argv[2]))))
+import yaml
+from appstore_i18n import short_description_findings
+from package_contract import noop_lifecycle_findings, readme_version_findings
+findings = readme_version_findings(Path(sys.argv[2]))
+findings.extend(noop_lifecycle_findings(Path(sys.argv[3])))
+root = yaml.safe_load((Path(sys.argv[2]) / "data.yml").read_text(encoding="utf-8"))
+findings.extend(short_description_findings(root))
+print("\n".join(findings))
 PY
 )
-  [[ -z "$readme_findings" ]] || fail "$readme_findings"
+  [[ -z "$package_findings" ]] || fail "$package_findings"
 fi
 
 if [[ "$REQUIRE_DELIVERY_EVIDENCE" -eq 1 ]]; then

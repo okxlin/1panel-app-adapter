@@ -7,6 +7,8 @@ import tempfile
 import textwrap
 import unittest
 
+import yaml
+
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 VALIDATE = REPO_ROOT / "scripts" / "validate-v2.sh"
@@ -134,6 +136,19 @@ class ValidateV2Tests(unittest.TestCase):
             encoding="utf-8",
         )
         return app
+
+    def _prepare_strict_app(self, app: pathlib.Path) -> None:
+        (app / "README.md").write_text(
+            "## 产品介绍\n管理示例数据。\n\n## 主要功能\n保存示例数据。\n\n"
+            "## Introduction\nManage sample data.\n\n## Features\nStore sample data.\n",
+            encoding="utf-8",
+        )
+        (app / "logo.png").write_bytes(b"not-a-real-logo")
+        path = app / "data.yml"
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        data["description"] = "Manage sample data"
+        data["additionalProperties"].update(shortDescZh="管理示例数据", shortDescEn="Manage sample data")
+        path.write_text(yaml.safe_dump(data, allow_unicode=True, sort_keys=False), encoding="utf-8")
 
     def test_required_field_accepts_explicit_non_editable_lifecycle_decision(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -673,33 +688,22 @@ class ValidateV2Tests(unittest.TestCase):
     def test_strict_store_allows_official_compose_cli_fallback(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = self._write_sample_app(pathlib.Path(tmp))
-            (app / "README.md").write_text(
-                "## 产品介绍\nSample\n\n"
-                "## 主要功能\nSample\n\n"
-                "## 访问说明\nSample\n\n"
-                "## Introduction\nSample\n\n"
-                "## Features\nSample\n",
-                encoding="utf-8",
-            )
-            (app / "logo.png").write_bytes(b"not-a-real-logo")
+            self._prepare_strict_app(app)
             scripts = app / "latest" / "scripts"
             scripts.mkdir()
-            for name in ("init.sh", "upgrade.sh", "uninstall.sh"):
-                path = scripts / name
-                content = "#!/usr/bin/env bash\nexit 0\n"
-                if name == "uninstall.sh":
-                    content = (
-                        "#!/usr/bin/env bash\n"
-                        "if docker compose version >/dev/null 2>&1; then\n"
-                        "  docker compose down\n"
-                        "elif docker-compose version >/dev/null 2>&1; then\n"
-                        "  docker-compose down\n"
-                        "else\n"
-                        "  exit 1\n"
-                        "fi\n"
-                    )
-                path.write_text(content, encoding="utf-8")
-                path.chmod(0o755)
+            path = scripts / "uninstall.sh"
+            path.write_text(
+                "#!/usr/bin/env bash\n"
+                "if docker compose version >/dev/null 2>&1; then\n"
+                "  docker compose down\n"
+                "elif docker-compose version >/dev/null 2>&1; then\n"
+                "  docker-compose down\n"
+                "else\n"
+                "  exit 1\n"
+                "fi\n",
+                encoding="utf-8",
+            )
+            path.chmod(0o755)
 
             proc = subprocess.run(
                 ["bash", str(VALIDATE), "--strict-store", "--dir", str(app)],
@@ -709,6 +713,25 @@ class ValidateV2Tests(unittest.TestCase):
             )
 
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+
+    def test_strict_store_rejects_noop_hooks_and_accepts_real_work(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            app = self._write_sample_app(pathlib.Path(tmp))
+            self._prepare_strict_app(app)
+            scripts = app / "latest" / "scripts"
+            scripts.mkdir()
+            hook = scripts / "upgrade.sh"
+            hook.write_text("#!/usr/bin/env bash\nset -euo pipefail\nexit 0\n", encoding="utf-8")
+            hook.chmod(0o755)
+            command = ["bash", str(VALIDATE), "--strict-store", "--dir", str(app)]
+            invalid = subprocess.run(command, text=True, capture_output=True)
+            self.assertNotEqual(invalid.returncode, 0, invalid.stdout + invalid.stderr)
+            self.assertIn("scripts/upgrade.sh contains no lifecycle operation", invalid.stdout)
+            hook.write_text("#!/usr/bin/env bash\nset -euo pipefail\n: > state.txt\n", encoding="utf-8")
+            valid = subprocess.run(command, text=True, capture_output=True)
+            self.assertEqual(valid.returncode, 0, valid.stdout + valid.stderr)
+            self.assertIn("PASS:", valid.stdout)
+            self.assertFalse((app / "latest" / "state.txt").exists())
 
     def test_strict_store_rejects_symlinked_lifecycle_script(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -743,6 +766,35 @@ class ValidateV2Tests(unittest.TestCase):
 
         self.assertNotEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         self.assertIn("version upgrade.sh is a symbolic link", proc.stdout)
+
+    def test_strict_store_rejects_name_only_summaries_and_patch_uses_translations(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            app = self._write_sample_app(pathlib.Path(tmp))
+            self._prepare_strict_app(app)
+            path = app / "data.yml"
+            data = yaml.safe_load(path.read_text(encoding="utf-8"))
+            data["description"] = "Sample"
+            data["additionalProperties"].update(shortDescZh="Sample", shortDescEn="Sample")
+            data["additionalProperties"]["description"].update(zh="管理示例数据", en="Manage sample data")
+            path.write_text(yaml.safe_dump(data, allow_unicode=True, sort_keys=False), encoding="utf-8")
+            command = ["bash", str(VALIDATE), "--strict-store", "--dir", str(app)]
+            invalid = subprocess.run(command, text=True, capture_output=True)
+            self.assertNotEqual(invalid.returncode, 0, invalid.stdout + invalid.stderr)
+            for label in ("root description", "additionalProperties.shortDescZh", "additionalProperties.shortDescEn"):
+                self.assertIn(f"{label} must describe the application", invalid.stdout)
+            patched = subprocess.run(
+                ["python3", str(REPO_ROOT / "scripts/patch_root_data_yml.py"), str(path)],
+                text=True, capture_output=True,
+            )
+            self.assertEqual(patched.returncode, 0, patched.stdout + patched.stderr)
+            actual = yaml.safe_load(path.read_text(encoding="utf-8"))
+            self.assertEqual(actual["title"], "Sample")
+            self.assertEqual(actual["description"], "管理示例数据")
+            self.assertEqual(actual["additionalProperties"]["shortDescZh"], "管理示例数据")
+            self.assertEqual(actual["additionalProperties"]["shortDescEn"], "Manage sample data")
+            valid = subprocess.run(command, text=True, capture_output=True)
+            self.assertEqual(valid.returncode, 0, valid.stdout + valid.stderr)
+            self.assertIn("PASS:", valid.stdout)
 
     def test_strict_store_rejects_symlinked_lifecycle_directory(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

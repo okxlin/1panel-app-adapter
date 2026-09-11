@@ -45,7 +45,7 @@ Use scripts for their named job instead of manually recreating their behavior. R
 | Version metadata patch | `python3 scripts/patch_version_data_yml.py <app-dir>/<version>/data.yml` |
 | Compose patch | `python3 scripts/patch_compose_yml.py <app-dir>/<version>/docker-compose.yml [app-type]` |
 | Regenerate env sample | `bash scripts/gen-env-sample.sh <app-dir>/<version>/data.yml <app-dir>/<version>/.env.sample` |
-| Backfill lifecycle scripts | `bash scripts/finalize_runtime_scripts.sh <app-dir> <app-dir>/<version>` |
+| Finalize required directory initialization | `bash scripts/finalize_runtime_scripts.sh <app-dir> <app-dir>/<version>` |
 | Apply a proven non-root directory owner | `bash scripts/finalize_runtime_scripts.sh <app-dir> <app-dir>/<version> --dir-owner APP_DATA_DIR=<uid>:<gid>:0750 --replace-init` |
 | Normalize logo | `bash scripts/normalize-logo.sh <app-dir>/logo.png` |
 | Baseline validation | `bash scripts/validate-v2.sh --dir <app-dir> [--version <version>]` |
@@ -132,7 +132,7 @@ For PHP runtime work, especially when converting a historical package such as `p
 > - root `data.yml` `additionalProperties.shortDesc` uses `shortDescZh/shortDescEn` (not map).
 > - `additionalProperties.description` uses i18n map, **complete all 12 supported languages for delivery**: `en/zh/zh-hant/ja/ko/ru/ms/pt-br/tr/es-es/fa/lo`.
 > - root `data.yml` uses hierarchical structure: top-level `tags` and `additionalProperties.tags` both exist and are semantically consistent (allow redundant expression).
-> - **Content consistency (strong constraint)**: root `data.yml` `title:`, the following top-level `description:`, and `additionalProperties.shortDescZh:` must be the **same short text** (try to be one sentence).
+> - **Descriptive summaries**: `title` may be the product name. Top-level `description` and `additionalProperties.shortDescZh/shortDescEn` must explain the application's purpose in a short sentence; a product name alone fails strict-store validation. Keep their meaning consistent with the multilingual description. `patch_root_data_yml.py` and `appstore_i18n.py --normalize` can repair missing/name-only summaries from supplied Chinese and English descriptions while preserving valid prose.
 > - **Translation constraint (strong constraint)**: `additionalProperties.description` must be the multilingual translation of the above `shortDescZh` (not repetition of project name/title).
 > - `architectures` (only root `data.yml`) represents Docker image supported architecture list; should be in `additionalProperties.architectures`, using hierarchical array (e.g., `- amd64` / `- arm64`); if cannot reliably obtain (e.g., no manifest info/offline), default only fill `- amd64`.
 
@@ -221,6 +221,7 @@ Key points for adaptation:
 - When official docs expose a generator helper, prefer `scripts/init.sh` / `scripts/upgrade.sh` to generate or normalize those values from the official image/helper command instead of shipping a fixed sample secret in `data.yml` or trusting a generic panel-generated random string.
 - If `scripts/init.sh` or `scripts/upgrade.sh` replaces a panel-provided secret with a normalized/generated value, persist that final value under the app's configurable data path and restore it during later upgrades. Real 1Panel upgrades can replay the original install form value instead of the mutated `.env`, which can break apps that silently rotate `APP_KEY`, `DB_PASSWORD`, or similar persisted secrets.
 - Keep that secret-persistence rule distinct from the PostgreSQL-only provisioning notes above: the replay problem can affect MySQL-, PostgreSQL-, or non-DB secret fields, even though the dependency-provisioning behavior is not shared across engines.
+- When simplifying forms, retain documented security controls such as user registration, anonymous access, and administrator exposure, or provide verified configuration instructions with the effective default. Review the before/after behavior so removing a switch does not silently inherit a more permissive upstream default.
 - If the compose uses `network_mode: host`, its listener occupies the host port directly even without a `ports:` block. Keep the install-form envKey as `PANEL_APP_PORT_*` so 1Panel performs its port-occupation check, map the upstream listener variable from that key (for example, `NETDATA_LISTENER_PORT=${PANEL_APP_PORT_HTTP}`), and verify the application consumes it. A disabled/fixed port field must still match the real built-in listener instead of being treated as a free-to-randomize published port.
 - For host-network adaptations tested from a containerized smoke runner, runtime probing may need the Docker host gateway (or another host-reachable address) rather than `127.0.0.1` inside the panel container.
 - `docker-compose.yml` if application uses `DATABASE_*` variables, need to map in compose:
@@ -247,7 +248,7 @@ Key points for adaptation:
 >       - zeroclaw-data:/zeroclaw-data
 >     ```
 >   - When upstream explicitly uses a host path, preserve its bind semantics and mount options. Keep an official operator-edited path fixed and package-local; add an `APP_DATA_DIR_*` form only when users actually need a selectable host path.
-> - **Uninstall script**: Anchor Compose to the version directory instead of relying on the caller's working directory. Preserve bind-mounted data and persistent named volumes by default. Use `--volumes` only after the mount ledger proves every affected named volume is package-owned, disposable, and approved for deletion. Match 1Panel's current [Compose command selection](https://github.com/1Panel-dev/1Panel/blob/16e3d496ebc4eae6637ce63f17149c6928469af1/agent/utils/common/common.go#L439-L450): prefer Compose v2, then fall back to the supported legacy binary. Minimal safe default:
+> - **Custom uninstall hook**: Add one only for a source-backed cleanup operation beyond 1Panel's default uninstall. If that operation needs Compose, anchor it to the version directory. Preserve bind-mounted data and persistent named volumes by default. Use `--volumes` only after the mount ledger proves every affected named volume is package-owned, disposable, and approved for deletion. Match 1Panel's current [Compose command selection](https://github.com/1Panel-dev/1Panel/blob/16e3d496ebc4eae6637ce63f17149c6928469af1/agent/utils/common/common.go#L439-L450): prefer Compose v2, then fall back to the supported legacy binary. Command-selection example for a required custom hook:
 >   ```bash
 >   #!/usr/bin/env bash
 >   set -euo pipefail
@@ -417,6 +418,7 @@ To avoid "format compliant but translation lazy", `validate-v2.sh` adds configur
 - `--i18n-allow-english-labels <CSV>`
   - Short label English whitelist (e.g., `API,URL,ID,OAuth,JWT`), avoid mis-killing technical words.
 - `labels` scope supplement: If `formFields[]` only has `labelEn/labelZh` and is missing the multilingual `label:` map, default inspection warns; strict i18n validation rejects it. Complete all 12 languages: `en/zh/zh-hant/ja/ko/ru/ms/pt-br/tr/es-es/fa/lo`.
+- For network port fields (`PANEL_APP_PORT*` or `rule: paramPort`), Malay uses `Port`; `Pelabuhan` means a harbour and fails strict i18n validation. The single technical label `ms: Port` may match English in this context. English sentences and other locales still require translation. Normalization corrects this known term only in network port labels; review the remaining translations for meaning.
 
 Default strategy:
 - `description` more strict (prevent whole sentence English pseudo-translation)

@@ -9,6 +9,8 @@ The current panel supports 12 application locale keys: `en`, `zh`, `zh-hant`, `j
 
 `--i18n-mode strict` requires non-empty entries for all twelve locales, including nested labelled fields and help descriptions, and rejects recognized placeholder markers and English copies. Translation accuracy still needs review against the application's meaning. Plain inspection retains the historical eight-locale structural baseline and warns about missing newer translations. Identical Chinese words in simplified and traditional Chinese are not inherently invalid. See [1panel-sources.md](1panel-sources.md) for exact source pins.
 
+For network port labels (`PANEL_APP_PORT*` or `rule: paramPort`), Malay `Port` is a valid shared technical term; `Pelabuhan` means a harbour and is rejected. Only this locale and single-word label get the contextual English-copy exception. Normalization corrects the known mistranslation in these fields and preserves other uses of the word.
+
 ## Hierarchy Constraints: Application-level vs Version-level
 
 ### 1) Application-level: `apps/<app>/data.yml`
@@ -44,6 +46,8 @@ Notes:
 
 **Special notes**:
 - `architectures` needs to be placed in `additionalProperties.architectures`, not at top level.
+- `title` may use the product name. Strict-store validation requires top-level `description` and `shortDescZh/shortDescEn` to contain descriptive text, rather than just the app name/key or a placeholder. Normalization repairs invalid summaries only when a supplied Chinese/English description provides real text; it preserves valid summaries and does not invent translations.
+- The summary lint compares declared `name`/`key` values and known placeholder markers, including a display title copied unchanged into both Chinese and English summaries. Titles may themselves describe the application, so matching a title alone is allowed. Other undeclared product aliases and semantic quality still need review.
 
 ### 2) Version-level: `apps/<app>/<ver|latest|stable>/data.yml`
 
