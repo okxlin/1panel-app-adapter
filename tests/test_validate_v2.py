@@ -1341,6 +1341,39 @@ class ValidateV2Tests(unittest.TestCase):
         self.assertIn('createdBy: "Apps"', patched)
         self.assertNotIn("healthcheck:", patched)
 
+    def test_patch_compose_keeps_multiservice_container_names_unique(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            compose = pathlib.Path(tmp) / "docker-compose.yml"
+            compose.write_text(
+                textwrap.dedent(
+                    """\
+                    services:
+                      web:
+                        image: nginx:alpine
+                        container_name: old-web
+                      worker:
+                        image: busybox:stable
+                        container_name: ${CONTAINER_NAME}-worker
+                      cache:
+                        image: redis:7-alpine
+                    """
+                ),
+                encoding="utf-8",
+            )
+            proc = subprocess.run(
+                ["python3", str(PATCH_COMPOSE), str(compose), "website"],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            patched = compose.read_text(encoding="utf-8")
+
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("container_name: ${CONTAINER_NAME}\n", patched)
+        self.assertIn("container_name: ${CONTAINER_NAME}-worker\n", patched)
+        self.assertIn("container_name: ${CONTAINER_NAME}-cache\n", patched)
+        self.assertNotIn("container_name: ${CONTAINER_NAME}\n        image: busybox", patched)
+
     def test_multi_network_generic_internal_service_name_warns(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = self._write_sample_app(pathlib.Path(tmp))

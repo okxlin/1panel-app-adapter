@@ -37,6 +37,31 @@ def patch_compose(path: Path, app_type: str = ""):
 
     in_services = False
     idx = 0
+    service_index = 0
+    prefix = '${CONTAINER_NAME}'
+    reserved_names = {
+        match.group(1).strip().strip('"').strip("'")
+        for line in lines
+        if (match := re.match(r'^\s{4}container_name:\s*(.*?)\s*$', line))
+        and match.group(1).strip().strip('"').strip("'").startswith(prefix)
+    }
+    used_names = set()
+
+    def unique_name(raw_name, service_name, primary_service):
+        if raw_name.startswith(prefix) and raw_name not in used_names:
+            candidate = raw_name
+        else:
+            candidate = prefix if primary_service else f'{prefix}-{service_name}'
+            if candidate in used_names or candidate in reserved_names:
+                base = f'{prefix}-{service_name}'
+                candidate = base
+                serial = 2
+                while candidate in used_names or candidate in reserved_names:
+                    candidate = f'{base}-{serial}'
+                    serial += 1
+        used_names.add(candidate)
+        return candidate
+
     while idx < len(lines):
         line = lines[idx]
         if re.match(r'^services:\s*$', line):
@@ -51,6 +76,9 @@ def patch_compose(path: Path, app_type: str = ""):
         if not re.match(r'^\s{2}[A-Za-z0-9_.-]+:\s*$', line):
             idx += 1
             continue
+
+        service_name = re.match(r'^\s{2}([A-Za-z0-9_.-]+):\s*$', line).group(1)
+        primary_service = service_index == 0
 
         block_start = idx + 1
         block_end = len(lines)
@@ -75,9 +103,19 @@ def patch_compose(path: Path, app_type: str = ""):
                 break
 
         if has_container_name:
-            block = [re.sub(r'^\s*container_name:\s*.*$', '    container_name: ${CONTAINER_NAME}', item) for item in block]
+            normalized = []
+            for item in block:
+                name_match = re.match(r'^\s*container_name:\s*(.*?)\s*$', item)
+                if not name_match:
+                    normalized.append(item)
+                    continue
+                raw_name = name_match.group(1).strip().strip('"').strip("'")
+                name = unique_name(raw_name, service_name, primary_service)
+                normalized.append(f'    container_name: {name}')
+            block = normalized
         else:
-            block.insert(insert_after_image, '    container_name: ${CONTAINER_NAME}')
+            name = unique_name('', service_name, primary_service)
+            block.insert(insert_after_image, f'    container_name: {name}')
 
         if not has_created_by:
             insert_labels_at = len(block)
@@ -94,6 +132,7 @@ def patch_compose(path: Path, app_type: str = ""):
 
         lines[block_start:block_end] = block
         idx = block_start + len(block)
+        service_index += 1
 
     new_text = "\n".join(lines) + "\n"
     if new_text != text:
