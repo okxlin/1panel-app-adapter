@@ -40,6 +40,8 @@ class SubmissionProfileTests(unittest.TestCase):
             with self.subTest(profile=profile), tempfile.TemporaryDirectory() as tmp:
                 app = self._generate(pathlib.Path(tmp), profile)
                 root = yaml.safe_load((app / "data.yml").read_text(encoding="utf-8"))["additionalProperties"]
+                self.assertEqual(root["type"], "tool")
+                self.assertEqual(root["tags"], ["Tool"])
                 version = yaml.safe_load((app / "1.2.3/data.yml").read_text(encoding="utf-8"))["additionalProperties"]
                 fields = version["formFields"]
                 self.assertTrue(fields)

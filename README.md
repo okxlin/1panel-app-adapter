@@ -24,6 +24,13 @@ Use the [compatibility matrix](references/panel-compatibility.md) to verify the
 actual panel versions, selectors, lifecycle and upgrade paths. Static validation
 and reader replay do not replace installation tests on both generations.
 
+Version **1.3.2** fixes application behavior types: generated packages use
+lowercase `tool`, `website`, or `runtime`, while category names remain in
+`tags`. This prevents a successful-looking installation from silently skipping
+database creation. The release was tested through install, parameter changes,
+restart, upgrade with retained data, and uninstall on v1.10.34-lts, v2.0.0,
+v2.2.5 and v2.3.2; see the compatibility guide for the test scope and limits.
+
 ## Agent Usage
 
 Ask a skill-compatible coding agent to use the skill explicitly:

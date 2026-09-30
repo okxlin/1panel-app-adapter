@@ -298,12 +298,18 @@ if grep -qE '^\s*architectures:\s*$' "$VER"; then
 fi
 
 set +e
-py_output=$("$PYTHON_BIN" - <<'PY' "$VER" "$SCRIPT_DIR"
+py_output=$("$PYTHON_BIN" - <<'PY' "$VER" "$SCRIPT_DIR" "$ROOT"
 import sys
 from pathlib import Path
 import yaml
 sys.path.insert(0, sys.argv[2])
 from appstore_i18n import LOCALES, normalize_locales
+from panel_form_contract import APP_TYPES
+root_data = yaml.safe_load(Path(sys.argv[3]).read_text(encoding='utf-8')) or {}
+app_type = (root_data.get('additionalProperties') or {}).get('type')
+if not isinstance(app_type, str) or app_type not in APP_TYPES:
+    print(f'[A][FAIL] additionalProperties.type must be tool, website or runtime (case-sensitive); category names belong in tags, got {app_type!r}')
+    sys.exit(1)
 path = Path(sys.argv[1])
 try:
     data = yaml.safe_load(path.read_text(encoding='utf-8', errors='ignore')) or {}

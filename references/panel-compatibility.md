@@ -20,6 +20,7 @@ upstream tag name alone is insufficient evidence.
 | Boundary | Compatibility decision |
 | --- | --- |
 | Root/version metadata | Preserve `additionalProperties`, nested `formFields`, legacy scalar labels and source-backed fields. Older loaders may ignore newer metadata, so an ignored capability flag cannot enforce a required runtime condition. |
+| Application type | Serialize `tool`, `website`, or `runtime` in lowercase. Keep display categories in `tags`. `Tool` can install successfully while skipping database creation; require a real association and application-user SQL, not only a running container. |
 | Locale keys | Keep all twelve canonical translations and equal-valued `zh-Hant`, `pt-BR`, `es-ES` aliases in serialized maps. Preserve `labelZh`/`labelEn` for early v1. Current readers lowercase keys; some old readers do not, and their missing-key test can return an empty label instead of falling back. Never resolve conflicting aliases by choosing one silently. |
 | Database port | `PANEL_DB_PORT` can be injected in both generations when `PANEL_DB_HOST` resolves to a panel database record. An arbitrary hostname, Redis selector or unregistered custom app key does not prove that path. |
 | Lifecycle | Common hooks are `init.sh`, `upgrade.sh`, `uninstall.sh`. Newer internal start/stop/restart hooks require a verified caller; ordinary app operations do not automatically use them. |
@@ -81,6 +82,46 @@ versions when a changed field, dependency or lifecycle boundary requires them.
 Schema checks, reader replays, live installation tests and actual deployed
 evidence are different classes. Record which ran and which remain unavailable.
 Retain all existing source, license, image, topology and safety gates.
+
+## Live regression baseline for adapter 1.3.2
+
+On 2026-09-30, generated two-version probe packages passed real panel API and
+container tests on **v1.10.34-lts, v2.0.0, v2.2.5 and v2.3.2**, using Docker
+29.5.3 and Compose 5.5.0. Each target enumerated a registered remote MySQL
+8.4.11 service on port **13306**, created an associated database/user, and
+executed SQL using that application user. Installation, parameter changes,
+restart, a backed-up 1.0.0 → 1.0.1 package upgrade, retained files/SQL/parameters,
+and uninstall passed. Hook logs confirmed `init`, `upgrade`, and `uninstall`;
+ordinary restart did not invoke `restart.sh`.
+
+Real bundled browser UIs on v1.10.34-lts, v2.0.0 and v2.3.2 also rendered the
+generated port/value/database field labels correctly for `zh-Hant`, `pt-BR`
+and `es-ES` (nine checks with screenshots). This covers those visible field
+labels, not every root description, help text or translation.
+
+The tests used isolated third-party `moelin/1panel` images with recorded image
+digests, binary SHA-256 and API-reported versions. A reviewed bootstrap wrapper
+fixed the disposable container base path; panel binaries were unchanged. This
+is a live container baseline, not proof of every v1/v2 release, older Docker
+engines, native/systemd installations, panel-version migration, failed-upgrade
+rollback, or application-specific workloads. Retain exact artifacts and
+per-target runtime evidence with the delivery record.
+
+Carry these observed differences into future tests:
+
+- v1 local-app synchronization uses `/api/v1/apps/sync`. Its remote-service
+  options omit `status`; verify the exact registry entry, the connection-check
+  API and real SQL instead of treating an absent field as stopped or running.
+- Older installed-app APIs omit `linkDB`/`resourceKeys`. Verify the panel's
+  association record and independently execute application-user SQL. v1 also
+  renames the Compose service; locate the exact installation's container by
+  project/record identity rather than assuming the submitted service name.
+- Upgrades may preserve installed configuration files. Verify the new Compose
+  or image version separately; package a required configuration migration in
+  `upgrade.sh` rather than assuming the new template overwrites user data.
+- `deleteDB` can leave a remote MySQL user behind. Check schema and user removal
+  separately. Clean only resources owned by the test or explicitly approved
+  application cleanup; never drop a shared account from a generic hook.
 
 ## Pinned authorities
 

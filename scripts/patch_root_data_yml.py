@@ -6,6 +6,7 @@ from pathlib import Path
 import yaml
 
 from appstore_i18n import LOCALES, compatible_metadata, normalize_locales, normalize_short_descriptions
+from panel_form_contract import canonical_app_type
 
 
 class NoAliasDumper(yaml.SafeDumper):
@@ -123,7 +124,7 @@ def patch(path: Path, app_key_hint: str = "", architectures: str = ""):
     tags = ap.get("tags") if isinstance(ap.get("tags"), list) else (loaded.get("tags") if isinstance(loaded.get("tags"), list) else parse_ap_tags(lines) or ["Tool"])
     if not tags:
         tags = ["Tool"]
-    app_type = ap.get("type") or find_ap_scalar(lines, "type", "tool")
+    app_type = canonical_app_type(ap.get("type") or find_ap_scalar(lines, "type", "tool"))
     website = ap.get("website") if isinstance(ap.get("website"), str) else find_ap_scalar(lines, "website", "")
     document = ap.get("document") if isinstance(ap.get("document"), str) else find_ap_scalar(lines, "document", "")
     github = ap.get("github") if isinstance(ap.get("github"), str) else find_ap_scalar(lines, "github", "")

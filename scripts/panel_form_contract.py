@@ -4,7 +4,22 @@ See references/panel-compatibility.md. A selector proves the intended input
 path, not that a live database record resolved or that provisioning succeeded.
 """
 
+from __future__ import annotations
+
 DATABASE_KEYS = frozenset({"mysql", "mariadb", "postgresql"})
+APP_TYPES = frozenset({"tool", "website", "runtime"})
+LEGACY_CATEGORY_TYPES = frozenset({"ai", "bi", "crm", "database", "devops", "email", "game",
+                                   "media", "middleware", "security", "server", "storage", "tools"})
+
+
+def canonical_app_type(value: str | None) -> str:
+    """Keep panel behavior types separate from display/category tags."""
+    normalized = str(value or "tool").strip().lower()
+    if normalized in APP_TYPES:
+        return normalized
+    if normalized in LEGACY_CATEGORY_TYPES:
+        return "tool"
+    raise ValueError(f"unsupported application type {value!r}; choose tool, website or runtime and use tag for categories")
 
 
 def service_derived_envkeys(metadata: dict) -> set[str]:

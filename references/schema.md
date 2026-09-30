@@ -45,6 +45,7 @@ Notes:
   - `memoryRequired`
 
 **Special notes**:
+- `additionalProperties.type` is a case-sensitive behavior switch: use `tool`, `website`, or `runtime`. Category labels such as `Tool`, `Website`, `Storage`, and `Database` belong in `tags`. A package with `type: Tool` can install and run while silently skipping the panel's database-link creation branch. Generators normalize historical category-style input to a behavior type while retaining the category tag; validation rejects noncanonical serialized types.
 - `architectures` needs to be placed in `additionalProperties.architectures`, not at top level.
 - `title` may use the product name. Strict-store validation requires top-level `description` and `shortDescZh/shortDescEn` to contain descriptive text, rather than just the app name/key or a placeholder. Normalization repairs invalid summaries only when a supplied Chinese/English description provides real text; it preserves valid summaries and does not invent translations.
 - The summary lint compares declared `name`/`key` values and known placeholder markers, including a display title copied unchanged into both Chinese and English summaries. Titles may themselves describe the application, so matching a title alone is allowed. Other undeclared product aliases and semantic quality still need review.

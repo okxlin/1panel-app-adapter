@@ -56,6 +56,7 @@ VERSION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 STANDARD_FIELD_ATTRS = {"domain", "allow_access", "cpus", "memory_limit"}
 STANDARD_ENV_KEYS = {"app_path", "host_ip", "cpus", "memory_limit"}
 from appstore_i18n import LOCALES as I18N_LANGS, compatible_metadata, fill_locales, normalize_locales
+from panel_form_contract import canonical_app_type
 
 # ── App type mapping ──────────────────────────────────────────────────
 BAOTA_TYPE_TO_1PANEL: Dict[str, str] = {
@@ -1325,7 +1326,7 @@ class BaotaToAppSpecMapper:
         panel_type = BAOTA_TYPE_TO_1PANEL.get(baota_type, _FALLBACK_TYPE)
         if baota_type and baota_type not in BAOTA_TYPE_TO_1PANEL:
             appspec["_typeWarning"] = f"Unknown Baota type '{baota_type}', mapped to '{panel_type}'"
-        appspec["type"] = panel_type
+        appspec["type"] = canonical_app_type(panel_type)
         appspec["tag"] = panel_type
 
     # ── Source evidence ───────────────────────────────────────────────
@@ -1977,7 +1978,7 @@ class ImportRunner:
                 "key": appspec.get("appKey", ""),
                 "name": appspec.get("title", ""),
                 "tags": [tag],
-                "type": appspec.get("type", "Tool"),
+                "type": canonical_app_type(appspec.get("type")),
                 "website": appspec.get("home", ""),
                 "document": appspec.get("help", ""),
                 "github": appspec.get("repository", ""),

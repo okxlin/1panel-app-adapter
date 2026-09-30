@@ -54,7 +54,8 @@ EXIT_SUCCESS = 0
 EXIT_FAILURE = 1
 
 from appstore_i18n import LOCALES as I18N_LANGS, compatible_metadata, fill_locales, normalize_locales
-TYPE_ALIASES = {
+from panel_form_contract import canonical_app_type
+TAG_ALIASES = {
     "ai": "AI",
     "bi": "BI",
     "crm": "CRM",
@@ -74,11 +75,11 @@ TYPE_ALIASES = {
 }
 
 
-def _canonical_type(value: Any, fallback: str = "Tool") -> str:
+def _canonical_tag(value: Any, fallback: str = "Tool") -> str:
     text = str(value or "").strip()
     if not text:
         return fallback
-    return TYPE_ALIASES.get(text.lower(), text)
+    return TAG_ALIASES.get(text.lower(), text)
 
 
 def _split_volume(value: str) -> Optional[Dict[str, str]]:
@@ -131,8 +132,8 @@ def _normalize_appspec(raw_spec: Dict[str, Any]) -> Dict[str, Any]:
     if evidence_errors:
         raise ValueError("invalid source evidence: " + "; ".join(evidence_errors))
 
-    spec["type"] = _canonical_type(spec.get("type", "Tool"))
-    spec["tag"] = _canonical_type(spec.get("tag") or spec.get("type") or "Tool")
+    spec["tag"] = _canonical_tag(spec.get("tag") or spec.get("type") or "Tool")
+    spec["type"] = canonical_app_type(spec.get("type"))
     if not spec.get("shortDescZh"):
         spec["shortDescZh"] = spec.get("description", "")
 
@@ -232,7 +233,7 @@ class AppSpecGenerator:
     # ── Root data.yml ─────────────────────────────────────────────────
 
     def _write_root_data_yml(self) -> None:
-        tag = _canonical_type(self.spec.get("tag", "Tool"))
+        tag = _canonical_tag(self.spec.get("tag", "Tool"))
         root = {
             "name": self.app_key,
             "tags": [tag],
@@ -242,7 +243,7 @@ class AppSpecGenerator:
                 "key": self.app_key,
                 "name": self.spec.get("title", self.app_key),
                 "tags": [tag],
-                "type": _canonical_type(self.spec.get("type", "Tool")),
+                "type": canonical_app_type(self.spec.get("type")),
                 "website": self.spec.get("home", ""),
                 "document": self.spec.get("help", ""),
                 "github": self.spec.get("repository", ""),

@@ -9,11 +9,30 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
-from panel_form_contract import service_derived_envkeys
+from panel_form_contract import canonical_app_type, service_derived_envkeys
 import test_validate_v2
 
 
 class PanelFormContractTests(unittest.TestCase):
+    def test_behavior_types_are_distinct_from_category_tags(self):
+        for source, expected in ((None, "tool"), ("Tool", "tool"), ("Website", "website"),
+                                 ("Runtime", "runtime"), ("Storage", "tool"), ("Database", "tool")):
+            self.assertEqual(canonical_app_type(source), expected)
+        with self.assertRaisesRegex(ValueError, "unsupported application type"):
+            canonical_app_type("unknown")
+
+    def test_validator_rejects_category_or_wrong_case_application_type(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            app = test_validate_v2.ValidateV2Tests()._write_sample_app(Path(tmp))
+            root = app / "data.yml"
+            original = root.read_text()
+            for invalid in ("Tool", "Website", "Runtime", "Storage", "unknown"):
+                root.write_text(original.replace("type: tool", "type: " + invalid))
+                result = subprocess.run(["bash", str(ROOT / "scripts/validate-v2.sh"), "--dir", str(app)],
+                                        capture_output=True, text=True)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("additionalProperties.type must be tool, website or runtime", result.stdout)
+
     def metadata(self):
         return {"additionalProperties": {"formFields": [{
             "envKey": "PANEL_DB_TYPE", "type": "apps", "required": True,

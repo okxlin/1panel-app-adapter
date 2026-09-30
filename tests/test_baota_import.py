@@ -752,7 +752,8 @@ class TestBaotaToAppSpecMapper(unittest.TestCase):
         appspec = self.mapper.build_appspec(app_json, "latest", compose, _sample("alist"))
 
         self.assertEqual(appspec["appKey"], "alist")
-        self.assertEqual(appspec["type"], "Storage")
+        self.assertEqual(appspec["type"], "tool")
+        self.assertEqual(appspec["tag"], "Storage")
         self.assertIn("importSource", appspec)
         self.assertEqual(appspec["importSource"]["type"], "baota")
         self.assertIn("formFields", appspec)
@@ -905,6 +906,8 @@ class TestImportRunner(unittest.TestCase):
 
         root_data = yaml.safe_load((out / "data.yml").read_text(encoding="utf-8"))
         desc = root_data.get("additionalProperties", {}).get("description")
+        self.assertEqual(root_data["additionalProperties"]["type"], "tool")
+        self.assertEqual(root_data["additionalProperties"]["tags"], ["Storage"])
         self.assertIsInstance(desc, dict)
         self.assertIn("zh-hant", desc)
 

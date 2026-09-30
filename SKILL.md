@@ -55,6 +55,7 @@ Use scripts for their named job instead of manually recreating their behavior. R
 
 ### Completion Gates
 
+- Keep `additionalProperties.type` as the case-sensitive behavior value `tool`, `website`, or `runtime`; keep display categories in `tags`. A running container does not prove database linking when an incorrect type bypasses the panel's creation branch. Verify the actual association and execute SQL with the application user when the package claims linked database provisioning.
 - Verify the target-version matrix from `references/panel-compatibility.md`: legacy/current locale readers, dependency injection, parameter changes, readiness, persisted state and same-panel application upgrades. State which versions have source/replay evidence and which have live evidence; retain unsupported targets as unresolved rather than claiming universal v1/v2 compatibility.
 - Confirm authoritative repository, Docker documentation, Compose/image evidence, license, and topology; record unsupported facts instead of inventing them, and stop when the selected preflight route says to stop.
 - Preserve the selected upstream service graph, dependencies, internal networks, persistence, and security controls. Give every Compose service `labels.createdBy: "Apps"` and a unique `container_name` based on `${CONTAINER_NAME}` unless current 1Panel runtime evidence requires another shape.

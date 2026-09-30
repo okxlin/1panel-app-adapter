@@ -14,7 +14,7 @@ Provide a stable `spec -> artifacts` path with explicit source evidence and repr
 - `image` string
 - `port` number (host side)
 - `targetPort` number (container side)
-- `type` string (for 1Panel app type)
+- `type` string (`tool`, `website`, or `runtime`; defaults to `tool`). This selects panel behavior, including database linking. Keep category names in `tag`. Historical `Tool`/`Website`/`Runtime` input is normalized to lowercase; other recognized legacy categories become `tool` and remain available as the default tag. A `Database` category alone does not prove that a package implements the panel runtime contract; select `type: runtime` explicitly when that contract has been verified.
 - `sourceEvidence` object
   - `repository` string
   - `dockerDocs` string
