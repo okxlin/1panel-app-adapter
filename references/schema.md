@@ -5,7 +5,7 @@
 
 ## Language Codes (locales)
 
-The current panel supports 12 application locale keys: `en`, `zh`, `zh-hant`, `ja`, `ko`, `ru`, `ms`, `pt-br`, `tr`, `es-es`, `fa`, and `lo`. This skill targets all twelve for new delivery artifacts. The panel's UI language names include `zh-Hant`, `pt-BR`, and `es-ES`, while the application DTO and lookup use lowercase keys. Accept those historical case aliases as input; write canonical lowercase keys. Conflicting values for two aliases are invalid.
+The current panel supports 12 application locale keys: `en`, `zh`, `zh-hant`, `ja`, `ko`, `ru`, `ms`, `pt-br`, `tr`, `es-es`, `fa`, and `lo`. This skill targets all twelve for new delivery artifacts. Normalize internally to lowercase, then write both canonical keys and equal-valued `zh-Hant`, `pt-BR`, `es-ES` aliases for old case-sensitive readers. Preserve `labelZh`/`labelEn` for early v1. Conflicting values for two aliases are invalid. See [panel-compatibility.md](panel-compatibility.md) for the version and consumer evidence; extra keys alone do not prove UI compatibility after a backend reserializes metadata.
 
 `--i18n-mode strict` requires non-empty entries for all twelve locales, including nested labelled fields and help descriptions, and rejects recognized placeholder markers and English copies. Translation accuracy still needs review against the application's meaning. Plain inspection retains the historical eight-locale structural baseline and warns about missing newer translations. Identical Chinese words in simplified and traditional Chinese are not inherently invalid. See [1panel-sources.md](1panel-sources.md) for exact source pins.
 

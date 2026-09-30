@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 import copy
+import json
 import pathlib
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -11,7 +13,7 @@ import yaml
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from appstore_i18n import (LOCALES, fill_locales, normalize_locales, normalize_port_label,
+from appstore_i18n import (LOCALES, compatible_metadata, fill_locales, normalize_locales, normalize_port_label,
                           normalize_short_descriptions, short_description_findings, translation_findings)
 import test_validate_v2
 
@@ -39,6 +41,79 @@ PORT_LABELS = {
 
 
 class AppstoreI18nTests(unittest.TestCase):
+    def test_compatible_metadata_preserves_translations_and_nested_fields(self):
+        data = {"additionalProperties": {"description": DESCRIPTION, "formFields": [
+            {"envKey": "CHOICE", "label": PORT_LABELS, "labelEn": "Reviewed label", "child": [
+                {"envKey": "HOST", "label": PORT_LABELS, "description": DESCRIPTION},
+            ]},
+        ]}}
+        before = copy.deepcopy(data)
+        output = compatible_metadata(data)
+        self.assertEqual(data, before)
+        self.assertEqual(compatible_metadata(output), output)
+        fields = output["additionalProperties"]["formFields"]
+        self.assertEqual(fields[0]["labelEn"], "Reviewed label")
+        self.assertEqual(fields[0]["child"][0]["labelZh"], PORT_LABELS["zh"])
+        for values in (output["additionalProperties"]["description"], fields[0]["label"],
+                       fields[0]["child"][0]["label"], fields[0]["child"][0]["description"]):
+            for canonical, alias in (("zh-hant", "zh-Hant"), ("pt-br", "pt-BR"), ("es-es", "es-ES")):
+                self.assertEqual(values[canonical], values[alias])
+            self.assertTrue(set(LOCALES).issubset(values))
+        compose = {"services": {"app": {"environment": {"label": {"zh-Hant": "literal"}}}}}
+        self.assertEqual(compatible_metadata(compose), compose)
+        data["additionalProperties"]["description"] = {"zh-Hant": "甲", "zh-hant": "乙"}
+        with self.assertRaisesRegex(ValueError, "conflicting locale aliases"):
+            compatible_metadata(data)
+
+    @unittest.skipUnless(shutil.which("node"), "Node is required for JavaScript reader replay")
+    def test_serialized_metadata_reaches_legacy_and_current_javascript_readers(self):
+        # Consumer contracts: v1 dev@20b89a8, v2.0.0 util.ts:633 and
+        # v2.3.2 app-store.ts. This is a reader replay, not live UI evidence.
+        data = {"additionalProperties": {"description": DESCRIPTION, "formFields": [
+            {"label": PORT_LABELS, "description": DESCRIPTION},
+        ]}}
+        output = yaml.safe_load(yaml.safe_dump(compatible_metadata(data)))
+        js = r"""
+const assert = require('assert');
+const data = JSON.parse(require('fs').readFileSync(0, 'utf8'));
+const field = data.additionalProperties.formFields[0];
+assert.equal(field.labelZh, field.label.zh);
+assert.equal(field.labelEn, field.label.en);
+for (const values of [field.label, field.description, data.additionalProperties.description]) {
+    for (const language of ['zh', 'en', 'tw', 'zh-Hant', 'pt-BR', 'es-ES']) {
+        const oldKey = language === 'tw' ? 'zh-Hant' : language;
+        const newKey = oldKey.toLowerCase();
+        // Old lookup returns undefined for an absent key: undefined != ''.
+        const oldValue = values[oldKey] != '' ? values[oldKey] : 'fallback';
+        assert.equal(typeof oldValue, 'string');
+        assert.equal(oldValue, values[newKey]);
+    }
+}
+"""
+        proc = subprocess.run([shutil.which("node"), "-e", js], input=json.dumps(output), text=True, capture_output=True)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+
+    def test_metadata_normalizer_and_patchers_keep_compatible_output_on_rerun(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp) / "root.yml"
+            version = pathlib.Path(tmp) / "version.yml"
+            root.write_text(yaml.safe_dump({"additionalProperties": {"description": DESCRIPTION}}), encoding="utf-8")
+            version.write_text(yaml.safe_dump({"additionalProperties": {"formFields": [
+                {"envKey": "PANEL_APP_PORT_HTTP", "type": "number", "required": True,
+                 "label": PORT_LABELS, "description": DESCRIPTION},
+            ]}}), encoding="utf-8")
+            for command in ([sys.executable, str(ROOT / "scripts/appstore_i18n.py"), str(root), str(version), "--normalize"],
+                            [sys.executable, str(ROOT / "scripts/patch_root_data_yml.py"), str(root)],
+                            [sys.executable, str(ROOT / "scripts/patch_version_data_yml.py"), str(version)]):
+                subprocess.run(command, check=True, capture_output=True)
+                before = (root.read_bytes(), version.read_bytes())
+                subprocess.run(command, check=True, capture_output=True)
+                self.assertEqual((root.read_bytes(), version.read_bytes()), before)
+            data = yaml.safe_load(version.read_text())["additionalProperties"]["formFields"][0]
+            self.assertEqual(data["label"]["zh-Hant"], PORT_LABELS["zh-hant"])
+            self.assertEqual(data["description"]["pt-BR"], DESCRIPTION["pt-br"])
+            self.assertEqual(yaml.safe_load(root.read_text())["additionalProperties"]["description"]["es-ES"], DESCRIPTION["es-es"])
+
     def test_runtime_keys_and_legacy_aliases(self):
         values = normalize_locales({"zh-Hant": "繁體", "pt-BR": "Tarefas", "es-ES": "Tareas", "de": "Aufgaben"})
         self.assertEqual(values, {"zh-hant": "繁體", "pt-br": "Tarefas", "es-es": "Tareas", "de": "Aufgaben"})
@@ -85,7 +160,7 @@ class AppstoreI18nTests(unittest.TestCase):
             normalized = subprocess.run(command + ["--normalize"], text=True, capture_output=True)
             self.assertEqual(normalized.returncode, 0, normalized.stdout + normalized.stderr)
             actual = yaml.safe_load(version.read_text(encoding="utf-8"))
-            self.assertEqual(actual["additionalProperties"]["formFields"][0]["label"], PORT_LABELS)
+            self.assertEqual(normalize_locales(actual["additionalProperties"]["formFields"][0]["label"]), PORT_LABELS)
             valid = subprocess.run(command, text=True, capture_output=True)
             self.assertEqual(valid.returncode, 0, valid.stdout + valid.stderr)
             field["label"] = {**PORT_LABELS, "ja": "Port"}

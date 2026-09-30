@@ -55,7 +55,7 @@ VERSION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 # ── Standard Baota platform fields / env keys ─────────────────────────
 STANDARD_FIELD_ATTRS = {"domain", "allow_access", "cpus", "memory_limit"}
 STANDARD_ENV_KEYS = {"app_path", "host_ip", "cpus", "memory_limit"}
-from appstore_i18n import LOCALES as I18N_LANGS, fill_locales, normalize_locales
+from appstore_i18n import LOCALES as I18N_LANGS, compatible_metadata, fill_locales, normalize_locales
 
 # ── App type mapping ──────────────────────────────────────────────────
 BAOTA_TYPE_TO_1PANEL: Dict[str, str] = {
@@ -1825,12 +1825,12 @@ class ImportRunner:
         # Root data.yml
         root_data = self._build_root_data_yml(appspec)
         with open(app_out / "data.yml", "w", encoding="utf-8") as fh:
-            yaml.dump(root_data, fh, default_flow_style=False, allow_unicode=True)
+            yaml.dump(compatible_metadata(root_data), fh, default_flow_style=False, allow_unicode=True)
 
         # Version data.yml
         ver_data = profile_data(self._build_version_data_yml(appspec), self.submission_profile)
         with open(ver_out / "data.yml", "w", encoding="utf-8") as fh:
-            yaml.dump(ver_data, fh, default_flow_style=False, allow_unicode=True)
+            yaml.dump(compatible_metadata(ver_data), fh, default_flow_style=False, allow_unicode=True)
         _write_default_runtime_files(app_out, ver_out, ver_data)
 
         # Transformed docker-compose.yml (strip _transform metadata)

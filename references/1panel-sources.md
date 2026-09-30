@@ -14,7 +14,17 @@ Rule order for this skill:
 2. Official wiki and docs
 3. Official appstore repository conventions
 
-## Verified source snapshot (2026-09-10)
+## Compatibility review (2026-09-30)
+
+The delivery target includes v1 and older/current v2. Read
+[panel-compatibility.md](panel-compatibility.md) for pinned legacy/current
+consumers and required evidence. Latest reviewed stable source is v2.3.2
+`65243c68c463cc055ab044093f641ea5d2e9e28b`; official appstore dev is
+`92b569c887b23b50ad7dbc4c013c82514932a47b`. These are audit references, not a
+new minimum panel version. Historical pins below remain evidence for their
+specific facts, not proof that every older runtime behaves the same way.
+
+## Earlier source snapshot (2026-09-10)
 
 - 1Panel `dev-v2`: `a02c25ebcc82e467a5e507cb340f5dc4c2eb2ce5`.
 - Official appstore `dev`: `b6c6b459738c5dacb05c015cbf4821a45cc8ef21`.

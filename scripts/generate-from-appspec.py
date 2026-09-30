@@ -53,7 +53,7 @@ from package_contract import PROFILES, bundled_logo_evidence, check_output_profi
 EXIT_SUCCESS = 0
 EXIT_FAILURE = 1
 
-from appstore_i18n import LOCALES as I18N_LANGS, fill_locales, normalize_locales
+from appstore_i18n import LOCALES as I18N_LANGS, compatible_metadata, fill_locales, normalize_locales
 TYPE_ALIASES = {
     "ai": "AI",
     "bi": "BI",
@@ -562,6 +562,8 @@ class AppSpecGenerator:
 
     @staticmethod
     def _write_yaml(path: pathlib.Path, data: Dict[str, Any]) -> None:
+        if path.name == "data.yml":
+            data = compatible_metadata(data)
         with open(path, "w", encoding="utf-8") as fh:
             yaml.dump(data, fh, default_flow_style=False, allow_unicode=True)
 

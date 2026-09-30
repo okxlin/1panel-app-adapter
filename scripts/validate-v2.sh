@@ -723,9 +723,11 @@ env_closure_output=$("$PYTHON_BIN" - <<'PY' "$VER" "$COMPOSE" "$IMPLICIT_ENVKEYS
 import re
 import sys
 from pathlib import Path
+import yaml
 
 sys.path.insert(0, sys.argv[4])
 from compose_env_vars import extract_compose_variable_names
+from panel_form_contract import service_derived_envkeys
 
 ver_path = Path(sys.argv[1])
 compose_path = Path(sys.argv[2])
@@ -743,8 +745,12 @@ if implicit_path.is_file():
 
 compose_text = compose_path.read_text(encoding='utf-8', errors='ignore')
 vars_found = extract_compose_variable_names(compose_text)
+metadata = yaml.safe_load(ver_path.read_text(encoding='utf-8')) or {}
+derived = service_derived_envkeys(metadata) & vars_found - declared
+for key in sorted(derived):
+    print(f"[B][WARN] {key} is service-derived: verify PANEL_DB_HOST resolves to a database record and its actual port on each target panel; selector structure is not runtime evidence")
 
-missing = sorted(v for v in vars_found if v not in declared and v not in implicit)
+missing = sorted(v for v in vars_found if v not in declared and v not in implicit and v not in derived)
 if missing:
     for key in missing:
         print(f"[A][FAIL] compose variable not declared in formFields envKey: {key}")

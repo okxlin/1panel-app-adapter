@@ -913,6 +913,12 @@ class TestImportRunner(unittest.TestCase):
         self.assertTrue(fields)
         self.assertTrue(all(isinstance(field.get("label"), dict) for field in fields))
         form_keys = {field.get("envKey") for field in fields}
+        for values in (desc, *(field["label"] for field in fields)):
+            for canonical, alias in (("zh-hant", "zh-Hant"), ("pt-br", "pt-BR"), ("es-es", "es-ES")):
+                self.assertEqual(values[alias], values[canonical])
+        for field in fields:
+            self.assertEqual(field["labelZh"], field["label"]["zh"])
+            self.assertEqual(field["labelEn"], field["label"]["en"])
         compose_text = (out / "latest" / "docker-compose.yml").read_text(encoding="utf-8")
         env_sample = (out / "latest" / ".env.sample").read_text(encoding="utf-8")
         compose_vars = set(__import__("re").findall(r"\$\{([A-Za-z_][A-Za-z0-9_]*)", compose_text))

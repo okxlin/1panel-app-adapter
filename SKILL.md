@@ -7,6 +7,8 @@ description: Adapt, generate, migrate, and validate 1Panel App Store (AppStore/a
 
 Adapt Docker applications into reviewable 1Panel AppStore packages, then validate their structure, metadata, Compose configuration, localization, and upgrade behavior against source-backed rules.
 
+Default to artifacts compatible with **1Panel v1 and older/current v2**. Before generation or compatibility review, read [references/panel-compatibility.md](references/panel-compatibility.md), record the exact target versions and preserve the shared behavior. Latest upstream features do not raise the minimum panel version implicitly. The `*-v2` helper names and v1-to-v2 input migration do not prove dual-generation runtime compatibility.
+
 ## Submission Target and Delivery Defaults
 
 Use **`third-party` by default**. Select **`official`** only for an official 1Panel appstore submission, and pass `--submission-profile official` to generation, migration, import, and validation. Read [references/submission-profiles.md](references/submission-profiles.md) for the exact file and form contract before choosing a route.
@@ -53,6 +55,7 @@ Use scripts for their named job instead of manually recreating their behavior. R
 
 ### Completion Gates
 
+- Verify the target-version matrix from `references/panel-compatibility.md`: legacy/current locale readers, dependency injection, parameter changes, readiness, persisted state and same-panel application upgrades. State which versions have source/replay evidence and which have live evidence; retain unsupported targets as unresolved rather than claiming universal v1/v2 compatibility.
 - Confirm authoritative repository, Docker documentation, Compose/image evidence, license, and topology; record unsupported facts instead of inventing them, and stop when the selected preflight route says to stop.
 - Preserve the selected upstream service graph, dependencies, internal networks, persistence, and security controls. Give every Compose service `labels.createdBy: "Apps"` and a unique `container_name` based on `${CONTAINER_NAME}` unless current 1Panel runtime evidence requires another shape.
 - Build an authoritative control inventory from the selected official launch command, Compose, image, and entrypoint before editing. Record services, image commands and users, environment variables and fixed values, healthchecks, dependencies, ports, networks, mounts and mount options, capabilities, security options, privileged mode, devices, and host namespaces. Compare the final Compose against that inventory, preserve every source-backed control, and justify every omission or change with official source or target-platform evidence. A fixed upstream hardening value is not an optional install-form setting; keep it fixed unless evidence supports changing it.

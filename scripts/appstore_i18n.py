@@ -8,6 +8,7 @@ agent/app/dto/app.go and frontend/src/utils/app-store.ts.
 from __future__ import annotations
 
 import argparse
+import copy
 from pathlib import Path
 import re
 from typing import Any
@@ -16,6 +17,7 @@ import yaml
 
 LOCALES = ("en", "zh", "zh-hant", "ja", "ko", "ru", "ms", "pt-br", "tr", "es-es", "fa", "lo")
 LEGACY_LOCALES = LOCALES[:8]
+OUTPUT_ALIASES = {"zh-hant": "zh-Hant", "pt-br": "pt-BR", "es-es": "es-ES"}
 PLACEHOLDER = re.compile(
     r"[（(]\s*(?:placeholder|translation required|佔位|占位|プレースホルダー|플레이스홀더|заполнитель|ruang letak|preenchimento)\s*[）)]"
     r"|^\s*(?:placeholder|translation required)\s*$", re.I,
@@ -55,6 +57,36 @@ def iter_fields(fields: Any):
             continue
         yield field
         yield from iter_fields(field.get("child"))
+
+
+def compatible_metadata(data: dict) -> dict:
+    """Serialize both old case-sensitive and current lowercase locale readers.
+
+    Keep normalization canonical for linting/conflict detection. Only metadata
+    output gains aliases; Compose/environment mappings are never traversed.
+    """
+    result = copy.deepcopy(data)
+    properties = result.get("additionalProperties")
+    if not isinstance(properties, dict):
+        return result
+
+    def expand(value):
+        normalized = normalize_locales(value)
+        return {**normalized, **{alias: normalized[key] for key, alias in OUTPUT_ALIASES.items()
+                                 if key in normalized}}
+
+    if isinstance(properties.get("description"), dict):
+        properties["description"] = expand(properties["description"])
+    for field in iter_fields(properties.get("formFields")):
+        if isinstance(field.get("label"), dict):
+            field["label"] = expand(field["label"])
+            # Older v1 readers use these scalar labels even when a map exists.
+            for key, locale in (("labelZh", "zh"), ("labelEn", "en")):
+                if not field.get(key) and field["label"].get(locale):
+                    field[key] = field["label"][locale]
+        if isinstance(field.get("description"), dict):
+            field["description"] = expand(field["description"])
+    return result
 
 
 def _summary_placeholders(root: dict) -> set[str]:
@@ -127,7 +159,7 @@ def normalize_metadata(root_path: Path, version_path: Path) -> None:
         data["additionalProperties"] = properties
         if is_root:
             normalize_short_descriptions(data)
-        path.write_text(yaml.safe_dump(data, allow_unicode=True, sort_keys=False), encoding="utf-8")
+        path.write_text(yaml.safe_dump(compatible_metadata(data), allow_unicode=True, sort_keys=False), encoding="utf-8")
 
 
 def translation_findings(value: Any, label: str, *, allow_english: set[str] | None = None,

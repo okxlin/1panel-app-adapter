@@ -16,6 +16,14 @@
 
 The skill follows 1Panel runtime behavior and official sources before repository conventions or third-party examples. It does not guess deployment details when an application has no reliable Docker source.
 
+Artifacts target **1Panel v1 and older/current v2** by default. Metadata writers
+retain legacy scalar labels and mixed-case locale aliases alongside the twelve
+canonical translations. The existing `*-v2` command names describe the package
+layout; they do not prove runtime compatibility or raise the minimum version.
+Use the [compatibility matrix](references/panel-compatibility.md) to verify the
+actual panel versions, selectors, lifecycle and upgrade paths. Static validation
+and reader replay do not replace installation tests on both generations.
+
 ## Agent Usage
 
 Ask a skill-compatible coding agent to use the skill explicitly:

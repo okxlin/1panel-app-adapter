@@ -61,6 +61,7 @@ The official package is the right baseline because the runtime flow expects the 
 
 ## Validation notes
 
+- Keep older v1/v2 creation and maintenance paths in the target matrix. Newer runtime-version switching is an additional case, not a universal prerequisite. In v2.3.2, update selects an app detail from the same app via `appDetailId`/version, accepts a single-service current/template Compose, and replaces only image/build while retaining container settings and mounts. PHP copies the new build directory and `data.yml` and rebuilds on a version change. Verify selected extensions and persistent settings after switching; changing the template alone does not prove new mounts or environment entries reach an existing runtime. See [panel-compatibility.md](panel-compatibility.md) for pinned sources.
 - 1Panel does support a built-in local PHP runtime template path. In the PHP runtime create flow, users can choose `resource=local`, enter only a version string, and create a local runtime record without any appstore package lookup.
 - That built-in local-template path is different from syncing a local app package under `resource/apps/local/<app-key>`. Do not treat success or failure of one path as proof about the other.
 - A local app sync cannot reliably shadow a built-in store app that already uses the same key. For example, a local `php` package may never appear as `localphp` if the panel already ships an official remote `php` app.

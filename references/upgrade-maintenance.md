@@ -58,6 +58,23 @@ Exercise the migration with absent, empty, explicit opt-out, custom, invalid-leg
 
 Use `scripts/upgrade.sh` only for deterministic local migration work that 1Panel cannot express through compose/env files.
 
+Apply the [panel compatibility matrix](panel-compatibility.md), including legacy
+and staged upgrades. In the v2.3.2 flow, candidate Compose parsing and image
+pull/build occur before stopping the old application and running `upgrade.sh`.
+Values needed by image references, build contexts, mounts or required Compose
+expressions must therefore exist before the hook; backfilling them only inside
+the hook is too late. Render the candidate with representative old stored
+settings first. Supply only source-backed compatible defaults, or define a
+supported intermediate migration instead of guessing missing required values.
+
+The candidate Compose is written after `upgrade.sh` in both reviewed legacy
+and staged flows, so edits to that file inside the hook do not establish the
+final configuration. Preserve changes through the supported package/env path.
+Do not generalize the built-in OpenList image override to a `localopenlist`
+key or other applications. The generic staged rollback snapshot includes
+`.env`, `docker-compose.yml` and `scripts`; it is not a backup of all binds,
+named volumes or external databases. Keep application-specific recovery plans.
+
 - Back up files before overwriting generated config.
 - Include SQLite sidecar files such as `*.db-wal` and `*.db-shm` when backing up SQLite data.
 - Prefer database-native dumps over hot-copying live database directories.
@@ -80,5 +97,10 @@ For updates that are not a plain patch-level image refresh, README should mentio
 - any changed image namespace, database/cache dependency, or removed feature
 
 ## Validation Handoff
+
+Run acceptance on the identified v1 and older/current v2 targets, not only the
+latest panel. v2.3.2 no longer waits for container health before committing an
+upgrade or finishing rollback; independently verify application readiness in
+both directions. Keep success of the panel task distinct from availability.
 
 Static validation is not enough for updates. After `validate-v2.sh --strict-store` passes, run a real 1Panel upgrade test from the previous supported version to the candidate version. Before submitting the upgrade request, wait for and record source-version HTTP readiness; a running container alone does not prove the source application was usable. The report should record app key, install name, `fromVersion`, `toVersion`, seeded persistence data, source readiness, upgrade action, migration log/wait condition when relevant, selector/link evidence before and after upgrade, restart/access verification, uninstall, and cleanup. Audit linked database cleanup separately from manually managed external schemas/users.

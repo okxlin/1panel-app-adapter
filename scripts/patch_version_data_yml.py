@@ -4,7 +4,7 @@ from pathlib import Path
 
 import yaml
 
-from appstore_i18n import fill_locales, iter_fields, normalize_locales, normalize_port_label
+from appstore_i18n import compatible_metadata, fill_locales, iter_fields, normalize_locales, normalize_port_label
 
 
 def patch(path: Path):
@@ -105,7 +105,7 @@ def patch(path: Path):
             normalize_port_label(item)
         if isinstance(item.get("description"), dict):
             item["description"] = normalize_locales(item["description"])
-    new_text = yaml.safe_dump(loaded, allow_unicode=True, sort_keys=False)
+    new_text = yaml.safe_dump(compatible_metadata(loaded), allow_unicode=True, sort_keys=False)
     if new_text != original:
         path.write_text(new_text, encoding="utf-8")
 

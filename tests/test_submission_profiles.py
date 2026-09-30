@@ -35,6 +35,22 @@ class SubmissionProfileTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         return root / "out/demo"
 
+    def test_both_profiles_emit_legacy_and_current_locale_contracts(self):
+        for profile in ("third-party", "official"):
+            with self.subTest(profile=profile), tempfile.TemporaryDirectory() as tmp:
+                app = self._generate(pathlib.Path(tmp), profile)
+                root = yaml.safe_load((app / "data.yml").read_text(encoding="utf-8"))["additionalProperties"]
+                version = yaml.safe_load((app / "1.2.3/data.yml").read_text(encoding="utf-8"))["additionalProperties"]
+                fields = version["formFields"]
+                self.assertTrue(fields)
+                for field in fields:
+                    self.assertEqual(field["labelZh"], field["label"]["zh"])
+                    self.assertEqual(field["labelEn"], field["label"]["en"])
+                for values in (root["description"], *(field["label"] for field in fields)):
+                    for canonical, alias in (("zh-hant", "zh-Hant"), ("pt-br", "pt-BR"), ("es-es", "es-ES")):
+                        self.assertTrue(values[canonical])
+                        self.assertEqual(values[alias], values[canonical])
+
     def test_default_package_keeps_evidence_outside_and_notice_in_readme(self):
         with tempfile.TemporaryDirectory() as tmp:
             app = self._generate(pathlib.Path(tmp))

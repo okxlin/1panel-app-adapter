@@ -5,7 +5,7 @@ from pathlib import Path
 
 import yaml
 
-from appstore_i18n import LOCALES, normalize_locales, normalize_short_descriptions
+from appstore_i18n import LOCALES, compatible_metadata, normalize_locales, normalize_short_descriptions
 
 
 class NoAliasDumper(yaml.SafeDumper):
@@ -191,7 +191,7 @@ def patch(path: Path, app_key_hint: str = "", architectures: str = ""):
     }
 
     normalize_short_descriptions(payload)
-    new_text = yaml.dump(payload, Dumper=NoAliasDumper, allow_unicode=True, sort_keys=False)
+    new_text = yaml.dump(compatible_metadata(payload), Dumper=NoAliasDumper, allow_unicode=True, sort_keys=False)
     if new_text != original:
         path.write_text(new_text, encoding="utf-8")
 
