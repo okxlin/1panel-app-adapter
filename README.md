@@ -202,3 +202,16 @@ Yes, when the application has trustworthy Docker deployment sources. The generat
 ### Does it publish apps to the 1Panel App Store?
 
 No. It prepares and validates local package artifacts. Publishing, pushing branches, and opening pull requests remain separate Git and GitHub actions.
+
+## Migration backup retention
+
+`cleanup-migrate-backups.sh` previews only timestamp-named (`YYYYMMDD-HHMMSS`) backup directories. It preserves unrelated entries and refuses broad roots or symlink traversal. The selected backup root must be an existing, task-owned directory; stop concurrent backup writers while reviewing and applying a plan.
+
+```bash
+scripts/cleanup-migrate-backups.sh 10 /path/to/1panel-migrate-backups --plan /path/to/cleanup-plan.json
+# After checking that every selected directory is a migration backup and obtaining
+# authorization to delete this exact selection:
+scripts/cleanup-migrate-backups.sh 10 /path/to/1panel-migrate-backups --plan /path/to/cleanup-plan.json --apply
+```
+
+The plan must be outside the backup root and must not already exist when previewing. Application recomputes the plan and content hashes; changed roots, selections, or files require a fresh preview. The utility does not infer backup ownership from a directory name and does not authorize deleting persistent backups on its own. Deletion requires a POSIX runtime with symlink-safe directory-relative `shutil.rmtree`.

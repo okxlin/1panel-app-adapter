@@ -191,3 +191,13 @@ bash scripts/validate-v2.sh --dir <app-dir> --source-evidence-mode required \
 ### 会直接发布到 1Panel 应用商店吗？
 
 不会。它只准备并校验本地应用产物；发布、推送分支和创建拉取请求仍属于单独的 Git 与 GitHub 操作。
+
+## 迁移备份保留与清理
+
+`cleanup-migrate-backups.sh` 现在默认只预览符合 `YYYYMMDD-HHMMSS` 名称的候选目录，保留其他条目并拒绝宽泛根目录及符号链接。先停止并发备份写入，生成存放在备份根目录之外的清单：
+
+```bash
+scripts/cleanup-migrate-backups.sh 10 /path/to/1panel-migrate-backups --plan /path/to/cleanup-plan.json
+```
+
+确认清单中的目录确实属于迁移备份，并取得对这些持久备份的精确删除授权后，用同样参数追加 `--apply`。名称本身不能证明归属；脚本不会自行授予删除授权。目录、选择范围或文件内容发生变化会拒绝旧清单，需重新预览。执行删除要求支持安全目录描述符操作的 POSIX Python 运行时。
